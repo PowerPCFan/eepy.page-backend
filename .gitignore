@@ -1,7 +1,6 @@
 userinfo.json
-/__pycache__/
-funcs/__pycache__/
-**/__pycache__/
+__pycache__/
+*.pyc
 key.pem
 cert.pem
 .env
