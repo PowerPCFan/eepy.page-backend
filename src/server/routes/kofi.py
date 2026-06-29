@@ -13,6 +13,11 @@ from mail.email import Email
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
+DOMAIN_LINK_CODES: dict[str, str] = {
+    "bee975efcd": "worksonmymachine.top",
+}
+
+
 class PurchaseType(Enum):
     DONATION = "Donation"
     SUBSCRIPTION = "Subscription"
@@ -28,11 +33,6 @@ class PurchaseType(Enum):
                 return item
 
         return None
-
-
-DOMAIN_LINK_CODES: dict[str, str] = {
-    "LINKCODE": "worksonmymachine.top",
-}
 
 
 def add_tld_reward(mapping: dict[str, Any], tld: str) -> None:
