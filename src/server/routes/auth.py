@@ -35,7 +35,7 @@ from server.routes.models.user import (
 )
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Auth:
@@ -270,10 +270,10 @@ class Auth:
     def google_oauth2(self, request: Request, code: str = Query()) -> RedirectResponse:
         access = refresh = ""
         state: dict = json.loads(request.query_params.get("state", "{}"))
-        origin = state.get("url", "https://www.frii.site")
+        origin = state.get("url", "https://www.eepy.page")
         mode = state.get("mode", "login")
         redirect_url = state.get(
-            "redirect", "https://api.frii.site/auth/google/callback"
+            "redirect", "https://api.eepy.page/auth/google/callback"
         )
 
         logger.info(f"Request {mode} coming from origin {origin}")
@@ -348,7 +348,7 @@ class Auth:
             raise HTTPException(429, detail="Invalid captcha")
 
         country = self.handler.getDetails(request.client.host).all  # type: ignore[union-attr]
-        from_url: str = request.headers.get("Origin", "https://www.frii.site")
+        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
 
         refer = request.headers.get("x-refer-code")
         if refer:

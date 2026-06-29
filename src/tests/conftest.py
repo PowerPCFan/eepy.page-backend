@@ -125,7 +125,7 @@ _test_session = Session.create(
     "testing",
     None,
     "192.168.1.1",
-    "frii.site-pytest-suite",
+    "eepy.page-pytest-suite",
     _users,
     _sessions,
 )

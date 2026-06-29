@@ -5,7 +5,7 @@ import time
 import logging
 from database.exceptions import FilterMatchError
 
-logger = logging.getLogger("frii.site")
+logger = logging.getLogger("eepy.page")
 
 
 class NewSessionType(TypedDict):

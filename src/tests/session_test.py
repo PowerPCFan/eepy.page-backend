@@ -25,7 +25,7 @@ class TestCreation:
             "testing",
             None,
             "192.168.1.1",
-            "frii.site-pytest-suite",
+            "eepy.page-pytest-suite",
             users,
             sessions,
         )["success"]
@@ -36,7 +36,7 @@ class TestCreation:
                 "testing",
                 None,
                 "192.168.1.1",
-                "frii.site-pytest-suite",
+                "eepy.page-pytest-suite",
                 users,
                 sessions,
             )["success"]
@@ -47,7 +47,7 @@ class TestCreation:
             "testing",
             None,
             "192.168.1.1",
-            "frii.site-pytest-suite",
+            "eepy.page-pytest-suite",
             users,
             sessions,
         )
@@ -117,7 +117,7 @@ class TestCreation:
             "testing",
             None,
             "192.168.1.1",
-            "frii.site-pytest-suite",
+            "eepy.page-pytest-suite",
             users,
             sessions,
         )

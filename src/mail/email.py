@@ -42,7 +42,7 @@ with open(os.path.join(template_path, "purchase.html"), "r") as f:
 with open(os.path.join(template_path, "admin_action.html"), "r") as f:
     admin_template = "\n".join(f.readlines())
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Email:
@@ -68,7 +68,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": email,
                     "subject": "Verify your account",
                     "html": verify_template.replace(
@@ -88,7 +88,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": email,
                     "subject": "Order completed",
                     "html": purchase_template.replace(
@@ -108,7 +108,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": email,
                     "subject": "Account deletion",
                     "html": deletion_template.replace("{{link}}", url),
@@ -137,11 +137,11 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": user_email,
                     "subject": "Password recovery",
                     "html": recovery_template.replace(
-                        "{{link}}", f"https://www.frii.site/account/recover?c={code}"
+                        "{{link}}", f"https://www.eepy.page/account/recover?c={code}"
                     ),
                 }
             )
@@ -160,7 +160,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": target_email,
                     "subject": "Account termination",
                     "html": banned_template.replace("{{reasons}}", reasons_html),
@@ -176,13 +176,13 @@ class Email:
         """
         Sends an email to the user that one of their domains have been deleted
 
-        domain should be the domain without the frii.site suffix
+        domain should be the domain without the eepy.page suffix
         """
 
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": target_email,
                     "subject": "Domain removed",
                     "html": domain_delete_template.replace(
@@ -198,7 +198,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@frii.site",
+                    "from": "send@eepy.page",
                     "to": target_email,
                     "subject": "An action on your account",
                     "html": admin_template.replace("{{action}}", action),

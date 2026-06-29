@@ -51,7 +51,7 @@ from server.routes.models.user import (
 from dns_.types import TYPES
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class User:
@@ -435,7 +435,7 @@ class User:
 
     def resend_verification(self, request: Request, user_id: str):
         self.codes.create_code("verification", user_id)
-        from_url: str = request.headers.get("Origin", "https://www.frii.site")
+        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
 
         user_data: UserType | None = self.table.find_user({"_id": user_id})
 
@@ -497,7 +497,7 @@ class User:
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
     ):
-        from_url: str = request.headers.get("Origin", "https://www.frii.site")
+        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
         if session.user_cache_data.get("totp", {}).get(
             "verified"
         ) and not session.check_code(x_mfa_code):
@@ -532,7 +532,7 @@ class User:
             {"created": {"$gt": user["created"]}}
         )
 
-        total_users: int = self.table.db.command("collstats", "frii.site")["count"]
+        total_users: int = self.table.db.command("collstats", "eepy.page")["count"]
 
         return YearWrapped(
             account_created=user["created"],

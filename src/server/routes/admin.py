@@ -19,7 +19,7 @@ from security.admin import Admin as AdminTools, DomainDeletionError, AccountData
 from server.routes.models.admin import BanUser, IpFind
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Admin:

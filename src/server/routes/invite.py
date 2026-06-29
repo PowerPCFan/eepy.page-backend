@@ -16,7 +16,7 @@ from security.convert import Convert
 from mail.email import Email
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Invite:

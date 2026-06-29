@@ -10,7 +10,7 @@ valid_key: Api = MagicMock(spec=Api)
 valid_key.valid = True
 
 valid_key.permissions = ["modify", "register", "list"]
-valid_key.affected_domains = ["test[dot]frii[dot]site", "affected[dot]frii[dot]site"]
+valid_key.affected_domains = ["test[dot]eepy[dot]page", "affected[dot]eepy[dot]page"]
 
 invalid_key: Api = MagicMock(spec=Api)
 invalid_key.valid = False
@@ -24,7 +24,7 @@ class TestUserApi:
             users,
             "test key",
             ["register", "modify"],
-            domains=["test.frii.site"],
+            domains=["test.eepy.page"],
         )
 
         with pytest.raises(PermissionError):
@@ -33,7 +33,7 @@ class TestUserApi:
                 users,
                 "test key",
                 ["register"],
-                domains=["domain-that-isnt-owned.frii.site"],
+                domains=["domain-that-isnt-owned.eepy.page"],
             )
 
     def test_key_permissions(self, test_user: UserType, users: Users):
@@ -42,7 +42,7 @@ class TestUserApi:
             users,
             "test key",
             ["register", "modify"],
-            domains=["test.frii.site"],
+            domains=["test.eepy.page"],
         )
 
         api = Api(key, users)
@@ -83,16 +83,16 @@ class TestUserApi:
 
         # individually test permissions and domains
         api.permissions.append("modify")
-        assert test_modify(api, domain="test.frii.site")
+        assert test_modify(api, domain="test.eepy.page")
 
         with pytest.raises(ApiRangeError):
-            test_modify(api, domain="unknown-domain.frii.site")
+            test_modify(api, domain="unknown-domain.eepy.page")
 
         api.permissions.append("delete")
-        assert test_delete(api, domain="test.frii.site")
+        assert test_delete(api, domain="test.eepy.page")
 
         with pytest.raises(ApiRangeError):
-            test_delete(api, domain="unknown-domain.frii.site")
+            test_delete(api, domain="unknown-domain.eepy.page")
 
         api.permissions.append("register")
         assert test_register(api)
@@ -146,7 +146,7 @@ def test_modification_domain():
     def mock_function(api, domain):
         return "Executed"
 
-    result = mock_function(api=valid_key, domain="affected.frii.site")
+    result = mock_function(api=valid_key, domain="affected.eepy.page")
     assert result == "Executed"
 
 
@@ -157,4 +157,4 @@ def test_invalid_modification_domain():
         return "Executed"
 
     with pytest.raises(ApiRangeError):
-        mock_function(api=valid_key, domain="unaffected.frii.site")
+        mock_function(api=valid_key, domain="unaffected.eepy.page")

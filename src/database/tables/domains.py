@@ -5,7 +5,7 @@ from database.tables.users import Users, UserType
 from database.exceptions import UserNotExistError
 from dns_.types import TYPES, AVAILABLE_TLDS
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class DomainFormat(TypedDict):
@@ -42,12 +42,12 @@ class Domains(Users):
     def seperate_domain_into_parts(domain: str) -> Tuple[str, str]:
         """Returns the name and TLD of the domain
 
-        :param domain: the full domain (e.g a.frii.site)
+        :param domain: the full domain (e.g a.eepy.page)
         :type domain: str
-        :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks osmething like this: (a, frii.site)
+        :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks osmething like this: (a, eepy.page)
         :rtype: Tuple[str, str]
         """
-        tld: str = "frii.site"
+        tld: str = "eepy.page"
 
         beautiful_domain = Domains.unclean_domain_name(domain)
 
@@ -95,7 +95,7 @@ class Domains(Users):
 
         Args:
             target_user (str): ID of target user
-            domain (str): the record name with the TLD attached (e.g domain.frii.site)
+            domain (str): the record name with the TLD attached (e.g domain.eepy.page)
             value (str | None, optional): Updated record value. Defaults to current one.
             type (str | None, optional): Updated type value. Defaults to current one.
 

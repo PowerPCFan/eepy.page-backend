@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from security.api import ApiType
 
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class CountryType(TypedDict):
@@ -130,7 +130,7 @@ UserType = TypedDict(
 
 class Users(Table):
     def __init__(self, mongo_client: MongoClient):
-        super().__init__(mongo_client, "frii.site")
+        super().__init__(mongo_client, "eepy.page")
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY") or "none")
         self.referrals: Referrals = Referrals(mongo_client, self)
 
@@ -150,7 +150,7 @@ class Users(Table):
     def send_discord_analytic_webhook(
         self,
         country: str,
-        site_variant: Literal["canary.frii.site", "www.frii.site"] | str,
+        site_variant: Literal["canary.eepy.page", "www.eepy.page"] | str,
         hashed_username: str,
     ) -> None:
         start = time.time()
@@ -185,7 +185,7 @@ class Users(Table):
         country,
         time_signed_up,
         email_instance: Email,
-        target_url: str,  # target_url should only be the hostname (e.g canary.frii.site, www.frii.site)
+        target_url: str,  # target_url should only be the hostname (e.g canary.eepy.page, www.eepy.page)
         dont_send_email: bool = False,
         signup_method: SignupType = "email",
         refer_code: str | None = None,
@@ -243,7 +243,7 @@ class Users(Table):
             "registered-with": signup_method,
             "has-linked-google": signup_method == "google",
             "credits": 200,
-            "owned-tlds": ["frii.site"],
+            "owned-tlds": ["eepy.page"],
             "discord-linked": False,
         }
 
@@ -355,7 +355,7 @@ class Users(Table):
         session_data = session_table.find_items(
             {
                 "$or": [
-                    {"owner-hash": Encryption.sha256(user_id + "frii.site")},
+                    {"owner-hash": Encryption.sha256(user_id + "eepy.page")},
                     {"$and": [{"owner": user_id}, {"type": "refresh"}]},
                 ]
             }
@@ -389,7 +389,7 @@ class Users(Table):
             "mfa_enabled": user_data.get("totp", {}).get("verified", False),
             "referral-code": user_data.get("referral-code"),
             "referred-people": user_data.get("referred-count"),
-            "owned-tlds": user_data.get("owned-tlds", ["frii.site"]),
+            "owned-tlds": user_data.get("owned-tlds", ["eepy.page"]),
             "discord-linked": user_data.get("discord-linked", False),
         }
 
@@ -431,7 +431,7 @@ class Users(Table):
                 logger.info(
                     f"Updated domain {domain_name.lower()} to have the new syntax"
                 )
-                new_domain_name = new_domain_name + "[dot]frii[dot]site"
+                new_domain_name = new_domain_name + "[dot]eepy[dot]page"
 
             if type(domain["ip"]) != list:
                 fixed_domains = True
@@ -472,7 +472,7 @@ class Users(Table):
         if user.get("owned-tlds") is None:
             logger.info("Updated owned TLDs")
             self.modify_document(
-                {"_id": user["_id"]}, "$set", "owned-tlds", ["frii.site"]
+                {"_id": user["_id"]}, "$set", "owned-tlds", ["eepy.page"]
             )
 
         logger.debug(f"Migrations took {time.time() - start :.5f}s")
@@ -480,7 +480,7 @@ class Users(Table):
         return user
 
     def create_connection_code(self, user: UserType) -> str | None:
-        """Creates a linking code for the frii.site bot
+        """Creates a linking code for the eepy.page bot
 
         :param user: the user that the code will be created for
         :type user: UserType

@@ -44,7 +44,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 logger.handlers = []
 
 logger.info("Logger init")
@@ -72,12 +72,9 @@ sentry_sdk.init(
 
 app = FastAPI()
 app.state.safe_domains = [
-    "https://www.frii.site",
-    "https://development.frii.site",
-    "https://canary.frii.site",
-    "https://red.frii.site",
-    "https://legacy.frii.site",
-    "https://frii-site-frontend.vercel.app",
+    "https://www.eepy.page",
+    "https://development.eepy.page",
+    "https://canary.eepy.page",
     "http://localhost:5173",
 ]
 app.add_middleware(

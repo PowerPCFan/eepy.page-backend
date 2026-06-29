@@ -15,7 +15,7 @@ from mail.email import Email
 
 from fastapi import Request
 
-logger = logging.getLogger("frii.site")
+logger = logging.getLogger("eepy.page")
 
 
 class EmailError(Exception): ...
@@ -122,7 +122,7 @@ class OAuth:
                 country=country,
                 time_signed_up=time.time(),
                 email_instance=self.emails,
-                target_url=request.headers.get("Origin", "https://www.frii.site"),
+                target_url=request.headers.get("Origin", "https://www.eepy.page"),
                 signup_method="google",
                 skip_verification=True,
                 refer_code=refer_code,

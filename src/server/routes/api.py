@@ -21,7 +21,7 @@ from mail.email import Email
 from dns_.types import AVAILABLE_TLDS, TYPES
 
 converter: ConvertAPI = ConvertAPI()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class API:
@@ -51,7 +51,7 @@ class API:
                 200: {"description": "Domain created"},
                 400: {"description": "Invalid domain name"},
                 403: {
-                    "description": "Domain missing for subdomain (e.g: a.b.frii.site needs b.frii.site registered)"
+                    "description": "Domain missing for subdomain (e.g: a.b.eepy.page needs b.eepy.page registered)"
                 },
                 405: {"description": "Domain limit exceeded"},
                 409: {"description": "Domain already in use"},

@@ -9,7 +9,7 @@ from database.table import Table
 from security.encryption import Encryption
 from security.session import Session
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 EXPIRE_TIME = 45 * 60
 

@@ -40,7 +40,7 @@ ApiType = TypedDict(
     {"string": str, "perms": List[ApiPermission], "domains": List[str], "comment": str},
 )
 
-logger = logging.getLogger("frii.site")
+logger = logging.getLogger("eepy.page")
 
 
 class UserManager(threading.Thread):
@@ -140,7 +140,7 @@ class Api:
         self.encryption: Encryption = users.encryption
 
         self.key: str = api_key
-        self.encrypted_key: str = Encryption.sha256(api_key + "frii.site")
+        self.encrypted_key: str = Encryption.sha256(api_key + "eepy.page")
 
         self.key_data: ApiType | None = self.__cache_data()
         self.valid: bool = self.__is_valid()
@@ -237,7 +237,7 @@ class Api:
             "comment": comment,
         }
 
-        encrypted_api_key: str = Encryption.sha256(api_key + "frii.site")
+        encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
         users.modify_document(
             {"_id": username}, "$set", f"api-keys.{encrypted_api_key}", key
         )

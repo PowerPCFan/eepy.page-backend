@@ -7,7 +7,7 @@ from database.tables.users import Users
 from database.table import Table
 from security.encryption import Encryption
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 RewardType = TypedDict(
     "RewardType",

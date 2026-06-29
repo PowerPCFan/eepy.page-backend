@@ -19,27 +19,27 @@ logger = logging.getLogger(__name__)
 class TestDomainValidation:
 
     def test_valid_name(self):
-        assert Validation.record_name_valid("example-domain.frii.site", "A")
-        assert Validation.record_name_valid("test_dkim.frii.site", "CNAME")
+        assert Validation.record_name_valid("example-domain.eepy.page", "A")
+        assert Validation.record_name_valid("test_dkim.eepy.page", "CNAME")
 
     def test_valid_subdomain(self):
-        assert Validation.record_name_valid("example.domain.frii.site", "A")
+        assert Validation.record_name_valid("example.domain.eepy.page", "A")
 
     def test_invalid_name(self):
-        assert not Validation.record_name_valid("Invälid_Recörd_Nämë.frii.site", "A")
-        assert not Validation.record_name_valid("a..b.frii.site", "A")
-        assert not Validation.record_name_valid("a..frii.site", "A")
+        assert not Validation.record_name_valid("Invälid_Recörd_Nämë.eepy.page", "A")
+        assert not Validation.record_name_valid("a..b.eepy.page", "A")
+        assert not Validation.record_name_valid("a..eepy.page", "A")
         assert not Validation.record_name_valid("", "A")
 
     def test_invalid_start_and_end(self):
-        assert not Validation.record_name_valid("example.frii.site.", "A")
-        assert not Validation.record_name_valid(".example.frii.site", "A")
+        assert not Validation.record_name_valid("example.eepy.page.", "A")
+        assert not Validation.record_name_valid(".example.eepy.page", "A")
 
     def test_txt_record(self):
-        assert Validation.record_name_valid("_verification.frii.site", "TXT")
+        assert Validation.record_name_valid("_verification.eepy.page", "TXT")
 
     def test_underscore_not_txt_record(self):
-        assert not Validation.record_name_valid("_verification.frii.site", "A")
+        assert not Validation.record_name_valid("_verification.eepy.page", "A")
 
     def test_valid_content(self):
         assert Validation.record_value_valid(["1.2.3.4"], "A")
@@ -64,14 +64,14 @@ class TestDomainValidation:
         assert Domains.unclean_domain_name("a[dot]b") == "a.b"
 
     def test_separation(self):
-        assert Domains.seperate_domain_into_parts("test.frii.site") == (
+        assert Domains.seperate_domain_into_parts("test.eepy.page") == (
             "test",
-            "frii.site",
+            "eepy.page",
         )
 
-        assert Domains.seperate_domain_into_parts("test[dot]frii[dot]site") == (
+        assert Domains.seperate_domain_into_parts("test[dot]eepy[dot]page") == (
             "test",
-            "frii.site",
+            "eepy.page",
         )
 
         assert Domains.seperate_domain_into_parts("test.pill.ovh") == (
@@ -86,23 +86,23 @@ class TestDomainValidation:
 
 class TestDomainUser:
     def test_register(self, domains: Domains, users: Users, test_user: UserType):
-        domains.add_domain(test_user["_id"], "TEST.frii.site", {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"})  # type: ignore
+        domains.add_domain(test_user["_id"], "TEST.eepy.page", {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"})  # type: ignore
         updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
         assert (
-            updated_user_data.get("domains", {}).get("TEST[dot]frii[dot]site") is None
+            updated_user_data.get("domains", {}).get("TEST[dot]eepy[dot]page") is None
         )
         assert (
-            updated_user_data.get("domains", {}).get("test[dot]frii[dot]site")
+            updated_user_data.get("domains", {}).get("test[dot]eepy[dot]page")
             is not None
         )
 
         users.modify_document(
             {"_id": test_user["_id"]},
             "$set",
-            "domains.TEST3[dot]frii[dot]site",
+            "domains.TEST3[dot]eepy[dot]page",
             {"ip": "0.0.0.0", "type": "A", "registered": time.time()},
         )
 
@@ -111,35 +111,35 @@ class TestDomainUser:
             pytest.fail("Could not retrieve new user data")
 
         assert (
-            updated_user_data.get("domains", {}).get("TEST3[dot]frii[dot]site") is None
+            updated_user_data.get("domains", {}).get("TEST3[dot]eepy[dot]page") is None
         )
         assert (
-            updated_user_data.get("domains", {}).get("test3[dot]frii[dot]site")
+            updated_user_data.get("domains", {}).get("test3[dot]eepy[dot]page")
             is not None
         )
         users.remove_key({"_id": test_user["_id"]}, "domains.test3")
 
     def test_domain_not_free(self, validation: Validation, domains: Domains):
-        assert not validation.is_free("test.frii.site", "A", {}, False)
-        assert not validation.is_free("test.unowned.frii.site", "A", {}, False)
-        assert not validation.is_free("test.unowned.frii.site.", "A", {}, False)
-        assert not validation.is_free("test.unowned.frii.site.frii.site", "A", {}, False)
+        assert not validation.is_free("test.eepy.page", "A", {}, False)
+        assert not validation.is_free("test.unowned.eepy.page", "A", {}, False)
+        assert not validation.is_free("test.unowned.eepy.page.", "A", {}, False)
+        assert not validation.is_free("test.unowned.eepy.page.eepy.page", "A", {}, False)
 
         with pytest.raises(ValueError):
             validation.is_free("testwithouttld", "A", {})
 
-        assert validation.is_free("test20.frii.site", "A", {}, False)
+        assert validation.is_free("test20.eepy.page", "A", {}, False)
 
     def test_domain_highest_detection(self, validation: Validation, domains: Domains):
-        assert Validation.find_required_domain("a.b.frii.site") == "b[dot]frii[dot]site"
-        assert Validation.find_required_domain("a[dot]b[dot]frii[dot]site") == "b[dot]frii[dot]site"
-        assert Validation.find_required_domain("a.frii.site") is None
-        assert Validation.find_required_domain("a[dot]frii[dot]site") is None
+        assert Validation.find_required_domain("a.b.eepy.page") == "b[dot]eepy[dot]page"
+        assert Validation.find_required_domain("a[dot]b[dot]eepy[dot]page") == "b[dot]eepy[dot]page"
+        assert Validation.find_required_domain("a.eepy.page") is None
+        assert Validation.find_required_domain("a[dot]eepy[dot]page") is None
 
     def test_domain_limits(self, test_user: UserType, users: Users):
         # First test the default domain limit
-        assert Validation.can_user_register("test2.frii.site", test_user)[0]
-        assert Validation.can_user_register("subdomain.test2.frii.site", test_user)[0]
+        assert Validation.can_user_register("test2.eepy.page", test_user)[0]
+        assert Validation.can_user_register("subdomain.test2.eepy.page", test_user)[0]
 
         # Change domain limit to be 0. This stops the user from creating new domains, but still allows them to create subdomains
         users.modify_document(
@@ -151,8 +151,8 @@ class TestDomainUser:
             logger.critical("Failed to get testing account")
             quit()
 
-        assert not Validation.can_user_register("test2.frii.site", modified_user)[0]
-        assert Validation.can_user_register("subdomain.test2.frii.site", modified_user)[
+        assert not Validation.can_user_register("test2.eepy.page", modified_user)[0]
+        assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[
             0
         ]
 
@@ -167,7 +167,7 @@ class TestDomainUser:
             quit()
 
         assert not Validation.can_user_register(
-            "subdomain.test2.frii.site", modified_user
+            "subdomain.test2.eepy.page", modified_user
         )[0]
 
         users.modify_document(

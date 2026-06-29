@@ -7,7 +7,7 @@ from database.table import Table
 from security.encryption import Encryption
 from typing import TypedDict
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class StatusType(TypedDict):

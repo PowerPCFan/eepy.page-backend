@@ -6,7 +6,7 @@ from pymongo import MongoClient
 from database.table import Table
 
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Blogs(Table):

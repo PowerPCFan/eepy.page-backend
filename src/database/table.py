@@ -6,7 +6,7 @@ from pymongo.cursor import Cursor
 from pymongo.database import Database
 from database.exceptions import FilterMatchError
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Table:

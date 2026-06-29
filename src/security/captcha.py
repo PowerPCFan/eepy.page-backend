@@ -2,7 +2,7 @@ import requests  # type: ignore[import-untyped]
 import logging
 import json
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Captcha:

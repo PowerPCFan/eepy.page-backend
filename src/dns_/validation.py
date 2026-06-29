@@ -12,7 +12,7 @@ from dns_.types import AVAILABLE_TLDS, ALLOWED_TYPES
 if TYPE_CHECKING:
     from dns_.dns import DNS
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 UserCanRegisterResult = NamedTuple(
     "UserCanRegisterResult", [("success", bool), ("comment", str)]
@@ -107,7 +107,7 @@ class Validation:
     
     @staticmethod
     def find_required_domain(full_domain: str) -> str | None:
-        """Finds the highest level of the domain. E.g a.b.frii.site -> b.frii.site
+        """Finds the highest level of the domain. E.g a.b.eepy.page -> b.eepy.page
         Can be used to detect if domain is a subdomain using `is_subdomain = find_required_domain(...) != None`
 
         :param full_domain: The full domain name, including the TLD
@@ -250,7 +250,7 @@ class Validation:
     def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:
         """Checks whether users domain limit allows them to register a domain
 
-        :param domain: a beautified domain, eg a.b.frii.site
+        :param domain: a beautified domain, eg a.b.eepy.page
         :type domain: str
         :param user: the user who is registering
         :type user: UserType

@@ -35,7 +35,7 @@ class AccountData(UserPageType):
     accessed_from: List[str]
 
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Admin:

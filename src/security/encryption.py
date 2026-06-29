@@ -5,7 +5,7 @@ import bcrypt
 from cryptography.fernet import Fernet
 import logging
 
-logger = logging.getLogger("frii.site")
+logger = logging.getLogger("eepy.page")
 
 
 class Encryption:

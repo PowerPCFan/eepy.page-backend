@@ -24,7 +24,7 @@ from dns_.exceptions import DNSException, DomainExistsError
 from mail.email import Email
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Domain:
@@ -56,7 +56,7 @@ class Domain:
                 400: {"description": "Invalid domain name"},
                 401: {"description": "TLD not owned"},
                 403: {
-                    "description": "Domain missing for subdomain (e.g: a.b.frii.site needs b.frii.site registered)"
+                    "description": "Domain missing for subdomain (e.g: a.b.eepy.page needs b.eepy.page registered)"
                 },
                 405: {"description": "Domain limit exceeded"},
                 409: {"description": "Domain already in use"},
@@ -151,7 +151,7 @@ class Domain:
 
         _, tld = self.domains.seperate_domain_into_parts(domain_name)
 
-        if tld not in session.user_cache_data.get("owned-tlds", ["frii.site"]):
+        if tld not in session.user_cache_data.get("owned-tlds", ["eepy.page"]):
             raise HTTPException(
                 status_code=401,
                 detail=f"User must purchase {tld} before registering this domain",
@@ -273,7 +273,7 @@ class Domain:
         domains: Dict[str, DomainFormat] = session.user_cache_data["domains"]
         domains = {k.replace("[dot]", "."): v for k, v in domains.items()}
 
-        return JSONResponse({"domains": domains, "owned-tlds": session.user_cache_data.get("owned-tlds", ["frii.site"])})  # type: ignore[return-value]
+        return JSONResponse({"domains": domains, "owned-tlds": session.user_cache_data.get("owned-tlds", ["eepy.page"])})  # type: ignore[return-value]
 
     @Session.requires_auth
     def delete(self, domain: str, session: Session = Depends(converter.create)) -> None:

@@ -9,7 +9,7 @@ from dns_.exceptions import DNSException
 from dns_.validation import Validation
 from dns_.types import RRSet, TYPES
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class ConflictingDomain(Exception):
@@ -85,7 +85,7 @@ class DNS:
             )
 
         request = requests.patch(
-            f"https://api.vps.frii.site/api/v1/servers/localhost/zones/{tld}.",
+            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps({"rrsets": [rrset]}),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
         )
@@ -106,7 +106,7 @@ class DNS:
         """
         Registers a new DNS record for the specified domain.
         Args:
-            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b.frii.site, NOT a[dot]b[dot]frii[dot]site)
+            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b.eepy.page, NOT a[dot]b[dot]eepy[dot]page)
             content (str): The content of the DNS record.
             type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
             user_id (str): ID of the user creating the record
@@ -122,7 +122,7 @@ class DNS:
         (name, tld) = Domains.seperate_domain_into_parts(domain)
 
         request = requests.patch(
-            f"https://api.vps.frii.site/api/v1/servers/localhost/zones/{tld}.",
+            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps(
                 {
                     "rrsets": [
@@ -196,7 +196,7 @@ class DNS:
             rrsets.append(rrset)
 
             request = requests.patch(
-                f"https://api.vps.frii.site/api/v1/servers/localhost/zones/{tld}.",
+                f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
             )
@@ -216,7 +216,7 @@ class DNS:
     def delete_domain(self, domain: str, type: str) -> bool:
         """Deletes a domain
 
-        :param domain: the full domain (e.g. a.b.frii.site)
+        :param domain: the full domain (e.g. a.b.eepy.page)
         :type domain: str
         :param type: the type of the domain (e.g. A, AAAA)
         :type type: str
@@ -229,7 +229,7 @@ class DNS:
         logger.info(f"deleting record {domain}")
 
         request = requests.patch(
-            f"https://api.vps.frii.site/api/v1/servers/localhost/zones/{tld}.",
+            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps(
                 {
                     "rrsets": [
@@ -284,7 +284,7 @@ class DNS:
 
         for tld, tld_rrsets in rrsets.items():
             request = requests.patch(
-                f"https://api.vps.frii.site/api/v1/servers/localhost/zones/{tld}.",
+                f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": tld_rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
             )

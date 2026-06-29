@@ -8,7 +8,7 @@ from security.encryption import Encryption
 
 INVITE_LENGTH: int = 16
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Invites(Users):

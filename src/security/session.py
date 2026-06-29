@@ -67,8 +67,8 @@ class AccessTokenData(TypedDict):
     exp: int  # Expiration timestamp (Unix)
     iat: int  # Issued at timestamp (Unix)
     jti: str  # Unique token ID
-    iss: Literal["https://api.frii.site"]
-    aud: Literal["www.frii.site"]
+    iss: Literal["https://api.eepy.page"]
+    aud: Literal["www.eepy.page"]
 
 
 class RefreshTokenData(TypedDict):
@@ -77,8 +77,8 @@ class RefreshTokenData(TypedDict):
     exp: int
     iat: int
     jti: str
-    iss: Literal["https://api.frii.site"]
-    aud: Literal["www.frii.site"]
+    iss: Literal["https://api.eepy.page"]
+    aud: Literal["www.eepy.page"]
 
 
 REFRESH_AMOUNT = 14 * 60 * 60 * 24
@@ -99,7 +99,7 @@ NewSessionType = TypedDict(
     },
 )
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class UserManager(threading.Thread):
@@ -199,8 +199,8 @@ class Session:
                 token,
                 os.environ.get("JWT_KEY") or "",
                 algorithms=["HS256"],
-                audience="www.frii.site",
-                issuer="https://api.frii.site",
+                audience="www.eepy.page",
+                issuer="https://api.eepy.page",
             )
 
             if data["type"] != type and type != "any":
@@ -235,7 +235,7 @@ class Session:
         discord_id: str = users.encryption.decrypt(user_data.get("discord-id", ""))
         try:
             req = requests.post(
-                f" https://fsbot.frii.site/api/notify?id={discord_id}",
+                f" https://fsbot.eepy.page/api/notify?id={discord_id}",
                 json={
                     "ip": ip,
                     "user-agent": user_agent,
@@ -437,8 +437,8 @@ class Session:
             "exp": now + 600,
             "iat": now - 1,
             "jti": secrets.token_hex(16),
-            "iss": "https://api.frii.site",
-            "aud": "www.frii.site",
+            "iss": "https://api.eepy.page",
+            "aud": "www.eepy.page",
         }
 
         refresh_data = {
@@ -447,8 +447,8 @@ class Session:
             "exp": now + REFRESH_AMOUNT,
             "iat": now - 1,
             "jti": secrets.token_hex(16),
-            "iss": "https://api.frii.site",
-            "aud": "www.frii.site",
+            "iss": "https://api.eepy.page",
+            "aud": "www.eepy.page",
         }
 
         secret = os.environ.get("JWT_KEY") or ""
@@ -555,7 +555,7 @@ class Session:
         display_name = self.encryption.decrypt(self.user_cache_data["display-name"])
         setup_url: str = pyotp.totp.TOTP(
             key_for_user, interval=30, digits=6
-        ).provisioning_uri(display_name, "frii.site")
+        ).provisioning_uri(display_name, "eepy.page")
 
         return {"url": setup_url, "codes": backup_keys}
 
@@ -728,7 +728,7 @@ class Session:
             List of permissions:
                 - admin: Not used anywhere atp
                 - reports: Used to manage and view vulnerabilities
-                - wildcards: To use wildcards in domains (*.frii.site)
+                - wildcards: To use wildcards in domains (*.eepy.page)
                 - userdetails: To view user details for abuse complaints
             ```
             @requires_permission(perm="admin")

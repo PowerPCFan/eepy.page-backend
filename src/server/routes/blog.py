@@ -13,7 +13,7 @@ from security.session import Session
 from security.convert import Convert
 
 converter: Convert = Convert()
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Blog:

@@ -17,7 +17,7 @@ from database.exceptions import (
     UserConflictError,
 )
 
-logger: logging.Logger = logging.getLogger("frii.site")
+logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 ReferralType = TypedDict(
