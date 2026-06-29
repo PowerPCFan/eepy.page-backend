@@ -39,7 +39,7 @@ class Domains(Users):
         return input.replace(".", "[dot]").lower()
 
     @staticmethod
-    def seperate_domain_into_parts(domain: str) -> Tuple[str, str]:
+    def separate_domain_into_parts(domain: str) -> Tuple[str, str]:
         """Returns the name and TLD of the domain
 
         :param domain: the full domain (e.g a.eepy.page)

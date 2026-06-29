@@ -1,10 +1,8 @@
-from typing import Literal, TypedDict, List, get_args
+from typing import Literal, TypedDict, get_args
 
-AVAILABLE_TLDS = Literal[
-    "eepy.page", "pill.ovh", "arr.ovh", "suomi.dev", "expect.ovh", "srvr.be"
-]
+AVAILABLE_TLDS = Literal["eepy.page", "worksonmymachine.top"]
 TYPES = Literal["A", "AAAA", "CNAME", "TXT", "NS"]
-ALLOWED_TYPES: List[str] = list(get_args(TYPES))
+ALLOWED_TYPES: list[str] = list(get_args(TYPES))
 
 CHANGE_TYPE = Literal["REPLACE", "DELETE"]
 
@@ -20,4 +18,4 @@ class RRSet(TypedDict):
     type: TYPES
     ttl: int
     changetype: CHANGE_TYPE
-    records: List[Record]
+    records: list[Record]

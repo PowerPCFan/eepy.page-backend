@@ -1,26 +1,24 @@
+import datetime
+import json
+import logging
 import os
 import time
-import logging
-from typing import Any, List, TYPE_CHECKING, Literal, get_args
-from typing_extensions import NotRequired, Dict, Required, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, get_args
+
+import httpx
 from pymongo import MongoClient
-from database.table import Table
-from database.tables.referrals import Referrals
-from dns_.types import AVAILABLE_TLDS
-import requests  # type: ignore[import-untyped]
-import json
-import datetime
-from threading import Thread
 
 from database.exceptions import (
-    InviteException,
     EmailException,
+    InviteException,
     ReferralError,
     UserConflictError,
     UsernameException,
     UserNotExistError,
 )
-
+from database.table import Table
+from database.tables.referrals import Referrals
+from dns_.types import AVAILABLE_TLDS
 from mail.email import Email
 from security.encryption import Encryption
 from security.session import NewSessionType, OldSessionType
@@ -62,8 +60,12 @@ class InviteType(TypedDict):
 
 SignupType = Literal["email", "google"]
 
-MFA = TypedDict("MFA", {"verified": bool, "key": str, "recovery": List[str]})
-EncryptedString = str
+class MFA(TypedDict):
+    verified: bool
+    key: str
+    recovery: list[str]
+
+type EncryptedString = str
 
 UserPageType = TypedDict(
     "UserPageType",
@@ -74,15 +76,15 @@ UserPageType = TypedDict(
         "country": CountryType | dict,
         "created": int,
         "verified": bool,
-        "permissions": Dict[str, Any],
+        "permissions": dict[str, Any],
         "beta-enroll": bool,
-        "sessions": List[NewSessionType | OldSessionType] | List[dict],
-        "invites": Dict[str, InviteType],
+        "sessions": list[NewSessionType | OldSessionType] | list[dict],
+        "invites": dict[str, InviteType],
         "mfa_enabled": bool,
         "google-connected": bool,
         "referral-code": str | None,
         "referred-people": int | None,
-        "owned-tlds": List[str],
+        "owned-tlds": list[str],
         "discord-linked": bool,
     },
 )
@@ -99,28 +101,28 @@ UserType = TypedDict(
         "lang": str,
         "country": CountryType | dict,
         "email-hash": NotRequired[str],
-        "accessed-from": NotRequired[List[str]],
+        "accessed-from": NotRequired[list[str]],
         "created": int,  # Epoch timestamp
         "last-login": int,  # Epoch timestamp
         "permissions": dict,
         "verified": bool,
         "registered-with": NotRequired[SignupType],
         "has-linked-google": NotRequired[bool],
-        "domains": Required[Dict[str, "DomainFormat"]],
-        "feature-flags": NotRequired[Dict[str, bool]],
-        "api-keys": NotRequired[Dict[str, "ApiType"]],
+        "domains": Required[dict[str, "DomainFormat"]],
+        "feature-flags": NotRequired[dict[str, bool]],
+        "api-keys": NotRequired[dict[str, "ApiType"]],
         "credits": NotRequired[int],
         "beta-enroll": NotRequired[bool],
         "beta-updated": NotRequired[int],
-        "invites": NotRequired[Dict[str, InviteType]],
+        "invites": NotRequired[dict[str, InviteType]],
         "invite-code": NotRequired[str],
         "totp": NotRequired[MFA],
         "banned": NotRequired[Literal[True]],
-        "ban-reasons": NotRequired[List[str]],
+        "ban-reasons": NotRequired[list[str]],
         "referral-code": NotRequired[str],
         "referred-by": NotRequired[str],
         "referred-count": NotRequired[int],
-        "owned-tlds": List[str],
+        "owned-tlds": list[str],
         "discord-conn-code": NotRequired[str],
         "discord-linked": NotRequired[bool],
         "discord-id": NotRequired[EncryptedString],
@@ -129,12 +131,12 @@ UserType = TypedDict(
 
 
 class Users(Table):
-    def __init__(self, mongo_client: MongoClient):
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "eepy.page")
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY") or "none")
         self.referrals: Referrals = Referrals(mongo_client, self)
 
-    def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:
+    def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:  # noqa: A002
         data: UserType = self.find_item(filter)  # type: ignore[return-value,assignment]
 
         if data:
@@ -144,46 +146,47 @@ class Users(Table):
 
         return data
 
-    def find_users(self, filter: dict) -> List[UserType] | None:
+    def find_users(self, filter: dict) -> list[UserType] | None:  # noqa: A002
         return self.find_items(filter)  # type: ignore[return-value]
 
     def send_discord_analytic_webhook(
         self,
         country: str,
-        site_variant: Literal["canary.eepy.page", "www.eepy.page"] | str,
+        site_variant: Literal["canary.eepy.page", "www.eepy.page"] | str,  # noqa: PYI051
         hashed_username: str,
     ) -> None:
         start = time.time()
-        requests.post(
-            os.getenv("DC_WEBHOOK", ""),
-            data=json.dumps(
-                {
-                    "content": None,
-                    "embeds": [
-                        {
-                            "title": "New user signup",
-                            "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",
-                            "color": 31743,
-                            "timestamp": datetime.datetime.now(datetime.timezone.utc)
-                            .isoformat(timespec="milliseconds")
-                            .replace("+00:00", "Z"),
-                        }
-                    ],
-                    "attachments": [],
-                }
-            ),
-            headers={"Content-Type": "application/json"},
-        )
+        with httpx.Client() as client:
+            client.post(
+                os.getenv("DC_WEBHOOK", ""),
+                data=json.dumps(
+                    {
+                        "content": None,
+                        "embeds": [
+                            {
+                                "title": "New user signup",
+                                "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",
+                                "color": 31743,
+                                "timestamp": datetime.datetime.now(datetime.UTC)
+                                .isoformat(timespec="milliseconds")
+                                .replace("+00:00", "Z"),
+                            },
+                        ],
+                        "attachments": [],
+                    },
+                ), # pyright: ignore[reportArgumentType]
+                headers={"Content-Type": "application/json"},
+            )
         logger.debug(time.time() - start)
 
-    def create_user(
+    def create_user(  # noqa: PLR0913
         self,
         username: str,
         password: str | None,
         email: str,
         language: str,
-        country,
-        time_signed_up,
+        country,  # noqa: ANN001
+        time_signed_up,  # noqa: ANN001
         email_instance: Email,
         target_url: str,  # target_url should only be the hostname (e.g canary.eepy.page, www.eepy.page)
         dont_send_email: bool = False,
@@ -191,7 +194,6 @@ class Users(Table):
         refer_code: str | None = None,
         skip_verification: bool = False,
     ) -> str:
-        raise Exception("Registration disabled")
         logger.info(f"Creating user with username {username}")
         original_username: str = username
 
@@ -200,7 +202,8 @@ class Users(Table):
 
         if email_instance.is_taken(email):
             logger.warning("Email is already taken")
-            raise EmailException("Email is already in use!")
+            msg = "Email is already in use!"
+            raise EmailException(msg)
 
         if (
             self.find_item(
@@ -208,12 +211,13 @@ class Users(Table):
                     "$or": [
                         {"_id": hashed_username},
                         {"username": lowercase_hashed_username},
-                    ]
-                }
+                    ],
+                },
             )
             is not None
         ):
-            raise UsernameException("Username already taken!")
+            msg_0 = "Username already taken!"
+            raise UsernameException(msg_0)
 
         account_data: UserType = {
             "_id": hashed_username,
@@ -237,7 +241,7 @@ class Users(Table):
                 "invite": False,
             },
             "feature-flags": {},
-            "verified": True if skip_verification else False,
+            "verified": bool(skip_verification),
             "domains": {},
             "api-keys": {},
             "registered-with": signup_method,
@@ -254,21 +258,22 @@ class Users(Table):
                 account_data["referred-by"] = refer_code
             else:
                 logger.warning("Invalid referral code!")
-                raise ReferralError("Invalid referral code!")
+                msg_1 = "Invalid referral code!"
+                raise ReferralError(msg_1)
 
         self.insert_document(account_data)
         self.create_index("username")
 
         if dont_send_email:
             logger.warning(
-                "Don't send info activated in create_user. This is only meant for testing environments"
+                "Don't send info activated in create_user. This is only meant for testing environments",
             )
-        elif not skip_verification:
-            if not email_instance.send_verification_code(
-                target_url, hashed_username, email
-            ):
-                logger.info("Failed to send verification")
-                raise EmailException("Email already in use!")
+        elif not skip_verification and not email_instance.send_verification_code(
+            target_url, hashed_username, email,
+        ):
+            logger.info("Failed to send verification")
+            msg_2 = "Email already in use!"
+            raise EmailException(msg_2)
 
         try:
             self.send_discord_analytic_webhook(
@@ -285,11 +290,13 @@ class Users(Table):
         invite_user: UserType | None = self.find_user({"_id": user_id})
 
         if invite_user is None:
-            raise UserNotExistError("User does not exist!")
+            msg = "User does not exist!"
+            raise UserNotExistError(msg)
 
-        if len(invite_user.get("invites", {})) >= 3:
-            logger.info("User has surprassed their invite limit")
-            raise InviteException("Invite limit exceeded")
+        if len(invite_user.get("invites", {})) >= 3:  # noqa: PLR2004
+            logger.info("User has surpassed their invite limit")
+            msg_0 = "Invite limit exceeded"
+            raise InviteException(msg_0)
 
         self.table.update_one(
             {"_id": user_id},
@@ -300,14 +307,14 @@ class Users(Table):
                         "used_by": None,
                         "used_at": None,
                         "created": round(time.time()),
-                    }
-                }
+                    },
+                },
             },
         )
 
         return invite_code
 
-    def get_invites(self, user_id: str) -> Dict[str, InviteType] | dict:
+    def get_invites(self, user_id: str) -> dict[str, InviteType] | dict:
         """Get user's invites.
         Returns empty dict if no invites are found
         Raises ValueError if user does not exist
@@ -315,7 +322,8 @@ class Users(Table):
         user_data: UserType | None = self.find_user({"_id": user_id})
 
         if user_data is None:
-            raise UserNotExistError("Invalid user!")
+            msg = "Invalid user!"
+            raise UserNotExistError(msg)
 
         return user_data.get("invites", {})
 
@@ -323,7 +331,8 @@ class Users(Table):
         user_data: UserType | None = self.find_user({"_id": user_id})
 
         if user_data is None:
-            raise UserNotExistError("Invalid user")
+            msg = "Invalid user"
+            raise UserNotExistError(msg)
 
         return {
             "user_id": user_data["_id"],
@@ -345,11 +354,12 @@ class Users(Table):
     ) -> UserPageType:
         logger.info(f"Getting user profile for {user_id}")
         user_data: UserType | None = user_type or self.find_user(
-            {"_id": user_id}, find_banned
+            {"_id": user_id}, find_banned,
         )
 
         if user_data is None:
-            raise UserNotExistError("Invalid user")
+            msg = "Invalid user"
+            raise UserNotExistError(msg)
 
         # Two different filters because in the middle of migrating the session to JWTs
         session_data = session_table.find_items(
@@ -357,8 +367,8 @@ class Users(Table):
                 "$or": [
                     {"owner-hash": Encryption.sha256(user_id + "eepy.page")},
                     {"$and": [{"owner": user_id}, {"type": "refresh"}]},
-                ]
-            }
+                ],
+            },
         )  # type: ignore[assignment]
 
         for session in session_data:
@@ -382,7 +392,7 @@ class Users(Table):
             "verified": user_data["verified"],
             "permissions": user_data.get("permissions", {}),
             "beta-enroll": user_data.get("beta-enroll", False),
-            "google-connected": user_data.get("has-linked-google") == True,
+            "google-connected": user_data.get("has-linked-google") == True,  # noqa: E712
             # conversts datetime object of expire date in db to linux epoch int. fastapi's json encoder doesnt like datetime objects
             "sessions": session_data,  # type: ignore[typeddict-item]
             "invites": user_data.get("invites", {}),  # type: ignore[typeddict-item]
@@ -396,10 +406,10 @@ class Users(Table):
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
         self.modify_document({"_id": user_id}, "$set", "beta-enroll", mode)
         self.modify_document(
-            {"_id": user_id}, "$set", "beta-updated", round(time.time())
+            {"_id": user_id}, "$set", "beta-updated", round(time.time()),
         )
 
-    def mark_deletion_pending(self, userid: str, reasons: List[str]) -> None:
+    def mark_deletion_pending(self, userid: str, reasons: list[str]) -> None:
         self.table.update_one(
             {"_id": userid},
             {
@@ -416,7 +426,7 @@ class Users(Table):
     def perform_migrations(self, user: UserType) -> UserType:
         start = time.time()
         logger.debug(f"Running migrations for user {user['_id'][:12]}...")
-        domains: Dict[str, DomainFormat] = {}
+        domains: dict[str, DomainFormat] = {}
         fixed_domains = False
 
         for domain_name, domain in user["domains"].items():
@@ -429,11 +439,11 @@ class Users(Table):
             ):
                 fixed_domains = True
                 logger.info(
-                    f"Updated domain {domain_name.lower()} to have the new syntax"
+                    f"Updated domain {domain_name.lower()} to have the new syntax",
                 )
                 new_domain_name = new_domain_name + "[dot]eepy[dot]page"
 
-            if type(domain["ip"]) != list:
+            if not isinstance(domain["ip"], list):
                 fixed_domains = True
                 logger.info("Updating domain values to be a list")
 
@@ -452,14 +462,14 @@ class Users(Table):
         if not user.get("email-hash"):
             logger.info("Fixing user email hash")
             user["email-hash"] = self.encryption.sha256(
-                self.encryption.decrypt(user.get("email", "")) + "supahcool"
+                self.encryption.decrypt(user.get("email", "")) + "supahcool",
             )
             self.modify_document(
-                {"_id": user["_id"]}, "$set", "email-hash", user["email-hash"]
+                {"_id": user["_id"]}, "$set", "email-hash", user["email-hash"],
             )
 
         if len(set(user.get("accessed-from", []))) != len(
-            user.get("accessed-from", [])
+            user.get("accessed-from", []),
         ):
             logger.info("Fixing invalid accessed-from property")
             self.modify_document(
@@ -472,7 +482,7 @@ class Users(Table):
         if user.get("owned-tlds") is None:
             logger.info("Updated owned TLDs")
             self.modify_document(
-                {"_id": user["_id"]}, "$set", "owned-tlds", ["eepy.page"]
+                {"_id": user["_id"]}, "$set", "owned-tlds", ["eepy.page"],
             )
 
         logger.debug(f"Migrations took {time.time() - start :.5f}s")
@@ -500,17 +510,19 @@ class Users(Table):
 
     def verify_discord_connection(self, connection_code: str, discord_id: int) -> None:
         logger.info(
-            f"Connecting account to discord account with code {connection_code[:4]}..."
+            f"Connecting account to discord account with code {connection_code[:4]}...",
         )
         user: UserType | None = self.find_user({"discord-conn-code": connection_code})
 
         if user is None:
             logger.info("Code not found!")
-            raise ValueError("Invalid connection code!")
+            msg = "Invalid connection code!"
+            raise ValueError(msg)
 
         user.get("linked-discord-account")
         if user.get("discord-linked"):
-            raise UserConflictError("User has already linked code")
+            msg = "User has already linked code"
+            raise UserConflictError(msg)
 
         self.table.update_one(
             {"_id": user["_id"]},
@@ -518,7 +530,7 @@ class Users(Table):
                 "$set": {
                     "discord-linked": True,
                     "discord-id": self.encryption.encrypt(str(discord_id)),
-                }
+                },
             },
         )
 

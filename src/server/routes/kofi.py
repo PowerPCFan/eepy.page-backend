@@ -30,11 +30,15 @@ class PurchaseType(Enum):
         return None
 
 
-class LinkCodes(Enum):
-    EXTRA_DOMAIN = "65a532e32b"
-    ARROVH_SUBDOMAIN = "ee4b5170a6"
-    PILLOVH_SUBDOMAIN = "38e30ddc66"
-    DOMAIN_BUNDLE = "50a9f34469"
+DOMAIN_LINK_CODES: dict[str, str] = {
+    "LINKCODE": "worksonmymachine.top",
+}
+
+
+def add_tld_reward(mapping: dict[str, Any], tld: str) -> None:
+    add_to_set = mapping.setdefault("$addToSet", {})
+    owned_tlds = add_to_set.setdefault("owned-tlds", {"$each": []})
+    owned_tlds["$each"].append(tld)
 
 
 class Kofi:
@@ -56,7 +60,7 @@ class Kofi:
 
         logger.info("Initialized")
 
-    def webhook(self, request: Request, data: Annotated[str, Form()]) -> None:  # noqa: ARG002, C901
+    def webhook(self, request: Request, data: Annotated[str, Form()]) -> None:  # noqa: ARG002
         kofi_data: dict[str, Any] = json.loads(data)
 
         if kofi_data.get("verification_token") != os.environ.get("KOFI_VERIFICATION_TOKEN"):
@@ -82,38 +86,24 @@ class Kofi:
 
         logger.info("Recieved webhook from Ko-fi")
 
-        mapping: dict = {}
+        mapping: dict[str, Any] = {}
 
         code: str | None = None
 
-        if purchase_type == "Shop Order":
+        if purchase_type == PurchaseType.SHOP_ORDER:
             for item in kofi_data.get("shop_items", []):
                 item: dict[str, Any]
 
-                quantity: int = item.get("quantity", 1)
+                direct_link_code = str(item.get("direct_link_code"))
+                tld = DOMAIN_LINK_CODES.get(direct_link_code)
+                if not tld:
+                    logger.warning("Ignoring unknown Ko-fi shop item %s", direct_link_code)
+                    continue
 
-                match item.get("direct_link_code"):
-                    case LinkCodes.EXTRA_DOMAIN:
-                        increased_domains = 10 * quantity
-                        increased_subdomains = 100 * quantity
-                        mapping = {
-                            "$inc": {
-                                "permissions.max-domains": increased_domains,
-                                "permissions.max-subdomains": increased_subdomains,
-                            },
-                        }
-                    case LinkCodes.PILLOVH_SUBDOMAIN:
-                        mapping = {"$push": {"owned-tlds": "pill.ovh"}}
-                    case LinkCodes.ARROVH_SUBDOMAIN:
-                        mapping = {"$push": {"owned-tlds": "arr.ovh"}}
-                    case LinkCodes.DOMAIN_BUNDLE:
-                        mapping = {
-                            "$push": {
-                                "owned-tlds": {"$each": ["srvr.be", "pill.ovh", "arr.ovh"]},
-                            },
-                        }
+                add_tld_reward(mapping, tld)
 
-            code = self.rewards.create(email, mapping)
+            if mapping:
+                code = self.rewards.create(email, mapping)
 
         if code is None:
             raise HTTPException(

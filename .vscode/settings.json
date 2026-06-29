@@ -2,5 +2,6 @@
     "python.testing.pytestArgs": ["src"],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "python.testing.autoTestDiscoverOnSaveEnabled": false
+    "python.testing.autoTestDiscoverOnSaveEnabled": false,
+    "python.analysis.typeCheckingMode": "standard"
 }

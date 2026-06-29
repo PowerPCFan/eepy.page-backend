@@ -60,7 +60,7 @@ class DNS:
             if not success:
                 raise DNSException("DNS Modification failed", json={"success": success})
 
-        (name, tld) = Domains.seperate_domain_into_parts(domain)
+        (name, tld) = Domains.separate_domain_into_parts(domain)
 
         logger.debug(f"Modifying domain {name} tld {tld}")
 
@@ -119,7 +119,7 @@ class DNS:
 
         content = sanitize(content, type)
 
-        (name, tld) = Domains.seperate_domain_into_parts(domain)
+        (name, tld) = Domains.separate_domain_into_parts(domain)
 
         request = requests.patch(
             f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
@@ -173,7 +173,7 @@ class DNS:
         rrsets: List[RRSet] = []
 
         for domain, values in domains.items():
-            (name, tld) = Domains.seperate_domain_into_parts(domain)
+            (name, tld) = Domains.separate_domain_into_parts(domain)
 
             rrset: RRSet = {
                 "name": name + f".{tld}.",
@@ -224,7 +224,7 @@ class DNS:
         :rtype: bool
         """
 
-        (name, tld) = Domains.seperate_domain_into_parts(domain)
+        (name, tld) = Domains.separate_domain_into_parts(domain)
 
         logger.info(f"deleting record {domain}")
 
@@ -266,7 +266,7 @@ class DNS:
         rrsets: Dict[str, List[dict]] = {}
 
         for domain, type in domains.items():
-            (name, tld) = Domains.seperate_domain_into_parts(
+            (name, tld) = Domains.separate_domain_into_parts(
                 Domains.unclean_domain_name(domain)
             )
 

@@ -149,7 +149,7 @@ class Domain:
         if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
             raise HTTPException(status_code=412, detail="Deprecated usage of register. Please pass the TLD!")
 
-        _, tld = self.domains.seperate_domain_into_parts(domain_name)
+        _, tld = self.domains.separate_domain_into_parts(domain_name)
 
         if tld not in session.user_cache_data.get("owned-tlds", ["eepy.page"]):
             raise HTTPException(

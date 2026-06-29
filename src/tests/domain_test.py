@@ -60,23 +60,23 @@ class TestDomainValidation:
 
     def test_domain_clean(self):
         assert Domains.clean_domain_name("a.b") == "a[dot]b"
-        assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b"  # type: ignore
+        assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b" # pyright: ignore[reportArgumentType]
         assert Domains.unclean_domain_name("a[dot]b") == "a.b"
 
     def test_separation(self):
-        assert Domains.seperate_domain_into_parts("test.eepy.page") == (
+        assert Domains.separate_domain_into_parts("test.eepy.page") == (
             "test",
             "eepy.page",
         )
 
-        assert Domains.seperate_domain_into_parts("test[dot]eepy[dot]page") == (
+        assert Domains.separate_domain_into_parts("test[dot]eepy[dot]page") == (
             "test",
             "eepy.page",
         )
 
-        assert Domains.seperate_domain_into_parts("test.pill.ovh") == (
+        assert Domains.separate_domain_into_parts("test.worksonmymachine.top") == (
             "test",
-            "pill.ovh",
+            "worksonmymachine.top",
         )
 
     def test_sanitization(self):

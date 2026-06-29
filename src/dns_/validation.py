@@ -115,7 +115,7 @@ class Validation:
         :return: If is subdomain the highest level with the TLD at the end, else None
         :rtype: str | None
         """
-        domain, tld = Domains.seperate_domain_into_parts(full_domain)
+        domain, tld = Domains.separate_domain_into_parts(full_domain)
 
         domain = Domains.clean_domain_name(domain)
         logger.info(f"Checking if {domain} is subdomain")
@@ -180,7 +180,7 @@ class Validation:
             logger.info(f"User already owns domain {cleaned_domain}")
             return False
 
-        domain, tld = Domains.seperate_domain_into_parts(name)
+        domain, tld = Domains.separate_domain_into_parts(name)
 
         domain = Domains.clean_domain_name(domain)
 
@@ -257,7 +257,7 @@ class Validation:
         :return: whether the user can register
         :rtype: UserCanRegisterResult
         """
-        name, _ = Domains.seperate_domain_into_parts(domain)
+        name, _ = Domains.separate_domain_into_parts(domain)
         subdomain_amount: int = 0
         is_subdomain = Validation.find_required_domain(domain) != None
 
