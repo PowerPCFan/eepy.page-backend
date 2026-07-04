@@ -49,10 +49,7 @@ if not load_dotenv():
 
 tags_metadata: list[dict[str, str]] = [
     {"name": "domains", "description": "Viewing, creating, and managing domains"},
-    {
-        "name": "account",
-        "description": "Getting account data, changing settings, signing up, logging in",
-    },
+    {"name": "account", "description": "Getting account data, changing settings, signing up, logging in"},
     {"name": "invite", "description": "Viewing, creating, and managing invites"},
     {"name": "api", "description": "Routes that can be used with the public API"},
 ]

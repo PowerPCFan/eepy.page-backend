@@ -11,7 +11,7 @@ Please open issues on the frontend repo unless they are specific to the backend'
 - Push to your fork
 - Make a PR to eepy.page-backend dev branch
 
-## Setting up your development environmnet
+## Setting up your development environment
 ### Python
 #### Required Version
 - Python 3.12 or later
@@ -36,7 +36,7 @@ The intended IDE for working on this project is Visual Studio Code. All you need
 
 ## How to get linting working
 1. Install Ruff from the Visual Studio Code Marketplace (`charliermarsh.ruff`)
-2. Install Ruff using `pip` (**note:** if you already ran the commands in "**How to set up your Python environment**", you're good!)
+2. Install Ruff using `pip install ruff` (**note:** if you already ran the commands in "**Setting up your development environment**" > "**Python**", you're good!)
 3. It should be good now! `.vscode/settings.json` and `ruff.toml` will automatically set up the proper settings for you
 
 ## A note on linting and type checking
