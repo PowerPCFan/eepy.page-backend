@@ -83,6 +83,21 @@ class TestDomainValidation:
         assert sanitize("test.com", "CNAME") == "test.com."
         assert sanitize("test", "TXT") == '"test"'
 
+    def test_reserved_domains(self, validation: Validation):
+        assert Validation.is_reserved_domain("eepy.page")
+        assert Validation.is_reserved_domain("api.eepy.page")
+        assert Validation.is_reserved_domain("API.eepy.page")
+        assert Validation.is_reserved_domain("api.eepy.page.")
+        assert Validation.is_reserved_domain("api[dot]eepy[dot]page")
+        assert Validation.is_reserved_domain("www.worksonmymachine.top")
+        assert Validation.is_reserved_domain("_acme-challenge.eepy.page")
+        assert not Validation.is_reserved_domain("my-api.eepy.page")
+        assert not Validation.is_reserved_domain("www.project.eepy.page")
+
+        assert not validation.is_free("api.eepy.page", "A", {}, False)
+        assert not validation.is_free("www.worksonmymachine.top", "A", {}, False)
+        assert not validation.is_free("_acme-challenge.eepy.page", "TXT", {}, False)
+
 
 class TestDomainUser:
     def test_register(self, domains: Domains, users: Users, test_user: UserType):

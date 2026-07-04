@@ -39,7 +39,7 @@ class Blog:
             "/get/all",
             self.get_all,
             methods=["GET"],
-            responses={200: {"description": "Succesfully retrived blogs"}},
+            responses={200: {"description": "successfully retrived blogs"}},
             tags=["blog"],
         )
 

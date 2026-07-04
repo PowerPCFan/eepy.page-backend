@@ -1,8 +1,8 @@
-import datetime
 import json
 import logging
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, get_args
 
 import httpx
@@ -12,7 +12,6 @@ from database.exceptions import (
     EmailException,
     InviteException,
     ReferralError,
-    UserConflictError,
     UsernameException,
     UserNotExistError,
 )
@@ -85,7 +84,6 @@ UserPageType = TypedDict(
         "referral-code": str | None,
         "referred-people": int | None,
         "owned-tlds": list[str],
-        "discord-linked": bool,
     },
 )
 
@@ -94,7 +92,7 @@ UserType = TypedDict(
     {
         "_id": str,
         "email": str,
-        # Password is none if registered with another auth provider (e.g google). Is a bcrypt hash of a sha256 hash of the password if registered with email
+        # Password is none if registered with google. Argon2 hash if registered with email
         "password": str | None,
         "display-name": str,
         "username": NotRequired[str],
@@ -123,9 +121,6 @@ UserType = TypedDict(
         "referred-by": NotRequired[str],
         "referred-count": NotRequired[int],
         "owned-tlds": list[str],
-        "discord-conn-code": NotRequired[str],
-        "discord-linked": NotRequired[bool],
-        "discord-id": NotRequired[EncryptedString],
     },
 )
 
@@ -165,9 +160,9 @@ class Users(Table):
                         "embeds": [
                             {
                                 "title": "New user signup",
-                                "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",
+                                "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",  # noqa: E501
                                 "color": 31743,
-                                "timestamp": datetime.datetime.now(datetime.UTC)
+                                "timestamp": datetime.now(UTC)
                                 .isoformat(timespec="milliseconds")
                                 .replace("+00:00", "Z"),
                             },
@@ -225,7 +220,7 @@ class Users(Table):
             "password": (
                 None
                 if password is None
-                else self.encryption.create_password(Encryption.sha256(password))
+                else self.encryption.create_password(password)
             ),
             "display-name": self.encryption.encrypt(original_username),
             "username": lowercase_hashed_username,
@@ -248,7 +243,6 @@ class Users(Table):
             "has-linked-google": signup_method == "google",
             "credits": 200,
             "owned-tlds": ["eepy.page"],
-            "discord-linked": False,
         }
 
         if refer_code:
@@ -276,9 +270,7 @@ class Users(Table):
             raise EmailException(msg_2)
 
         try:
-            self.send_discord_analytic_webhook(
-                country["country"], target_url, hashed_username
-            )
+            self.send_discord_analytic_webhook(country["country"], target_url, hashed_username)
         except Exception as e:
             logger.warning(e)
 
@@ -393,14 +385,12 @@ class Users(Table):
             "permissions": user_data.get("permissions", {}),
             "beta-enroll": user_data.get("beta-enroll", False),
             "google-connected": user_data.get("has-linked-google") == True,  # noqa: E712
-            # conversts datetime object of expire date in db to linux epoch int. fastapi's json encoder doesnt like datetime objects
             "sessions": session_data,  # type: ignore[typeddict-item]
             "invites": user_data.get("invites", {}),  # type: ignore[typeddict-item]
             "mfa_enabled": user_data.get("totp", {}).get("verified", False),
             "referral-code": user_data.get("referral-code"),
             "referred-people": user_data.get("referred-count"),
             "owned-tlds": user_data.get("owned-tlds", ["eepy.page"]),
-            "discord-linked": user_data.get("discord-linked", False),
         }
 
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
@@ -415,8 +405,8 @@ class Users(Table):
             {
                 "$set": {
                     "banned": True,
-                    "deleted-in": datetime.datetime.now()
-                    + datetime.timedelta(weeks=52),
+                    "deleted-in": datetime.now(UTC)
+                    + timedelta(weeks=52),
                 },
                 "$push": {"ban-reasons": {"$each": reasons}},
             },
@@ -488,60 +478,3 @@ class Users(Table):
         logger.debug(f"Migrations took {time.time() - start :.5f}s")
 
         return user
-
-    def create_connection_code(self, user: UserType) -> str | None:
-        """Creates a linking code for the eepy.page bot
-
-        :param user: the user that the code will be created for
-        :type user: UserType
-        :return: the connection code. If user already has one, it will be returned.
-        :rtype: str
-        """
-        logger.info("Creating discord link code")
-
-        if user.get("discord-linked"):
-            logger.info("User has already linked account, giving back existing id")
-            return user.get("discord-conn-code")
-
-        code: str = self.encryption.generate_random_string(12)
-
-        self.modify_document({"_id": user["_id"]}, "$set", "discord-conn-code", code)
-        return code
-
-    def verify_discord_connection(self, connection_code: str, discord_id: int) -> None:
-        logger.info(
-            f"Connecting account to discord account with code {connection_code[:4]}...",
-        )
-        user: UserType | None = self.find_user({"discord-conn-code": connection_code})
-
-        if user is None:
-            logger.info("Code not found!")
-            msg = "Invalid connection code!"
-            raise ValueError(msg)
-
-        user.get("linked-discord-account")
-        if user.get("discord-linked"):
-            msg = "User has already linked code"
-            raise UserConflictError(msg)
-
-        self.table.update_one(
-            {"_id": user["_id"]},
-            {
-                "$set": {
-                    "discord-linked": True,
-                    "discord-id": self.encryption.encrypt(str(discord_id)),
-                },
-            },
-        )
-
-    def remove_discord_link(self, user: UserType) -> None:
-        self.table.update_one(
-            {"_id": user["_id"]},
-            {
-                "$unset": {
-                    "discord-id": "",
-                    "discord-conn-code": "",
-                },
-                "$set": {"discord-linked": False},
-            },
-        )

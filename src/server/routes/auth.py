@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict, Annotated, Any
+from typing import Annotated
 import time
 import logging
 import json
@@ -31,6 +31,7 @@ from security.captcha import Captcha
 from dns_.dns import DNS
 
 from server.routes.models.user import (
+    LoginRequest,
     SignUp,
 )
 
@@ -70,10 +71,10 @@ class Auth:
             methods=["POST"],
             responses={
                 200: {
-                    "description": "Login succesfull",
+                    "description": "Login successfull",
                     "content": {
                         "application/json": {
-                            "auth-token": f"Token you can use for accessing things",
+                            "auth-token": "Token you can use for accessing things",
                             "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
                         }
                     },
@@ -93,10 +94,10 @@ class Auth:
             methods=["POST"],
             responses={
                 200: {
-                    "description": "Refreshed tokens succesfully",
+                    "description": "Refreshed tokens successfully",
                     "content": {
                         "application/json": {
-                            "auth-token": f"Token you can use for accessing things",
+                            "auth-token": "Token you can use for accessing things",
                             "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
                         }
                     },
@@ -107,10 +108,10 @@ class Auth:
         )
 
         self.router.add_api_route(
-            "/auth/google/callback", self.google_oauth2, methods=["GET", "POST"]
+            "/auth/google/callback", self.google_oauth2, methods=["GET", "POST"],
         )
         self.router.add_api_route(
-            "/auth/link", self.create_linking_code, methods=["POST"]
+            "/auth/link", self.create_linking_code, methods=["POST"],
         )
 
         self.router.add_api_route(
@@ -118,7 +119,7 @@ class Auth:
             self.sign_up,
             methods=["POST"],
             responses={
-                200: {"description": "Sign up succesfull"},
+                200: {"description": "Sign up successfull"},
                 422: {"description": "Email is already in use"},
                 409: {"description": "Username is already in use"},
                 429: {"description": "Invalid captcha"},
@@ -145,26 +146,21 @@ class Auth:
     def login(
         self,
         request: Request,
-        x_auth_request: Annotated[str, Header()],
+        body: LoginRequest,
         x_captcha_code: Annotated[str, Header()],
         x_mfa_code: Annotated[str | None, Header()] = None,
-        x_plain_username: Annotated[str | None, Header()] = None,
     ):
-        # x_plain_username is used to mitigate a bug in the backend, causing none of the actual usernames just to be saved, just their hashes
+        # plain_username can backfill display-name/username for older rows that only stored hashes.
 
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
             raise HTTPException(429, detail="Invalid captcha")
 
-        login_token: List[str] = x_auth_request.split("|")
-
-        username_hash: str = login_token[0]
-        password_hash: str = login_token[1]
-
-        if Encryption.sha256(x_plain_username or "") != username_hash:
+        plain_username = body.plain_username
+        if Encryption.sha256(plain_username or "") != body.username_hash:
             logger.warning("Plain username doesnt match login... Setting as none")
-            x_plain_username = None
+            plain_username = None
 
-        user_data: UserType | None = self.table.find_user({"_id": username_hash})
+        user_data: UserType | None = self.table.find_user({"_id": body.username_hash})
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
@@ -179,24 +175,14 @@ class Auth:
             raise HTTPException(status_code=400, detail="Account made with google")
 
         ip: str = request.client.host  # type: ignore[union-attr]
-        if not Encryption.check_password(password_hash, user_data["password"]):  # type: ignore
-            Session.send_notification(
-                user_data,
-                self.table,
-                ip,
-                request.headers.get("User-Agent", "Unknown"),
-                False,
-                False,
-                "password",
-                "password",
-            )
+        if not Encryption().check_password(body.password, user_data["password"]): # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        logger.info(f"Login attempt from {username_hash}")
+        logger.info(f"Login attempt from {body.username_hash}")
 
         session_status: SessionCreateStatus = Session.create(
-            username_hash,
-            x_plain_username,
+            body.username_hash,
+            plain_username,
             x_mfa_code,
             ip,  # type: ignore[union-attr]
             request.headers.get("User-Agent", "Unknown"),
@@ -205,13 +191,13 @@ class Auth:
         )
 
         if session_status["mfa_required"]:
-            logger.debug(f"MFA error")
+            logger.debug("MFA error")
             raise HTTPException(status_code=412, detail="MFA required")
 
         if session_status["success"]:
             resp = JSONResponse({"auth-token": session_status["access_token"]})
 
-            is_debug = os.environ.get("debug", "False") == "True"
+            is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
 
             resp.set_cookie(
                 "refresh-token",
@@ -220,10 +206,11 @@ class Auth:
                 path="/refresh",
                 httponly=True,
                 samesite="lax" if is_debug else "none",
-                secure=False if is_debug else True,
+                secure=not is_debug,
             )
 
             return resp
+        return None
 
     def refresh(self, request: Request):
         refresh_token: str | None = request.cookies.get("refresh-token")
@@ -248,7 +235,7 @@ class Auth:
         access_token, refresh_token = session_data
         resp = JSONResponse({"auth-token": access_token})
 
-        is_debug = os.environ.get("debug", "False") == "True"
+        is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
 
         resp.set_cookie(
             "refresh-token",
@@ -257,7 +244,7 @@ class Auth:
             httponly=True,
             max_age=REFRESH_AMOUNT,
             samesite="lax" if is_debug else "none",
-            secure=False if is_debug else True,
+            secure=not is_debug,
         )
 
         return resp
@@ -295,14 +282,14 @@ class Auth:
 
             resp = RedirectResponse(f"{origin}/account/manage")
 
-            is_debug = os.environ.get("debug", "False") == "True"
+            is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
 
             resp.set_cookie(
                 "auth-token",
                 access,
                 max_age=ACCESS_AMOUNT,
                 samesite="lax" if is_debug else "none",
-                secure=False if is_debug else True,
+                secure=not is_debug,
             )
             resp.set_cookie(
                 "refresh-token",

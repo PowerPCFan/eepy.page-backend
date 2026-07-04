@@ -2,7 +2,7 @@ import os
 from typing import List, Dict, Annotated, Any
 import time
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 from fastapi import APIRouter, Request, Depends, Header, Query
 from fastapi.exceptions import HTTPException
@@ -42,6 +42,7 @@ from dns_.dns import DNS
 from server.routes.models.user import (
     ApiCreationBody,
     ApiDeletion,
+    MfaRecovery,
     MFACreation,
     SignUp,
     PasswordReset,
@@ -99,7 +100,7 @@ class User:
             self.redeem_code,
             methods=["POST"],
             responses={
-                200: {"description": "Succesfully redeemed code"},
+                200: {"description": "successfully redeemed code"},
                 412: {"description": "Invalid code"},
                 460: {"description": "Invalid session"},
             },
@@ -112,7 +113,7 @@ class User:
             self.resend_verification,
             methods=["POST"],
             responses={
-                200: {"description": "Email sent succesfully"},
+                200: {"description": "Email sent successfully"},
                 404: {"description": "Account does not exist"},
                 460: {"description": "Invalid session"},
             },
@@ -125,7 +126,7 @@ class User:
             self.verify_account,
             methods=["POST"],
             responses={
-                200: {"description": "Verified succesfully"},
+                200: {"description": "Verified successfully"},
                 400: {"description": "Code is invalid"},
                 404: {"description": "Account does not exist"},
             },
@@ -315,48 +316,10 @@ class User:
             tags=["account", "2fa"],
         )
 
-        self.router.add_api_route(
-            "/discord",
-            self.create_conn_code,
-            methods=["POST"],
-            responses={
-                400: {
-                    "description": "Account has linked discord but code isn't stored"
-                },
-                200: {"description": "Code created succesfully"},
-            },
-            status_code=200,
-            tags=["account", "discord"],
-        )
-
-        self.router.add_api_route(
-            "/discord",
-            self.remove_discord_conn,
-            methods=["DELETE"],
-            responses={
-                200: {"description": "Discord account detached"},
-            },
-            status_code=200,
-            tags=["account", "discord"],
-        )
-
-        self.router.add_api_route(
-            "/discord/link",
-            self.verify_discord_link,
-            methods=["POST"],
-            responses={
-                404: {"description": "Code does not exist"},
-                409: {"description": "Code has been linked already"},
-                200: {"description": "Code created succesfully"},
-            },
-            status_code=200,
-            tags=["account", "discord"],
-        )
-
         logger.info("Initialized")
 
     def create_mfa(
-        self, request: Request, session: Session = Depends(converter.create)
+        self, _request: Request, session: Session = Depends(converter.create)
     ) -> MFACreation:
         if session.user_cache_data.get("totp", {}).get("verified"):
             raise HTTPException(status_code=409, detail="MFA code already exists!")
@@ -365,7 +328,7 @@ class User:
 
     def verify_mfa_setup(
         self,
-        request: Request,
+        _request: Request,
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
     ) -> None:
@@ -376,7 +339,7 @@ class User:
 
     def delete_mfa(
         self,
-        request: Request,
+        _request: Request,
         session: Session = Depends(converter.create),
         x_mfa_code: Annotated[str | None, Header()] = None,
         x_backup_code: Annotated[str | None, Header()] = None,
@@ -395,17 +358,10 @@ class User:
     def delete_mfa_with_username_pass(
         self,
         request: Request,
-        x_auth_request: Annotated[str, Header()],
+        body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
     ):
-        # x_plain_username is used to mitigate a bug in the backend, causing none of the actual usernames just to be saved, just their hashes
-
-        login_token: List[str] = x_auth_request.split("|")
-
-        username_hash: str = login_token[0]
-        password_hash: str = login_token[1]
-
-        user_data: UserType | None = self.table.find_user({"_id": username_hash})
+        user_data: UserType | None = self.table.find_user({"_id": body.username_hash})
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
@@ -415,17 +371,17 @@ class User:
 
         if user_data.get(
             "registered-with", "email"
-        ) == "email" and not Encryption.check_password(
-            password_hash, user_data["password"]  # type: ignore
+        ) == "email" and not Encryption().check_password(
+            body.password, user_data["password"], # pyright: ignore[reportArgumentType]
         ):
             raise HTTPException(status_code=401, detail="Invalid password")
 
         try:
             Session.remove_mfa_static(
-                username_hash, self.table, user_data, x_backup_code
+                body.username_hash, self.table, user_data, x_backup_code,
             )
         except ValueError:
-            raise HTTPException(status_code=409)
+            raise HTTPException(status_code=409)  # noqa: B904
 
     @Session.requires_auth
     def get_settings(
@@ -433,7 +389,7 @@ class User:
     ) -> UserPageType:
         return JSONResponse(self.table.get_user_profile(session.username, self.session_table))  # type: ignore[return-value]
 
-    def resend_verification(self, request: Request, user_id: str):
+    def resend_verification(self, request: Request, user_id: str) -> None:
         self.codes.create_code("verification", user_id)
         from_url: str = request.headers.get("Origin", "https://www.eepy.page")
 
@@ -515,9 +471,9 @@ class User:
         user: UserType | None = self.table.find_user({"_id": session.user_id})
         if user is None:
             raise HTTPException(status_code=404, detail="Account not found")
-        this_year_timestamp: float = time.mktime(
-            time.strptime(f"01/01/{datetime.now().year}", "%d/%m/%Y")
-        )
+        this_year_timestamp = datetime(
+            datetime.now(UTC).year, 1, 1, tzinfo=UTC
+        ).timestamp()
         domains_registered: int = len(
             [
                 x
@@ -541,36 +497,6 @@ class User:
             total_users=total_users,
             unique_ips=unique_ips,
         )
-
-    @Session.requires_auth
-    def create_conn_code(
-        self,
-        request: Request,
-        session: Session = Depends(converter.create),
-    ) -> str:
-        code: str | None = self.table.create_connection_code(
-            user=session.user_cache_data
-        )
-        if code is None:
-            raise HTTPException(400, detail="User has already linked their account")
-
-        return code
-
-    def verify_discord_link(self, code: str, discord_id: int) -> None:
-        try:
-            self.table.verify_discord_connection(code, discord_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Code does not exist")
-        except UserConflictError:
-            raise HTTPException(
-                status_code=409, detail="User already has linked their account"
-            )
-
-    @Session.requires_auth
-    def remove_discord_conn(
-        self, request: Request, session: Session = Depends(converter.create)
-    ) -> None:
-        self.table.remove_discord_link(session.user_cache_data)
 
     @Session.requires_auth
     def create_api_token(
@@ -714,7 +640,7 @@ class User:
         if not code_status["valid"]:
             raise HTTPException(status_code=403, detail="Invalid code")
 
-        password: str = self.encryption.create_password(body.hashed_password)
+        password: str = self.encryption.create_password(body.password)
         username: str = code_status.get("account", "")
 
         Session.clear_sessions(username, self.session_table)

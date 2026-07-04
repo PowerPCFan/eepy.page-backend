@@ -40,8 +40,8 @@ GoogleUserResponse = TypedDict(
 
 class OAuth:
     def __init__(self, users: Users, sessions: Sessions, emails: Email) -> None:
-        self.google_client_id: str | None = os.environ.get("GOOGLE_CLIENT_ID")
-        self.google_client_secret: str | None = os.environ.get("GOOGLE_CLIENT_SECRET")
+        self.google_client_id: str | None = os.getenv("GOOGLE_CLIENT_ID")
+        self.google_client_secret: str | None = os.getenv("GOOGLE_CLIENT_SECRET")
 
         if not self.google_client_id or not self.google_client_secret:
             logger.error("No client id or client secret mentioned")

@@ -32,6 +32,7 @@ class DNS:
     def __init__(self, domains: Domains):
         self.table = domains
         self.key: str = os.getenv("PDNS_API_KEY") or ""
+        self.domain: str = os.getenv("PDNS_DOMAIN") or ""
 
     def modify_domain(
         self,
@@ -50,7 +51,7 @@ class DNS:
             domain (str): The domain name for the DNS record.
             user_id (str): The ID of the user registering the domain
         Returns:
-            bool: if record was modified succesfully
+            bool: if record was modified successfully
         Raises:
             DNSException: If the request to modify the DNS record fails.
         """
@@ -85,7 +86,7 @@ class DNS:
             )
 
         request = requests.patch(
-            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
+            f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps({"rrsets": [rrset]}),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
         )
@@ -122,7 +123,7 @@ class DNS:
         (name, tld) = Domains.separate_domain_into_parts(domain)
 
         request = requests.patch(
-            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
+            f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps(
                 {
                     "rrsets": [
@@ -196,7 +197,7 @@ class DNS:
             rrsets.append(rrset)
 
             request = requests.patch(
-                f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
+                f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
             )
@@ -220,7 +221,7 @@ class DNS:
         :type domain: str
         :param type: the type of the domain (e.g. A, AAAA)
         :type type: str
-        :return: whether was succesfull
+        :return: whether was successfull
         :rtype: bool
         """
 
@@ -229,7 +230,7 @@ class DNS:
         logger.info(f"deleting record {domain}")
 
         request = requests.patch(
-            f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
+            f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps(
                 {
                     "rrsets": [
@@ -284,7 +285,7 @@ class DNS:
 
         for tld, tld_rrsets in rrsets.items():
             request = requests.patch(
-                f"https://api.vps.eepy.page/api/v1/servers/localhost/zones/{tld}.",
+                f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": tld_rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
             )

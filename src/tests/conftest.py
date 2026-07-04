@@ -10,24 +10,20 @@ from dns_.validation import Validation
 from dns_.dns import DNS
 from security.encryption import Encryption
 from security.session import Session
+from pathlib import Path
 
 
 def load_user() -> UserType:
-    example_normal = {}
-    with open(os.path.join(".", "src", "tests", "example-data", "user.json"), "r") as f:
-        example_normal = json.load(f)
+    with (Path("src") / "tests" / "example-data" / "user.json").open() as f:
+        return json.load(f)
 
-    return example_normal  # type: ignore[return-value]
-
-
-import os
 import pymongo
 from cryptography.fernet import Fernet
 import secrets
-from database.tables.users import Users
 from mail.email import Email
 import time
 from dotenv import load_dotenv
+import sys
 
 load_dotenv()
 
@@ -59,7 +55,7 @@ country_data = {
 
 # The database is wiped every run, so it's okay to reset these
 def init_env():
-    print("Initializing environment varss")
+    print("Initializing environment vars")
     os.environ["ENC_KEY"] = Fernet.generate_key().decode("utf-8")
     os.environ["JWT_KEY"] = secrets.token_urlsafe(64)
 
@@ -70,7 +66,7 @@ def init_env():
         print(
             f"WARNING: test db url: {os.environ['MONGODB_TEST_URL']}. Are you sure it's real?"
         )
-        quit()
+        sys.exit()
 
     for db in client.list_database_names():
         if db == "admin":

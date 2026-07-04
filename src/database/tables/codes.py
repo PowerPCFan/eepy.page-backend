@@ -1,13 +1,14 @@
-from typing import Dict, List
-from typing_extensions import NotRequired, TypedDict
+import contextlib
 import logging
 import os
 import time
-import datetime
+from datetime import UTC, datetime, timedelta
+from typing import NotRequired, TypedDict
+
 from pymongo import MongoClient
+
 from database.table import Table
 from security.encryption import Encryption
-from security.session import Session
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -25,26 +26,25 @@ class CodeStatus(TypedDict):
 
 
 class Codes(Table):
-    def __init__(self, mongo_client: MongoClient):
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "codes")
 
-        self.verification_codes: Dict[str, GenericCodeFormat] = {}
-        self.recovery_codes: Dict[str, GenericCodeFormat] = {}
-        self.deletion_codes: Dict[str, GenericCodeFormat] = {}
-        self.link_codes: Dict[str, GenericCodeFormat] = {}
+        self.verification_codes: dict[str, GenericCodeFormat] = {}
+        self.recovery_codes: dict[str, GenericCodeFormat] = {}
+        self.deletion_codes: dict[str, GenericCodeFormat] = {}
+        self.link_codes: dict[str, GenericCodeFormat] = {}
 
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))  # type: ignore[arg-type]
+        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))
 
         self.__sync_codes()
 
     def __sync_codes(self) -> None:
         logger.info("Syncing codes...")
-        start = time.time()
-        codes: List[dict] = self.get_table()
+        codes: list[dict] = self.get_table()
 
         codes_found: int = 0
         for code in codes:
-            id: str = code["_id"]
+            id: str = code["_id"]  # noqa: A001
             getattr(self, f"{code['type']}_codes")[id] = {
                 "account": code["account"],
                 "expire": code["expire"],
@@ -54,7 +54,7 @@ class Codes(Table):
 
         logger.info(f"Synced {codes_found} codes")
 
-    def create_code(self, type: str, target_username: str) -> str:
+    def create_code(self, type: str, target_username: str) -> str:  # noqa: A002
         logger.info(f"Creating code with the type of {type}")
         code: str = Encryption.generate_random_string(16)
 
@@ -88,25 +88,24 @@ class Codes(Table):
             local_code = self.link_codes
 
         else:
-            raise ValueError("Code type is not valid")
+            msg = "Code type is not valid"
+            raise ValueError(msg)
 
-        self.insert_document(
-            {
-                "_id": code,
-                "type": type,
-                "expire": local_code[code]["expire"],
-                "account": local_code[code]["account"],
-                "expiresAfter": datetime.datetime.now()
-                + datetime.timedelta(seconds=EXPIRE_TIME),
-            }
-        )
+        self.insert_document({
+            "_id": code,
+            "type": type,
+            "expire": local_code[code]["expire"],
+            "account": local_code[code]["account"],
+            "expiresAfter": datetime.now(UTC)
+            + timedelta(seconds=EXPIRE_TIME),
+        })
         logger.info(f"Created code for user {target_username}")
 
         self.delete_in_time("expiresAfter")
 
         return code
 
-    def is_valid(self, code: str, type: str) -> CodeStatus:
+    def is_valid(self, code: str, type: str) -> CodeStatus:  # noqa: A002
         code_result = getattr(self, f"{type}_codes").get(code)
 
         if code_result is None:
@@ -123,11 +122,9 @@ class Codes(Table):
             "account": self.encryption.decrypt(code_result["account"]),
         }
 
-    def delete_code(self, code: str, type: str):
+    def delete_code(self, code: str, type: str) -> None:  # noqa: A002
         logger.info(f"Deleting code {code}")
         if type == "verification":
-            try:
+            with contextlib.suppress(Exception):
                 self.verification_codes[code]["expire"] = round(time.time() - 600)
-            except Exception:
-                pass
         self.table.delete_one({"_id": code})

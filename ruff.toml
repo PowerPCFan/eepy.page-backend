@@ -31,6 +31,7 @@ line-length = 120
 
 target-version = "py312"
 
+[lint]
 select = ["ALL"]
 ignore = [
     "UP015",   # Checks for redundant open modes
@@ -58,3 +59,6 @@ unfixable = []
 [format]
 quote-style = "double"
 indent-style = "space"
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]

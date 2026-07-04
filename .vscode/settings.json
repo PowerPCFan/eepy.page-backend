@@ -3,5 +3,21 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": false,
-    "python.analysis.typeCheckingMode": "standard"
+
+    "python.analysis.typeCheckingMode": "standard",
+
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+    },
+
+    "editor.formatOnType": false,
+    "editor.formatOnPaste": false,
+    "editor.formatOnSave": false,
+
+    "ruff.enable": true,
+    "ruff.lint.enable": true,
+    "ruff.organizeImports": true,
+    "ruff.format.backend": "internal",
+
+    "python.analysis.autoImportCompletions": true,
 }

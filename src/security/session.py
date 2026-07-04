@@ -1,30 +1,27 @@
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Literal
-from typing_extensions import TypedDict
-import os
-import time
-import datetime
-import threading
-import base64
-import pyotp
-from fastapi import Request
-from cryptography import fernet
-from functools import wraps
-import logging
-from enum import Enum
-import jwt
-from jwt import ExpiredSignatureError, InvalidSignatureError, DecodeError
-import secrets
-import requests  # type: ignore[import-untyped]
 
-from database.table import Table
-from security.encryption import Encryption
+import logging
+import os
+import secrets
+import threading
+import time
+from datetime import UTC, datetime, timedelta
+from enum import Enum
+from functools import wraps
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+import jwt
+import pyotp
+from jwt import DecodeError, ExpiredSignatureError, InvalidSignatureError
+
 from database.exceptions import UserNotExistError
+from security.encryption import Encryption
 
 if TYPE_CHECKING:
-    from database.tables.users import Users
-    from database.tables.users import UserType
+    from collections.abc import Callable
+
     from database.tables.sessions import Sessions
+    from database.tables.users import Users, UserType
 
 
 class SessionError(Exception):
@@ -43,17 +40,11 @@ class VerificationError(Exception):
     pass
 
 
-SessionCreateStatus = TypedDict(
-    "SessionCreateStatus",
-    {
-        "success": bool,
-        "mfa_required": bool,
-        "refresh_token": str | None,
-        "access_token": str | None,
-    },
-)
-
-from typing import TypedDict, Literal
+class SessionCreateStatus(TypedDict):
+    success: bool
+    mfa_required: bool
+    refresh_token: str | None
+    access_token: str | None
 
 
 class InvalidToken(Enum):
@@ -85,33 +76,37 @@ REFRESH_AMOUNT = 14 * 60 * 60 * 24
 ACCESS_AMOUNT = 900
 
 OldSessionType = TypedDict(
-    "OldSessionType", {"user-agent": str, "ip": str, "expires": int, "id": str}
-)
-NewSessionType = TypedDict(
-    "NewSessionType",
+    "OldSessionType",
     {
-        "owner": str,
-        "type": Literal["refresh", "access"],
-        "created": int,
-        "expires": int,
-        "agent": str,
+        "user-agent": str,
         "ip": str,
+        "expires": int,
+        "id": str,
     },
 )
+
+
+class NewSessionType(TypedDict):
+    owner: str
+    type: Literal["refresh", "access"]
+    created: int
+    expires: int
+    agent: str
+    ip: str
+
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class UserManager(threading.Thread):
-    # a thread to track user data (for security)
-    def __init__(self, users: Users, ip, userid):
-        super(UserManager, self).__init__()
+    def __init__(self, users: Users, ip: str, userid: str) -> None:
+        super().__init__()
         self.table: Users = users
         self.daemon = True
         self.ip = ip
         self.userid = userid
 
-    def start(self):
+    def start(self) -> None:
         self.table.table.update_one(
             {"_id": self.userid},
             {"$push": {"accessed-from": self.ip}, "$set": {"last-login": time.time()}},
@@ -121,7 +116,7 @@ class UserManager(threading.Thread):
 class Session:
     def __init__(self, access_token: str, users: Users, sessions: Sessions) -> None:
         """Creates a Session object.
-        Arguements:
+        Arguments:
             session_id: Access token found in X-Auth-Token header
             users: Instance of the user table
             sessions: Instance of the session table
@@ -131,7 +126,7 @@ class Session:
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))  # type: ignore[arg-type]
 
         self.token = access_token
-        self.token_result: AccessTokenData | InvalidToken = Session.__get_payload(self.token, "access")  # type: ignore
+        self.token_result: AccessTokenData | InvalidToken = Session.__get_payload(self.token, "access")  # pyright: ignore[reportAttributeAccessIssue]
 
         self.valid: bool = True
         self.expired: bool = False
@@ -172,7 +167,7 @@ class Session:
         logger.debug(f"Retrieving user data took {(time.time() - start):.4f}s")
         return data
 
-    def __get_permimssions(self):
+    def __get_permimssions(self) -> list[str]:
         if not self.valid:
             return []
 
@@ -182,14 +177,17 @@ class Session:
             if self.user_cache_data["permissions"].get(permission, True) is not False
         ]
 
-    def __get_flags(self):
+    def __get_flags(self) -> list[str]:
         if not self.valid:
             return []
-        return list(self.user_cache_data.get("feature-flags", {}).keys())  # type: ignore
+
+        flags: dict[str, bool] = self.user_cache_data.get("feature-flags", {})
+        return list(flags.keys()) if flags else []
 
     @staticmethod
     def __get_payload(
-        token: str, type: Literal["any", "refresh", "access"] = "any"
+        token: str,
+        type: Literal["any", "refresh", "access"] = "any",  # noqa: A002
     ) -> AccessTokenData | RefreshTokenData | InvalidToken:
         """
         Gets the payload insided the JWT token. Returns InvalidToken enum if toke nis inalid in some way
@@ -197,74 +195,33 @@ class Session:
         try:
             data = jwt.decode(
                 token,
-                os.environ.get("JWT_KEY") or "",
+                os.getenv("JWT_KEY") or "",
                 algorithms=["HS256"],
                 audience="www.eepy.page",
                 issuer="https://api.eepy.page",
             )
 
             if data["type"] != type and type != "any":
-                raise ValueError("Invalid type")
+                msg = "Invalid type"
+                raise ValueError(msg)
 
             return data
         except InvalidSignatureError:
-            logger.error("Invalid key")
+            logger.exception("Invalid key")
             return InvalidToken.invalid
         except ExpiredSignatureError:
-            logger.error("Refresh required")
+            logger.exception("Refresh required")
             return InvalidToken.expired
         except DecodeError:
-            logger.error("Decode error in key")
+            logger.exception("Decode error in key")
             return InvalidToken.invalid
-
-    @staticmethod
-    def send_notification(
-        user_data: UserType,
-        users: Users,
-        ip: str,
-        user_agent: str,
-        success: bool,
-        mfa_triggered: bool,
-        login_type: Literal["social", "password"] | str,
-        stage: Literal["password", "session"] = "session",
-    ):
-        if not user_data.get("discord-linked"):
-            return
-
-        logger.info("Sending login notification")
-        discord_id: str = users.encryption.decrypt(user_data.get("discord-id", ""))
-        try:
-            req = requests.post(
-                f" https://fsbot.eepy.page/api/notify?id={discord_id}",
-                json={
-                    "ip": ip,
-                    "user-agent": user_agent,
-                    "success": success,
-                    "mfa-triggered": mfa_triggered,
-                    "login-type": login_type,
-                    "login-stage": stage,
-                    "confirmation": os.environ.get("DC_KEY", ""),
-                },
-                timeout=5,
-            )
-
-            if req.status_code != 204:
-                logger.info("Status code: " + str(req.status_code))
-                raise ValueError("Invalid response code from server!")
-
-        except requests.exceptions.Timeout:
-            logger.error("Failed to send notification hook! (Timeout)")
-
-        except ValueError:
-            logger.error("Failed to send notification hook!")
-
-        except Exception as e:
-            logger.error(f"Failed to send notification hook! {e}")
-            logging.exception("Notification hook failed")
 
     @staticmethod
     def refresh(
-        refresh_token: str, session_table: Sessions, user_agent: str, ip: str
+        refresh_token: str,
+        session_table: Sessions,
+        user_agent: str,
+        ip: str,
     ) -> tuple[str, str] | Literal[False]:
         """
         Deletes the old refresh + access token, and replaces them with new ones.
@@ -287,19 +244,23 @@ class Session:
             return False
 
         delete_thread = threading.Thread(
-            target=session_table.delete_session_pair, args=(token_data["jti"],)
+            target=session_table.delete_session_pair,
+            args=(token_data["jti"]),
         )
         delete_thread.start()
 
         access_token, refresh_token = Session.create_session_pair(
-            token_data["sub"], user_agent, ip, session_table
+            token_data["sub"],
+            user_agent,
+            ip,
+            session_table,
         )
 
         delete_thread.join()
         return access_token, refresh_token
 
     @staticmethod
-    def create(
+    def create(  # noqa: PLR0913
         username: str,
         real_username: str | None,
         mfa_code: str | None,
@@ -328,26 +289,13 @@ class Session:
         user_data: UserType | None = users.find_user({"_id": username})
 
         if user_data is None:
-            raise UserNotExistError()
+            raise UserNotExistError
 
         user_has_mfa = user_data.get("totp", {}).get("verified")
         user_mfa_key = user_data.get("totp", {}).get("key")
 
-        login_type = "social" if skip_mfa else "password"
-
-        mfa_triggered = False
         if user_has_mfa and not skip_mfa:
-            mfa_triggered = True
             if not mfa_code:
-                Session.send_notification(
-                    user_data,
-                    users,
-                    ip,
-                    user_agent,
-                    success=False,
-                    mfa_triggered=True,
-                    login_type=login_type,
-                )
                 return SessionCreateStatus(
                     success=False,
                     mfa_required=True,
@@ -359,20 +307,12 @@ class Session:
             is_valid = totp_object.verify(mfa_code)
             if not is_valid:
                 if totp_object.verify(
-                    mfa_code, datetime.datetime.now() - datetime.timedelta(seconds=15)
+                    mfa_code,
+                    datetime.now(UTC) - timedelta(seconds=15),
                 ):
                     is_valid = True
                 else:
                     logger.warning("Invalid MFA")
-                    Session.send_notification(
-                        user_data,
-                        users,
-                        ip,
-                        user_agent,
-                        success=False,
-                        mfa_triggered=True,
-                        login_type=login_type,
-                    )
 
                     return SessionCreateStatus(
                         success=False,
@@ -382,15 +322,17 @@ class Session:
                     )
 
         access_token, refresh_token = Session.create_session_pair(
-            username, user_agent, ip, session_table
+            username,
+            user_agent,
+            ip,
+            session_table,
         )
 
         user_manager = UserManager(users, ip, username)
         user_manager.start()  # updates `last-login` and `accessed-from` fields of user
 
         if real_username and (
-            not user_data.get("display-name")
-            or user_data.get("display-name").startswith("gAAAAA")  # type: ignore[union-attr]
+            not user_data.get("display-name") or user_data.get("display-name").startswith("gAAAAA")  # type: ignore[union-attr]
         ):
             logger.info("Updating display-name and username")
             users.table.update_one(
@@ -399,19 +341,9 @@ class Session:
                     "$set": {
                         "display-name": users.encryption.encrypt(real_username),
                         "username": Encryption.sha256(real_username.lower()),
-                    }
+                    },
                 },
             )
-
-        Session.send_notification(
-            user_data,
-            users,
-            ip,
-            user_agent,
-            success=True,
-            mfa_triggered=mfa_triggered,
-            login_type=login_type,
-        )
 
         return SessionCreateStatus(
             success=True,
@@ -422,7 +354,10 @@ class Session:
 
     @staticmethod
     def create_session_pair(
-        username: str, user_agent: str, ip: str, session_table: Sessions
+        username: str,
+        user_agent: str,
+        ip: str,
+        session_table: Sessions,
     ) -> tuple[str, str]:
         """Creates a refresh and access token pair.
         This function is also used for refreshing tokens.
@@ -451,12 +386,12 @@ class Session:
             "aud": "www.eepy.page",
         }
 
-        secret = os.environ.get("JWT_KEY") or ""
+        secret = os.getenv("JWT_KEY") or ""
 
         access_token: str = jwt.encode(access_data, secret, algorithm="HS256")
         refresh_token: str = jwt.encode(refresh_data, secret, algorithm="HS256")
 
-        def submit_into_db():
+        def submit_into_db() -> None:
             logger.info("Sending sessions into db")
             session_table.add_session(
                 access_data["jti"],
@@ -481,36 +416,37 @@ class Session:
         return access_token, refresh_token
 
     @staticmethod
-    def clear_sessions(user_id: str, session_table: Sessions):
+    def clear_sessions(user_id: str, session_table: Sessions) -> bool:
         """Deletes every sesion that user has. Used mainly for resetting the password"""
         session_table.delete_many({"owner": user_id})
 
         return True
 
-    def delete(self, id) -> bool:
+    def delete(self, id: str) -> bool:  # noqa: A002
         """Deletes a specific session.
 
-        Arguements:
+        Arguments:
             self: being an instance of Session to authenticate that the person trying to delete the session actually has permissions to do so
             id: jwt id of the session. Can be access or refresh, both are handled
-        """
+        """  # noqa: E501
         if not self.valid:
             return False
 
         session_data = self.session_table.get_session(id)
 
         if session_data is None:
-            raise ValueError("Session not found!")
+            msg = "Session not found!"
+            raise ValueError(msg)
 
         success: bool = False
 
         if session_data.get("type") == "refresh":
             success = self.session_table.delete_session_pair(
-                session_data.get("_id", "")
+                session_data.get("_id", ""),
             )
         if session_data.get("type") == "access":
             success = self.session_table.delete_session_pair(
-                session_data.get("parent", "")  # type: ignore[arg-type]
+                session_data.get("parent", ""),  # type: ignore[arg-type]
             )
         else:
             logger.warning("Old sesssion schema found")
@@ -526,7 +462,7 @@ class Session:
         Until 2fa is verified, mfa will not be enforced on login
         """
         if not self.valid:
-            raise SessionError()
+            raise SessionError
 
         key_for_user = pyotp.random_base32()
 
@@ -536,10 +472,12 @@ class Session:
         user_data = self.users_table.find_user({"_id": self.username})
 
         if user_data is None:
-            raise UserNotExistError("User does not exist!")
+            msg = "User does not exist!"
+            raise UserNotExistError(msg)
 
         if user_data.get("totp", {}).get("verified"):
-            raise ValueError("Used already has 2FA")
+            msg_0 = "Used already has 2FA"
+            raise ValueError(msg_0)
 
         self.users_table.modify_document(
             {"_id": self.username},
@@ -553,25 +491,29 @@ class Session:
         )
 
         display_name = self.encryption.decrypt(self.user_cache_data["display-name"])
-        setup_url: str = pyotp.totp.TOTP(
-            key_for_user, interval=30, digits=6
-        ).provisioning_uri(display_name, "eepy.page")
+        setup_url: str = pyotp.totp.TOTP(key_for_user, interval=30, digits=6).provisioning_uri(
+            display_name,
+            "eepy.page",
+        )
 
         return {"url": setup_url, "codes": backup_keys}
 
-    def verify_2fa(self, code: str):
-        """Verifies that mfa code was succesfully created and set by the user.
+    def verify_2fa(self, code: str) -> bool:
+        """Verifies that mfa code was successfully created and set by the user.
         After verification is done, MFA is necessary to login
         """
         if not self.user_cache_data.get("totp"):
-            raise VerificationError("MFA not generated")
+            msg = "MFA not generated"
+            raise VerificationError(msg)
 
         if self.user_cache_data.get("totp", {}).get("verified"):
-            raise ValueError("User is already verified")
+            msg_0 = "User is already verified"
+            raise ValueError(msg_0)
 
         user_key = self.user_cache_data.get("totp", {}).get("key")
         if user_key is None:
-            raise ValueError("user does not have a key?")
+            msg_1 = "user does not have a key?"
+            raise ValueError(msg_1)
         totp_object = pyotp.TOTP(self.encryption.decrypt(user_key))
 
         is_valid = totp_object.verify(code)
@@ -596,7 +538,7 @@ class Session:
 
     def check_mfa_valid(self, code: str) -> bool:
         totp_object = pyotp.TOTP(
-            self.encryption.decrypt(self.user_cache_data.get("totp", {}).get("key"))  # type: ignore[arg-type]
+            self.encryption.decrypt(self.user_cache_data.get("totp", {}).get("key")),  # type: ignore[arg-type]
         )
         return totp_object.verify(code)
 
@@ -606,9 +548,7 @@ class Session:
 
         for code in codes:
             decrypted_code = self.encryption.decrypt(code)
-            logger.debug(
-                f"Checking mfa code {user_code[:4]}... to {decrypted_code[:4]}"
-            )
+            logger.debug(f"Checking mfa code {user_code[:4]}... to {decrypted_code[:4]}")
 
             if user_code == decrypted_code:
                 logger.debug("Found a matching code")
@@ -617,7 +557,7 @@ class Session:
 
         return found_code
 
-    def remove_mfa(self, backup_code: str | None, mfa_code: str | None):
+    def remove_mfa(self, backup_code: str | None, mfa_code: str | None) -> None:
         is_authenticated: bool = False
         if backup_code:
             logger.info("Checking backup code")
@@ -626,20 +566,19 @@ class Session:
             logger.info("Checking mfa code")
             is_authenticated = self.check_mfa_valid(mfa_code)
         if not is_authenticated:
-            raise ValueError("Invalid authentication")
+            msg = "Invalid authentication"
+            raise ValueError(msg)
 
         logger.info("Removing MFA from account...")
-        self.users_table.remove_key(
-            {
-                "_id": self.username,
-            },
-            "totp",
-        )
+        self.users_table.remove_key({"_id": self.username}, "totp")
 
     @staticmethod
     def remove_mfa_static(
-        userid: str, user_table: Users, user: UserType, backup_code: str
-    ):
+        userid: str,
+        user_table: Users,
+        user: UserType,
+        backup_code: str,
+    ) -> None:
         """
         Removes MFA without a session object. Used for when user removes 2fa with a backup code
         """
@@ -649,9 +588,7 @@ class Session:
 
         for code in codes:
             decrypted_code = user_table.encryption.decrypt(code)
-            logger.debug(
-                f"Checking mfa code {backup_code[:4]}... to {decrypted_code[:4]}"
-            )
+            logger.debug(f"Checking mfa code {backup_code[:4]}... to {decrypted_code[:4]}")
 
             if backup_code == decrypted_code:
                 logger.debug("Found a matching code")
@@ -659,7 +596,8 @@ class Session:
                 break
 
         if not found_code:
-            raise ValueError("Invalid backup code")
+            msg = "Invalid backup code"
+            raise ValueError(msg)
 
         user_table.remove_key(
             {
@@ -671,21 +609,17 @@ class Session:
     @staticmethod
     def find_session_instance(args: tuple, kwargs: dict) -> Session | None:
         """Finds session from args or kwargs."""
-        target: Session | None = None
-        if kwargs.get("session") is not None:
-            target = kwargs.get("session")  # type: ignore
-        else:
-            for arg in args:
-                if type(arg) is Session:
-                    target = arg
-        return target
+        return kwargs.get("session") or next(
+            (arg for arg in args if isinstance(arg, Session)),
+            None,
+        )
 
     @staticmethod
-    def requires_auth(func):
+    def requires_auth(func: Callable) -> Callable:
         """A decorator that checks if the session passed is valid.
         How to use:
 
-        To use:
+        Use:
             A: pass a key word arguement "session"
             B: pass an arguement with the sesson type
 
@@ -707,20 +641,22 @@ class Session:
 
         Throws:
             SessionError if session is not valid
-        """
+        """  # noqa: E501
 
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: tuple, **kwargs: dict) -> Callable:
             target: Session | None = Session.find_session_instance(args, kwargs)
+
             if not target or not target.valid:
-                raise SessionError("Session is not valid (requires auth)")
-            a = func(*args, **kwargs)
-            return a
+                msg = "Session is not valid (requires auth)"
+                raise SessionError(msg)
+
+            return func(*args, **kwargs)
 
         return wrapper
 
     @staticmethod
-    def requires_permission(permission: str):
+    def requires_permission(permission: str) -> Callable[[Callable], Callable]:
         """A decorator that checks if the session passed is valid and has the correct permission
         Use the same way as @requires_auth, but pass args into this.
 
@@ -743,25 +679,24 @@ class Session:
             SessionPermissionError: if permission is not met
         """
 
-        def decor(func):
+        def decor(func: Callable) -> Callable:
             @wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: tuple, **kwargs: dict) -> Callable:
                 target: Session | None = Session.find_session_instance(args, kwargs)
                 if not target or not target.valid:
-                    raise SessionError("Session is not valid (requires permission)")
+                    msg = "Session is not valid (requires permission)"
+                    raise SessionError(msg)
                 if permission not in target.permissions:
-                    raise SessionPermissonError(
-                        "User does not have correct permissions"
-                    )
-                a = func(*args, **kwargs)
-                return a
+                    msg = "User does not have correct permissions"
+                    raise SessionPermissonError(msg)
+                return func(*args, **kwargs)
 
             return wrapper
 
         return decor
 
     @staticmethod
-    def requires_flag(flag: str):
+    def requires_flag(flag: str) -> Callable[[Callable], Callable]:
         """To check if user has a specific feature flag
         To use:
             Same as @requires_auth
@@ -776,16 +711,17 @@ class Session:
             SessionFlagError if user does not have the flag.
         """
 
-        def decor(func):
+        def decor(func: Callable) -> Callable:
             @wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: tuple, **kwargs: dict) -> Callable:
                 target: Session | None = Session.find_session_instance(args, kwargs)
                 if not target or not target.valid:
-                    raise SessionError("Session is not valid (flag missing)")
+                    msg = "Session is not valid (flag missing)"
+                    raise SessionError(msg)
                 if flag not in target.flags:
-                    raise SessionFlagError(f"User is missing flag {flag}")
-                a = func(*args, **kwargs)
-                return a
+                    msg_0 = f"User is missing flag {flag}"
+                    raise SessionFlagError(msg_0)
+                return func(*args, **kwargs)
 
             return wrapper
 

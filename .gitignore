@@ -12,7 +12,8 @@ venv/
 server_key
 server_key.pub
 .mypy_cache/
-.pytest_cach
+.ruff_cache/
+.pytest_cache
 coverage.xml
 .coverage
 .pytest_cache

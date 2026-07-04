@@ -1,27 +1,17 @@
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Dict, Any, Literal
-from typing_extensions import TypedDict
+
 import logging
-import os
-import time
-import datetime
-import threading
-import base64
-import pyotp
-from fastapi import Request
-from cryptography import fernet
+from collections.abc import Callable
 from functools import wraps
+from typing import TYPE_CHECKING, Any, Literal
 
-from database.table import Table
-from security.encryption import Encryption
-from database.exceptions import UserNotExistError
+from typing_extensions import TypedDict
+
 from database.tables.domains import DomainFormat, Domains
-
+from security.encryption import Encryption
 
 if TYPE_CHECKING:
-    from database.tables.users import Users
-    from database.tables.users import UserType
-    from database.tables.sessions import Sessions
+    from database.tables.users import Users, UserType
 
 
 class ApiError(Exception): ...
@@ -33,106 +23,86 @@ class ApiPermissionError(Exception): ...
 class ApiRangeError(Exception): ...
 
 
-ApiPermission = Literal["register", "modify", "delete", "list", "userdetails"]
+type ApiPermission = Literal["register", "modify", "delete", "list", "userdetails"]
 
-ApiType = TypedDict(
-    "ApiType",
-    {"string": str, "perms": List[ApiPermission], "domains": List[str], "comment": str},
-)
+type GenericFunction = Callable[..., Any]
+
+class ApiType(TypedDict):
+    string: str
+    perms: list[ApiPermission]
+    domains: list[str]
+    comment: str
 
 logger = logging.getLogger("eepy.page")
-
-
-class UserManager(threading.Thread):
-    # a thread to track user data (for security)
-    def __init__(self, users: Users, ip, userid):
-        super(UserManager, self).__init__()
-        self.table: Users = users
-        self.daemon = True
-        self.ip = ip
-        self.userid = userid
-
-    def start(self):
-        self.table.table.update_one(
-            {"_id": self.userid},
-            {
-                "$addToSet": {"accessed-from": self.ip},
-                "$set": {"last-login": time.time()},
-            },
-        )
 
 
 class Api:
     @staticmethod
     def find_api_instance(args: tuple, kwargs: dict) -> Api | None:
         """Finds session from args or kwargs."""
-        target: Api | None = None
-        if kwargs.get("api") is not None:
-            target = kwargs.get("api")  # type: ignore
-        else:
-            for arg in args:
-                if type(arg) is Api:
-                    target = arg
-        return target
+
+        return kwargs.get("api") or next(
+            (arg for arg in args if isinstance(arg, Api)),
+            None,
+        )
 
     @staticmethod
-    def requires_auth(func):
+    def requires_auth(func: GenericFunction) -> GenericFunction:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: tuple, **kwargs: dict) -> GenericFunction:
             target: Api | None = Api.find_api_instance(args, kwargs)
             if target is None or not target.valid:
-                raise ApiError("API key is not valid")
-            a = func(*args, **kwargs)
-            return a
+                msg = "API key is not valid"
+                raise ApiError(msg)
+            return func(*args, **kwargs)
 
         return wrapper
 
     @staticmethod
-    def requires_permission(permission: ApiPermission):
-        def decor(func):
+    def requires_permission(permission: ApiPermission) -> Callable[[GenericFunction], GenericFunction]:
+        def decor(func: GenericFunction) -> GenericFunction:
             @wraps(func)
-            def wrapper(*args, **kwargs) -> Any:
+            def wrapper(*args: tuple, **kwargs: dict) -> GenericFunction:
                 target: Api | None = Api.find_api_instance(args, kwargs)
 
                 if target is None or not target.valid:
-                    raise ApiError("API is not valid")
+                    msg_2 = "API is not valid"
+                    raise ApiError(msg_2)
 
                 if permission not in target.permissions:
-                    raise ApiPermissionError(f"API key missing permission {permission}")
+                    msg_1 = f"API key missing permission {permission}"
+                    raise ApiPermissionError(msg_1)
 
-                target_domain: str | None = kwargs.get("domain") or (
-                    None
-                    if kwargs.get("body") is None
-                    else kwargs.get("body", {}).domain
-                )
+                target_domain_raw = kwargs.get("domain")
+                target_domain: str | None = target_domain_raw if isinstance(target_domain_raw, str) else None
+                if not target_domain:
+                    body = kwargs.get("body")
+                    target_domain = getattr(body, "domain", None) if body else None
 
-                if permission == "modify" or permission == "delete":
+                if permission in {"modify", "delete"}:
                     if target_domain is None:
-                        logger.error(
-                            "Target domain not specified in kwargs as 'domain'"
-                        )
+                        logger.error("Target domain not specified in kwargs as 'domain'")
                         logger.debug(f"Args: {args}; kwargs: {kwargs}")
-                        raise ValueError("Domain not specified")
+                        msg = "Domain not specified"
+                        raise ValueError(msg)
 
                     lookup_domain: str = Domains.clean_domain_name(target_domain)
 
                     if lookup_domain not in target.affected_domains:
                         logger.warning(f"{target_domain} not in affected domain")
-                        raise ApiRangeError("User cannot access this domain")
+                        msg_0 = "User cannot access this domain"
+                        raise ApiRangeError(msg_0)
 
                     logger.debug(f"API Key can modify domain {target_domain}")
 
-                of = func(*args, **kwargs)
-                return of
-
+                return func(*args, **kwargs)
             return wrapper
-
         return decor
 
     def __init__(self, api_key: str, users: Users) -> None:
         """Creates a Session object.
         Arguements:
-            session_id: The id of the session string of length SESSION_TOKEN_LENGHT. Usually found in X-Auth-Token header.
+            session_id: id of the session string of length SESSION_TOKEN_LENGTH. Usually found in X-Auth-Token header.
             ip: The request's ip
             database: Instance of the database class
         """
@@ -145,24 +115,22 @@ class Api:
         self.key_data: ApiType | None = self.__cache_data()
         self.valid: bool = self.__is_valid()
 
-        self.user_cache_data: "UserType" = self.__user_cache()
+        self.user_cache_data: UserType = self.__user_cache()
         self.username: str = self.__get_id()
         self.user_id: str = self.__get_id()
 
-        self.permissions: List[ApiPermission] = self.__get_permimssions()
+        self.permissions: list[ApiPermission] = self.__get_permimssions()
 
         if self.key_data:
-            self.affected_domains: List[str] = [
+            self.affected_domains: list[str] = [
                 Domains.clean_domain_name(d) for d in self.key_data.get("domains", [])
             ]
 
             if "*" in self.affected_domains:
-                logger.info(
-                    "Wildcard in affected domains! Filling with users domains..."
-                )
+                logger.info("Wildcard in affected domains! Filling with users domains...")
                 self.affected_domains = list(self.user_cache_data["domains"].keys())
 
-            self.user_domains: Dict[str, DomainFormat | None] = {
+            self.user_domains: dict[str, DomainFormat | None] = {
                 domain: self.user_cache_data["domains"].get(domain)
                 for domain in self.affected_domains
             }
@@ -172,21 +140,21 @@ class Api:
             self.user_domains = {}
 
     def __cache_data(self) -> ApiType | None:
-        user_data = self.users_table.find_item(
-            {f"api-keys.{self.encrypted_key}": {"$exists": True}}
-        )
+        user_data = self.users_table.find_item({
+            f"api-keys.{self.encrypted_key}": {"$exists": True},
+        })
+
         if user_data is None:
-            raise ValueError("User not found")
+            msg = "User not found"
+            raise ValueError(msg)
+
         return user_data["api-keys"][self.encrypted_key]
 
-    def __is_valid(self):
-        if self.key_data is None:
-            return False
+    def __is_valid(self) -> bool:
+        return self.key_data is not None
 
-        return True
-
-    def __user_cache(self) -> "UserType":
-        data: "UserType" | None = self.users_table.find_item({f"api-keys.{self.encrypted_key}": {"$exists": True}})  # type: ignore[assignment]
+    def __user_cache(self) -> UserType:
+        data: UserType | None = self.users_table.find_item({f"api-keys.{self.encrypted_key}": {"$exists": True}})  # type: ignore[assignment]
 
         if data is None:
             self.valid = False
@@ -200,7 +168,7 @@ class Api:
 
         return self.user_cache_data["_id"]
 
-    def __get_permimssions(self) -> List[ApiPermission]:
+    def __get_permimssions(self) -> list[ApiPermission]:
         if not self.valid or self.key_data is None:
             return []
 
@@ -211,24 +179,26 @@ class Api:
         username: str,
         users: Users,
         comment: str,
-        permissions: List[ApiPermission],
-        domains: List[str],
+        permissions: list[ApiPermission],
+        domains: list[str],
     ) -> str:
         api_key: str = "$APIV2=" + Encryption.generate_random_string(32)
         user_data: UserType | None = users.find_user({"_id": username})
         if user_data is None:
-            raise ValueError("User not found")
+            msg = "User not found"
+            raise ValueError(msg)
 
-        user_domains: Dict[str, "DomainFormat"] = user_data["domains"]
+        user_domains: dict[str, DomainFormat] = user_data["domains"]
 
-        cleaned_domains: List[str] = [Domains.clean_domain_name(d) for d in domains]
+        cleaned_domains: list[str] = [Domains.clean_domain_name(d) for d in domains]
         for domain in cleaned_domains:
             if (
                 Domains.clean_domain_name(domain) not in list(user_domains.keys())
                 and domain != "*"
             ):
                 logger.warning(f"Domain {domain} not in user_domain")
-                raise PermissionError(f"User does not own domain {domain}")
+                msg_0 = f"User does not own domain {domain}"
+                raise PermissionError(msg_0)
 
         key: ApiType = {
             "string": users.encryption.encrypt(api_key),
@@ -239,6 +209,9 @@ class Api:
 
         encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
         users.modify_document(
-            {"_id": username}, "$set", f"api-keys.{encrypted_api_key}", key
+            {"_id": username},
+            "$set",
+            f"api-keys.{encrypted_api_key}",
+            key,
         )
         return api_key

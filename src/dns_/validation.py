@@ -1,22 +1,87 @@
-from typing import List, Dict, NamedTuple, Literal, get_args
-from typing import TYPE_CHECKING
 import logging
-import string
 import re
-from database.tables.domains import Domains, DomainFormat
+import string
+from typing import TYPE_CHECKING, NamedTuple, get_args
+
+from database.exceptions import SubdomainError, UserNotExistError
+from database.tables.domains import DomainFormat, Domains
 from database.tables.users import UserType
-from database.exceptions import UserNotExistError, SubdomainError
-from dns_.exceptions import DNSException, DomainExistsError
-from dns_.types import AVAILABLE_TLDS, ALLOWED_TYPES
+from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
+from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 
 if TYPE_CHECKING:
     from dns_.dns import DNS
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-UserCanRegisterResult = NamedTuple(
-    "UserCanRegisterResult", [("success", bool), ("comment", str)]
-)
+class UserCanRegisterResult(NamedTuple):
+    success: bool
+    comment: str
+
+# todo: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json in the future
+RESERVED_ROOT_LABELS: set[str] = {
+    "abuse",
+    "account",
+    "admin",
+    "api",
+    "app",
+    "assets",
+    "auth",
+    "autoconfig",
+    "autodiscover",
+    "billing",
+    "blog",
+    "canary",
+    "cdn",
+    "checkout",
+    "cpanel",
+    "dashboard",
+    "dev",
+    "development",
+    "dns",
+    "docs",
+    "ftp",
+    "fsbot",
+    "help",
+    "health",
+    "healthcheck",
+    "koti",
+    "home",
+    "kofi",
+    "login",
+    "imap",
+    "localhost",
+    "signin",
+    "mail",
+    "monitor",
+    "monitoring",
+    "mta-sts",
+    "mx",
+    "ns",
+    "ns1",
+    "ns2",
+    "ns3",
+    "origin",
+    "pop",
+    "pop3",
+    "postmaster",
+    "redeem",
+    "register",
+    "root",
+    "sentry",
+    "smtp",
+    "staging",
+    "static",
+    "status",
+    "support",
+    "test",
+    "webmail",
+    "www",
+    "_acme-challenge",
+    "_dmarc",
+    "_domainkey",
+    "_smtp",
+}
 
 
 class Validation:
@@ -27,7 +92,7 @@ class Validation:
 
     @staticmethod
     def record_name_valid(name: str, type: str) -> bool:
-        always_allowed: List[str] = list(string.ascii_letters)
+        always_allowed: list[str] = list(string.ascii_letters)
 
         always_allowed.extend(list(string.digits))
         allowed_end = always_allowed.copy()
@@ -58,7 +123,7 @@ class Validation:
         return valid
 
     @staticmethod
-    def record_value_valid(values: List[str], type: str) -> bool:
+    def record_value_valid(values: list[str], type: str) -> bool:
         if type.upper() == "TXT":
             return True
 
@@ -74,7 +139,7 @@ class Validation:
                     all_valid = False
 
             elif type.upper() == "A":
-                allowed: List[str] = list(string.digits)
+                allowed: list[str] = list(string.digits)
                 allowed.append(".")
 
                 basic = all(char in allowed for char in value) and value.count(".") == 3
@@ -104,7 +169,20 @@ class Validation:
                 all_valid = False
 
         return all_valid
-    
+
+    @staticmethod
+    def is_reserved_domain(name: str) -> bool:
+        clean_name = Domains.unclean_domain_name(name).removesuffix(".").lower()
+        for tld in get_args(AVAILABLE_TLDS):
+            if clean_name == tld:
+                return True
+            if not clean_name.endswith(f".{tld}"):
+                continue
+
+            labels = [label for label in (clean_name[: -(len(tld) + 1)]).split(".") if label]
+            return len(labels) == 1 and labels[0] in RESERVED_ROOT_LABELS
+        return False
+
     @staticmethod
     def find_required_domain(full_domain: str) -> str | None:
         """Finds the highest level of the domain. E.g a.b.eepy.page -> b.eepy.page
@@ -120,7 +198,7 @@ class Validation:
         domain = Domains.clean_domain_name(domain)
         logger.info(f"Checking if {domain} is subdomain")
 
-        domain_parts: List[str] = Domains.clean_domain_name(domain).split("[dot]")
+        domain_parts: list[str] = Domains.clean_domain_name(domain).split("[dot]")
         logger.info(domain_parts)
         is_subdomain: bool = len(domain_parts) > 1
 
@@ -134,7 +212,7 @@ class Validation:
         self,
         name: str,
         type: str,
-        domains: Dict[str, DomainFormat],
+        domains: dict[str, DomainFormat],
         raise_exceptions: bool = True,
     ):
         """
@@ -142,7 +220,7 @@ class Validation:
         Args:
             name (str): The domain to check.
             type (str): The type of DNS record.
-            domains (Dict[str, DomainFormat]): A dictionary of domains owned by the user.
+            domains (dict[str, DomainFormat]): A dictionary of domains owned by the user.
             raise_exceptions (bool, optional): Whether to raise exceptions on validation errors. Defaults to True.
         Returns:
             bool: True if the domain name is free, False otherwise.
@@ -167,6 +245,12 @@ class Validation:
             logger.info(f"{name} Name is not valid")
             if raise_exceptions:
                 raise ValueError(f"Invalid record name '{name}'")
+            return False
+
+        if Validation.is_reserved_domain(name):
+            logger.info(f"{name} is reserved")
+            if raise_exceptions:
+                raise ReservedDomainError(f"Domain '{name}' is reserved")
             return False
 
         if type.upper() not in ALLOWED_TYPES:

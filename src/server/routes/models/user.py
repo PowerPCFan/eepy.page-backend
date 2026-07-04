@@ -11,9 +11,20 @@ class SignUp(BaseModel):
     language: str
 
 
+class LoginRequest(BaseModel):
+    username_hash: str
+    password: str
+    plain_username: str | None = None
+
+
 class PasswordReset(BaseModel):
     code: str
-    hashed_password: str
+    password: str
+
+
+class MfaRecovery(BaseModel):
+    username_hash: str
+    password: str
 
 
 class MFACreation(BaseModel):

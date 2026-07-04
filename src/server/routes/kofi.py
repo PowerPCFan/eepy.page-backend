@@ -52,7 +52,7 @@ class Kofi:
             self.webhook,
             methods=["POST"],
             responses={
-                200: {"description": "Succesfully registered event"},
+                200: {"description": "successfully registered event"},
                 401: {"description": "Invalid verification token passed"},
             },
             tags=["kofi"],
@@ -63,7 +63,7 @@ class Kofi:
     def webhook(self, request: Request, data: Annotated[str, Form()]) -> None:  # noqa: ARG002
         kofi_data: dict[str, Any] = json.loads(data)
 
-        if kofi_data.get("verification_token") != os.environ.get("KOFI_VERIFICATION_TOKEN"):
+        if kofi_data.get("verification_token") != os.getenv("KOFI_VERIFICATION_TOKEN"):
             logger.warning("Verification code did not match the Ko-fi verification code")
             raise HTTPException(status_code=401, detail="Invalid verification code")
 

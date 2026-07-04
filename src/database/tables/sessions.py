@@ -1,9 +1,11 @@
-from database.table import Table
-from typing import Literal, TypedDict
-import datetime
-import time
 import logging
-from database.exceptions import FilterMatchError
+import time
+from datetime import UTC, datetime
+from typing import Literal, TypedDict
+
+from pymongo import MongoClient
+
+from database.table import Table
 
 logger = logging.getLogger("eepy.page")
 
@@ -12,7 +14,7 @@ class NewSessionType(TypedDict):
     _id: str
     type: Literal["access", "refresh"]
     created: int
-    expires: datetime.datetime
+    expires: datetime
     agent: str
     ip: str
 
@@ -22,14 +24,14 @@ class AccessTokenType(NewSessionType):
 
 
 class Sessions(Table):
-    def __init__(self, mongo_client):
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "sessions")
 
-    def add_session(
+    def add_session(  # noqa: PLR0913
         self,
         uid: str,
         user_id: str,
-        type: Literal["access", "refresh"],
+        type: Literal["access", "refresh"],  # noqa: A002
         expires: int,
         user_agent: str,
         ip: str,
@@ -40,7 +42,7 @@ class Sessions(Table):
             "owner": user_id,
             "type": type,
             "created": round(time.time()),
-            "expires": datetime.datetime.fromtimestamp(expires),
+            "expires": datetime.fromtimestamp(expires, UTC),
             "agent": user_agent,
             "ip": ip,
         }
@@ -58,12 +60,12 @@ class Sessions(Table):
         """Deletes both the refresh and access token for said sesison"""
         logger.info("Marking session as disabled")
 
-        if len(refresh_uid) < 30:
+        if len(refresh_uid) < 30:  # noqa: PLR2004
             logger.error(f"Small refresh token passed {len(refresh_uid)}")
             return False
 
         del_count = self.delete_many(
-            {"$or": [{"_id": refresh_uid}, {"parent": refresh_uid}]}
+            {"$or": [{"_id": refresh_uid}, {"parent": refresh_uid}]},
         )
 
         if not del_count:

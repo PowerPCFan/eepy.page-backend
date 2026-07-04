@@ -112,7 +112,7 @@ class API:
             methods=["DELETE"],
             status_code=200,
             responses={
-                200: {"description": "Domain deleted succesfully"},
+                200: {"description": "Domain deleted successfully"},
                 403: {"description": "Domain does not exist, or user does not own it."},
                 404: {
                     "description": "Domain type couldn't be fetched, specify the type using the query parameter `type`"

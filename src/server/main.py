@@ -1,41 +1,38 @@
-from typing import List, Dict
-import threading
-import logging
-import sys
 import datetime
+import logging
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient
-from dotenv import load_dotenv
+import sys
+import threading
+
 import sentry_sdk
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pymongo import MongoClient
 
-from server.routes.user import User
-from server.routes.invite import Invite
-from server.routes.domain import Domain
-from server.routes.blog import Blog
-from server.routes.api import API
-from server.routes.admin import Admin
-from server.routes.auth import Auth
-from server.routes.kofi import Kofi
-
-from database.tables.users import Users
-from database.tables.sessions import Sessions
-from database.tables.invitation import Invites
+from database.tables.blogs import Blogs
 from database.tables.codes import Codes
 from database.tables.domains import Domains
-from database.tables.blogs import Blogs
-from database.tables.status import Status
+from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
-
+from database.tables.sessions import Sessions
+from database.tables.status import Status
+from database.tables.users import Users
 from dns_.dns import DNS
-
-from security.session import SessionError, SessionPermissonError
-from security.encryption import Encryption
-from security.api import ApiError, ApiRangeError, ApiPermissionError
-from security.admin import Admin as AdminTools
 from mail.email import Email
+from security.admin import Admin as AdminTools
+from security.api import ApiError, ApiPermissionError, ApiRangeError
+from security.encryption import Encryption
+from security.session import SessionError, SessionPermissonError
+from server.routes.admin import Admin
+from server.routes.api import API
+from server.routes.auth import Auth
+from server.routes.blog import Blog
+from server.routes.domain import Domain
+from server.routes.invite import Invite
+from server.routes.kofi import Kofi
+from server.routes.user import User
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -52,7 +49,7 @@ logger.info("Logger init")
 if not load_dotenv():
     logger.warning("Failed to load .env file")
 
-tags_metadata: List[Dict[str, str]] = [
+tags_metadata: list[dict[str, str]] = [
     {"name": "domains", "description": "Viewing, creating, and managing domains"},
     {
         "name": "account",
@@ -63,10 +60,8 @@ tags_metadata: List[Dict[str, str]] = [
 ]
 
 sentry_sdk.init(
-    dsn=os.environ.get("SENTRY_DSN"),
-    environment=(
-        "development" if os.environ.get("debug", "") == "True" else "production"
-    ),
+    dsn=os.getenv("SENTRY_DSN"),
+    environment=("development" if os.getenv("DEBUG", "") == "True" else "production"),
     send_default_pii=True,
 )
 
@@ -118,7 +113,7 @@ class VariableInitializer:
 
 v = VariableInitializer()
 
-threads: Dict[str, threading.Thread] = {
+threads: dict[str, threading.Thread] = {
     "users": threading.Thread(target=v.gather_users),
     "sessions": threading.Thread(target=v.gather_sessions),
     "invites": threading.Thread(target=v.gather_invites),
@@ -147,45 +142,41 @@ app.include_router(Blog(v.blogs, v.users, v.sessions).router)
 threads["codes"].join()
 
 email: Email = Email(v.codes, v.users, Encryption(os.environ["ENC_KEY"]))
-app.include_router(
-    User(v.users, v.sessions, v.invites, email, v.codes, v.dns, v.rewards).router
-)
+app.include_router(User(v.users, v.sessions, v.invites, email, v.codes, v.dns, v.rewards).router)
 app.include_router(Auth(v.users, v.sessions, v.invites, email, v.codes, v.dns).router)
 app.include_router(Kofi(email, v.rewards).router)
 
-app.include_router(
-    Admin(
-        v.users, v.sessions, AdminTools(v.users, v.sessions, v.domains, v.dns, email)
-    ).router
-)
+app.include_router(Admin(v.users, v.sessions, AdminTools(v.users, v.sessions, v.domains, v.dns, email)).router)
 
 
 @app.get("/status")
-async def status():
+async def status() -> JSONResponse:
     if not v.status:
         threads["status"].join()
 
     content = {
         "started-at": datetime.datetime.fromtimestamp(
-            float(os.environ.get("started-at", "0"))
+            float(os.getenv("STARTED_AT", "0")),
+            datetime.UTC,
         ).isoformat(),
-        "start-elapsed": f"{os.environ.get('start-elapsed')}s",
+        "start-elapsed": f"{os.getenv('START_ELAPSED')}s",
     }
+
     status = v.status.get()
-    if status != None:
+    if status is not None:
         content["message"] = status["message"]
 
     return JSONResponse(status_code=200, content=content)
 
 
 @app.exception_handler(SessionError)
-async def session_except_handler(request: Request, e: Exception):
+async def session_except_handler(_request: Request, e: Exception) -> JSONResponse:
     logger.warning(e.args)
     return JSONResponse(status_code=460, content={"message": "Invalid session"})
 
 
 @app.exception_handler(SessionPermissonError)
-async def session_permission_except_handler(request: Request, e: Exception):
+async def session_permission_except_handler(_request: Request, _e: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=461,
         content={"message": "You lack the necessary permissions to run this action"},
@@ -193,14 +184,15 @@ async def session_permission_except_handler(request: Request, e: Exception):
 
 
 @app.exception_handler(ApiError)
-async def api_except_handler(request: Request, e: Exception):
+async def api_except_handler(_request: Request, e: Exception) -> JSONResponse:
     return JSONResponse(
-        status_code=460, content={"message": "Invalid API key", "detail": e.args}
+        status_code=460,
+        content={"message": "Invalid API key", "detail": e.args},
     )
 
 
 @app.exception_handler(ApiRangeError)
-async def api_range_except_handler(request: Request, e: Exception):
+async def api_range_except_handler(_request: Request, e: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=461,
         content={
@@ -211,7 +203,7 @@ async def api_range_except_handler(request: Request, e: Exception):
 
 
 @app.exception_handler(ApiPermissionError)
-async def api_permission_except_handler(request: Request, e: Exception):
+async def api_permission_except_handler(_request: Request, e: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=462,
         content={
