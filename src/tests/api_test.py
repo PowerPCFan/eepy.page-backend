@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock  # type: ignore[import-untyped]
+from unittest.mock import MagicMock
 
 import pytest
 

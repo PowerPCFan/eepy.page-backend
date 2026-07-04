@@ -54,7 +54,7 @@ tags_metadata: list[dict[str, str]] = [
     {"name": "api", "description": "Routes that can be used with the public API"},
 ]
 
-debug = str(os.getenv("DEBUG", "False").lower().strip()) in {"true", "1", "y", "yes"}
+debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
 
 sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
@@ -78,6 +78,16 @@ app.add_middleware(
 )
 
 client: MongoClient = MongoClient(os.getenv("MONGODB_URL"))
+
+# upgraded deps and that caused mongo to start being super noisy for some reason perhaps its reading the DEBUG_MODE env var
+# for logr in [
+#     "pymongo",
+#     "pymongo.topology",
+#     "pymongo.connection",
+#     "pymongo.serverSelection",
+#     "pymongo.command",
+# ]:
+#     logging.getLogger(logr).setLevel(logging.WARNING)
 
 
 class VariableInitializer:

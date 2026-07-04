@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, get_args
 
-import httpx
+import requests
 from pymongo import MongoClient
 
 from database.exceptions import (
@@ -147,27 +147,25 @@ class Users(Table):
         hashed_username: str,
     ) -> None:
         start = time.time()
-        with httpx.Client() as client:
-            client.post(
-                os.getenv("DC_WEBHOOK", ""),
-                data=json.dumps(
-                    {
-                        "content": None,
-                        "embeds": [
-                            {
-                                "title": "New user signup",
-                                "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",  # noqa: E501
-                                "color": 31743,
-                                "timestamp": datetime.now(UTC)
-                                .isoformat(timespec="milliseconds")
-                                .replace("+00:00", "Z"),
-                            },
-                        ],
-                        "attachments": [],
-                    },
-                ),  # pyright: ignore[reportArgumentType]
-                headers={"Content-Type": "application/json"},
-            )
+        requests.post(
+            os.getenv("DC_WEBHOOK", ""),
+            data=json.dumps(
+                {
+                    "content": None,
+                    "embeds": [
+                        {
+                            "title": "New user signup",
+                            "description": f":flag_{country.lower()}: **{hashed_username}** just signed up on {site_variant} from {country}! :flag_{country.lower()}:",  # noqa: E501
+                            "color": 31743,
+                            "timestamp": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                        },
+                    ],
+                    "attachments": [],
+                },
+            ),  # pyright: ignore[reportArgumentType]
+            headers={"Content-Type": "application/json"},
+            timeout=5,
+        )
         logger.debug(time.time() - start)
 
     def create_user(  # noqa: PLR0913

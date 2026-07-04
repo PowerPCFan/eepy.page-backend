@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
-import ipinfo  # type: ignore[import-untyped]
+import ipinfo
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse

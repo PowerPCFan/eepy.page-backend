@@ -3,7 +3,7 @@ import os
 import time
 from typing import Annotated
 
-import ipinfo  # type: ignore[import-untyped]
+import ipinfo
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
@@ -32,7 +32,7 @@ from server.routes.models.user import (
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-is_debug = str(os.getenv("DEBUG", "False").lower().strip()) in {"true", "1", "y", "yes"}
+is_debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
 
 
 class Auth:

@@ -13,7 +13,7 @@ os.environ["STARTED_AT"] = str(start)
 
 if __name__ == "__main__":
     if "run" in sys.argv:
-        os.environ["DEBUG"] = "True"
+        os.environ["DEBUG_MODE"] = "True"
         print("====================\nDebug mode enabled\n====================")
         print("This mode is only intended for running local development instances of this backend.")
         print("Running the backend with `python3 src/main.py run` will automatically enable debug mode.")
@@ -25,9 +25,8 @@ if __name__ == "__main__":
             sys.exit(1)
 
         print("\n")
-        host, port = str(
-            input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> "),
-        ).split(":")
+        ipt = str(input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> "))
+        host, port = (ipt or "127.0.0.1:8000").split(":")
         host_c = str(host).strip().lower()
         port_c = int(str(port).strip().lower())
 
