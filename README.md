@@ -1,6 +1,6 @@
 # eepy.page-backend
 
-The backend for https://www.eepy.page/, a free subdomain registrar
+The backend for https://www.eepy.page/, a free subdomain registrar. The backend holds the code for domain registration and DNS management, authentication, emails, and more.
 
 Please open issues on the frontend repo unless they are specific to the backend's code: https://github.com/PowerPCFan/eepy.page-frontend/
 
@@ -10,6 +10,7 @@ Please open issues on the frontend repo unless they are specific to the backend'
 - Run tests and follow Ruff and Pyright/Pylance guidelines
 - Push to your fork
 - Make a PR to eepy.page-backend dev branch
+- Keep pull requests focused on a single feature or fix and open multiple if necessary
 
 ## Setting up your development environment
 ### Python
@@ -25,7 +26,9 @@ Please open issues on the frontend repo unless they are specific to the backend'
 3. `py -m pip install -r requirements.txt`  
 *If `py` cannot be found, try `python3` and `python`, however modern Python installs on Windows will likely use `py`*
 ### IDE
-The intended IDE for working on this project is Visual Studio Code. All you need to do to get it set up is install the recommended extensions for this project. If you'd rather manually install them:
+Visual Studio Code is the recommended IDE for working on this project.  
+Simply install the recommended extensions for this project.  
+VSCode should prompt you but if not, grab these:
 - Python (`ms-python.python`) (required)
 - Ruff (`charliermarsh.ruff`)
 - Pylance (`ms-python.vscode-pylance`)
@@ -58,7 +61,7 @@ Pylance will automatically check as you code and so will Ruff, but here are some
     - ⭐ `--diff`: shows a diff of what changes *would* be made when formatting
 
 ## How to run tests
-Tests will automatically be ran when you open a pull request or push code, but you should still run them after writing code.
+Tests will automatically be run when you open a pull request or push code, but you should still run them after writing code.
 
 I recommend using the VSCode extension `SanjulaGanepola.github-local-actions` and running tests via the GitHub action. This ensures that your code is tested in a clean, reproducible environment for consistency across developers' machines. Additionally, you don't have to worry about setting up a MongoDB instance for tests.
 
@@ -69,7 +72,14 @@ How to use the extension:
 4. In the "Workflows" tab, open the "Test checks" dropdown. You should see "pytest", "ruff", and "pyright".
 5. There's no need to run pyright or ruff, so what you want is pytest. Click the green play button next to the "pytest" option.
 6. Your integrated terminal will open with a simple picker. You want to select the "medium" image. Medium is only 500MB and installs quickly. Do NOT select Large, it's 20GB and will unpack to around 75GB on disk.
-7. `act` (the tool that GitHub Local Actions uses) will run the test, just as if it's being ran in a GitHub CI/CD pipeline. Please wait for the tests to complete. Once they're done, you should be able to see the test results in the same terminal. 
+7. `act` (the tool that GitHub Local Actions uses) will run the test, just as if it were being run in a GitHub Actions CI/CD pipeline. Please wait for the tests to complete; once they're done, you'll be able to see the test results in the same terminal.
 
-## A note on tests
-If you add a new feature, I request that you add tests for it, if possible.
+## Licensing
+
+eepy.page-backend - the backend for free subdomain registrar eepy.page  
+Copyright (C) 2026 PowerPCFan
+
+eepy.page-backend is based on frii.site-backend by ctih1 and includes portions  
+of its source code. Copyright to those portions remains with their original author(s).  
+The original project along with its license is available at  
+https://github.com/ctih1/frii.site-backend.
