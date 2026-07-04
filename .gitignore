@@ -18,3 +18,5 @@ coverage.xml
 .coverage
 .pytest_cache
 .env*
+.agents/
+.codex/
