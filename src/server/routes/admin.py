@@ -411,7 +411,7 @@ class Admin:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.add_domain(id, tld) # pyright: ignore[reportArgumentType]
+        self.admin_tools.add_domain(id, tld)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="manage-permissions")
@@ -424,7 +424,7 @@ class Admin:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.remove_domain(id, tld) # pyright: ignore[reportArgumentType]
+        self.admin_tools.remove_domain(id, tld)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")

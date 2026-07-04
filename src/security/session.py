@@ -185,6 +185,14 @@ class Session:
         return list(flags.keys()) if flags else []
 
     @staticmethod
+    def _jwt_key() -> str:
+        key = os.getenv("JWT_KEY")
+        if not key:
+            msg = "JWT_KEY environment variable is required"
+            raise RuntimeError(msg)
+        return key
+
+    @staticmethod
     def __get_payload(
         token: str,
         type: Literal["any", "refresh", "access"] = "any",
@@ -195,7 +203,7 @@ class Session:
         try:
             data = jwt.decode(
                 token,
-                os.getenv("JWT_KEY") or "",
+                Session._jwt_key(),
                 algorithms=["HS256"],
                 audience="www.eepy.page",
                 issuer="https://api.eepy.page",
@@ -207,13 +215,13 @@ class Session:
 
             return data
         except InvalidSignatureError:
-            logger.exception("Invalid key")
+            logger.warning("Invalid token signature")
             return InvalidToken.invalid
         except ExpiredSignatureError:
-            logger.exception("Refresh required")
+            logger.info("Token expired")
             return InvalidToken.expired
-        except DecodeError:
-            logger.exception("Decode error in key")
+        except (DecodeError, ValueError):
+            logger.warning("Invalid token payload")
             return InvalidToken.invalid
 
     @staticmethod
@@ -386,7 +394,7 @@ class Session:
             "aud": "www.eepy.page",
         }
 
-        secret = os.getenv("JWT_KEY") or ""
+        secret = Session._jwt_key()
 
         access_token: str = jwt.encode(access_data, secret, algorithm="HS256")
         refresh_token: str = jwt.encode(refresh_data, secret, algorithm="HS256")

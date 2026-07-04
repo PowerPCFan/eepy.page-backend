@@ -23,7 +23,7 @@ class Status(Table):
 
     def get(self) -> StatusType | None:
         logger.info("Getting active status")
-        return self.find_item({"active": True}) # pyright: ignore[reportReturnType]
+        return self.find_item({"active": True})  # pyright: ignore[reportReturnType]
 
     def set(self, message: str) -> None:
         self.modify_document(

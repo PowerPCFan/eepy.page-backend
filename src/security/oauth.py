@@ -152,7 +152,7 @@ class OAuth:
             msg = "Failed to create session"
             raise SessionError(msg)
 
-        return (session["access_token"], session["refresh_token"]) # pyright: ignore[reportReturnType]
+        return (session["access_token"], session["refresh_token"])  # pyright: ignore[reportReturnType]
 
     def link_google_account(
         self,

@@ -10,6 +10,10 @@ class TestEncryption:
         password = Encryption().create_password("test_password")
         assert Encryption().check_password("test_password", password)
         assert not Encryption().check_password("invalid_password", password)
+        assert not Encryption().check_password(
+            "test_password",
+            "$2a$12$v9112UdC1yPVGsebCUXK/OW35zMQwt2Z37Gw66tdyilgU72pTdSyG",
+        )
 
     def test_verification(self, encryption: Encryption) -> None:
         test_encryption = encryption.encrypt("test_string")

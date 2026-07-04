@@ -527,7 +527,6 @@ class User:
     ) -> dict[str, ApiType]:
         return session.user_cache_data.get("api-keys", {})
 
-
     @Session.requires_auth
     def get_key(
         self,

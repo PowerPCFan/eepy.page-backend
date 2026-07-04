@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import secrets
 from enum import Enum
 from typing import Annotated, Any
 
@@ -61,9 +62,20 @@ class Kofi:
         logger.info("Initialized")
 
     def webhook(self, request: Request, data: Annotated[str, Form()]) -> None:  # noqa: ARG002
-        kofi_data: dict[str, Any] = json.loads(data)
+        try:
+            kofi_data: dict[str, Any] = json.loads(data)
+        except json.JSONDecodeError:
+            logger.warning("Ko-fi webhook contained invalid JSON")
+            raise HTTPException(status_code=422, detail="Invalid JSON payload") from None
 
-        if kofi_data.get("verification_token") != os.getenv("KOFI_VERIFICATION_TOKEN"):
+        verification_token = os.getenv("KOFI_VERIFICATION_TOKEN")
+        submitted_token = kofi_data.get("verification_token")
+
+        if (
+            not verification_token
+            or not isinstance(submitted_token, str)
+            or not secrets.compare_digest(submitted_token, verification_token)
+        ):
             logger.warning("Verification code did not match the Ko-fi verification code")
             raise HTTPException(status_code=401, detail="Invalid verification code")
 

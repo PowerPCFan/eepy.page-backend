@@ -1,7 +1,8 @@
 import json
 import logging
+from typing import Any
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -21,10 +22,16 @@ class Captcha:
             timeout=5,
         )
 
-        success = response.json()["success"]
+        try:
+            data: dict[str, Any] = response.json()
+        except requests.JSONDecodeError:
+            logger.warning("Turnstile returned invalid JSON")
+            return False
+
+        success = data.get("success") is True
         if not success:
             logger.warning("Turnstile verification failed")
-            logger.warning(response.json())
+            logger.warning(data)
             return False
 
         logger.info("Captcha passed")

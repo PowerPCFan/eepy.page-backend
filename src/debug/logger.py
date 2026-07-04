@@ -65,4 +65,5 @@ class Logger:
             end = time()
             self.time_log(f"{func.__name__}: {abs(end - start)}")
             return result
+
         return wrap

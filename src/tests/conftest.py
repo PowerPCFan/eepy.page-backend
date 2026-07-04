@@ -1,6 +1,4 @@
-import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -15,22 +13,132 @@ from security.encryption import Encryption
 from security.session import Session
 
 
-def load_user() -> UserType:
-    with (Path("src") / "tests" / "example-data" / "user.json").open() as f:
-        return json.load(f)
-
-
 import secrets
 import sys
 import time
 
 import pymongo
 from cryptography.fernet import Fernet
-from dotenv import load_dotenv
 
 from mail.email import Email
 
-load_dotenv()
+def load_user() -> UserType:
+    mock_data: UserType = {
+        "_id": "ae5deb822e0d71992900471a7199d0d95b8e7c9d05c40a8245a281fd2c1d6684",
+        "email": "gAAAAABmRi2zhJO2MiZ31QY6zpGcrAADAaTgLXZ1AsHeXxCshXwFpelmR0t48PBs0K8EeElL2uZIWPEQd6gkwS81gwJ8o7s-hg49tuB5GctdFmFeEQ2z_H0=",
+        "email-hash": "52b13db7b7eec2f5bc592bb11159fbd76d1aa188c1d5bcedc5f993c415fc234e",
+        "password": Encryption().create_password("testing"),
+        "display-name": "gAAAAABmRi2zSvMOdm3RQWjRidbYB4sQe_qgQNNlnw_zOhttMUHPHowKDHgO3bDbW-5qAbrjWADM5YFimnj2RSb72AmSdhNkaW957Tv_0ZyM0JbO8dqGtj3H5Dt70YXIbalbLLo7AvZqbqvyKD7m4ofJTGkP-JPFKEecucq9eo-nQ_piAuPtieE=",
+        "lang": "fi",
+        "country": {
+            "ip": "176.93.136.59",
+            "hostname": "176-93-136-59.example.isp",
+            "city": "Helsinki",
+            "region": "Uusimaa",
+            "country": "FI",
+            "loc": "60.1695,24.9354",
+            "org": "AS16086 Example ISP",
+            "postal": "00100",
+            "timezone": "Europe/Helsinki",
+            "country_name": "Finland",
+            "isEU": True,
+            "country_flag_url": "https://cdn.ipinfo.io/static/images/countries-flags/FI.svg",
+            "country_flag": {
+                "emoji": "\ud83c\uddeb\ud83c\uddee",
+                "unicode": "U+1F1EB U+1F1EE"
+            },
+            "country_currency": {
+                "code": "EUR",
+                "symbol": "\u20ac"
+            },
+            "continent": {
+                "code": "EU",
+                "name": "Europe"
+            },
+            "latitude": "60.1695",
+            "longitude": "24.9354"
+        },
+        "created": 1715875251,
+        "last-login": 1743929055,
+        "permissions": {
+            "max-domains": 3,
+            "max-subdomains": 2
+        },
+        "verified": True,
+        "domains": {
+            "testing-domains": {
+                "id": "629dc7ce719cc5b852a86faa9183bbe60",
+                "type": "A",
+                "ip": "192.168.100.1",
+                "registered": 1744103140
+            },
+            "testing-domain2": {
+                "id": "629dc7ce719cc5b852a86faa9183bbe60",
+                "type": "A",
+                "ip": "192.168.100.1",
+                "registered": 1744103140
+            },
+            "testing-domain3": {
+                "id": "629dc7ce719cc5b852a86faa9183bbe60",
+                "type": "A",
+                "ip": "192.168.100.1",
+                "registered": 1744103140
+            },
+            "test1[dot]testing-domains": {
+                "id": "629dc7ce719cc5b852a86faa9183bbe60",
+                "type": "A",
+                "ip": "192.168.100.1",
+                "registered": 1744103140
+            },
+            "test2[dot]testing-domains": {
+                "id": "629dc7ce719cc5b852a86faa9183bbe60",
+                "type": "A",
+                "ip": "192.168.100.1",
+                "registered": 1744103140
+            }
+        },
+        "beta-enroll": False,
+        "credits": 400,
+        "feature-flags": {
+            "credits": True
+        },
+        "api-keys": {
+            "00795e160f60a2c94731ceed8fcba87c3949e5d3aa7ccffc55eb7330ab731636": {
+                "string": "gAAAAABm4vb60u99B3l6mTZGccDAhfAe3BXqvfRhT5spLhS9LMraIfGVVVfsHZ1kQewtScDeQBuCl7cVgyJFo6Rjondeb_hp-du-UDfskX05gy7wuWGMT3_Qk2OFSBvJdNDLRkitdyBQ",
+                "perms": [
+                    "delete",
+                    "modify"
+                ],
+                "domains": [
+                    "testing-domain"
+                ],
+                "comment": "Example comment"
+            }
+        },
+        "accessed-from": [
+            "176.93.129.231",
+            "217.152.116.140"
+        ],
+        "invites": {
+            "6MY6Y1YE05Wfkex9": {
+                "used": True,
+                "used_by": "5350e01c2a017d2e0a3f4664750f4ca22ded5e0ee553a69ebafc246b28d99867"
+            },
+            "zc8qcUcMLNqE3Dbj": {
+                "used": False
+            }
+        },
+        "owned-tlds": []
+    }
+
+    return mock_data
+
+
+# for now i think we're gonna skip this since we dont want to load the actual config for tests and also this wont be in ci/cd
+# load_dotenv()
+
+if os.getenv("MONGODB_TEST_URL") and not os.getenv("MONGODB_URL"):
+    os.environ["MONGODB_URL"] = os.environ["MONGODB_TEST_URL"]
 
 client: pymongo.MongoClient = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
 

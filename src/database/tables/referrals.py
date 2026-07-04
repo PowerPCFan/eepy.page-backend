@@ -89,7 +89,7 @@ class Referrals(Table):
         referral_code = referral_code.lower()
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code}) # pyright: ignore[reportAssignmentType]
+        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # pyright: ignore[reportAssignmentType]
         return referral is not None
 
     def use(self, user: "UserType", referral_code: str) -> None:
@@ -106,7 +106,7 @@ class Referrals(Table):
         logger.info(f"Using referral {referral_code}")
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code}) # pyright: ignore[reportAssignmentType]
+        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # pyright: ignore[reportAssignmentType]
 
         if referral is None:
             logger.warning("Referral does not exist!")
@@ -123,6 +123,6 @@ class Referrals(Table):
 
     def get_users(self, referral_code: str) -> list["UserType"]:
         referral_code = referral_code.lower()
-        referrals: list[UserType] = self.find_items({"referred-by": referral_code}) # pyright: ignore[reportAssignmentType]
+        referrals: list[UserType] = self.find_items({"referred-by": referral_code})  # pyright: ignore[reportAssignmentType]
 
         return referrals

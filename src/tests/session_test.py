@@ -79,13 +79,12 @@ class TestCreation:
     ) -> None:
         logger.info(test_user["country"])
         old_access_token = test_session.token
-        with pytest.raises(ValueError):
-            Session.refresh(
-                old_access_token,
-                sessions,
-                "BACKEND_TESTING",
-                test_user["country"]["ip"],
-            )
+        assert not Session.refresh(
+            old_access_token,
+            sessions,
+            "BACKEND_TESTING",
+            test_user["country"]["ip"],
+        )
 
         result = Session.refresh(
             test_session_refresh,
@@ -131,6 +130,17 @@ class TestCreation:
 
     def test_attributes(self, test_session: Session) -> None:
         assert test_session.user_id == test_session.username  # backwards compatability
+
+    def test_missing_jwt_key_fails_before_signing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("JWT_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="JWT_KEY"):
+            Session.create_session_pair(
+                "test-user",
+                "eepy.page-pytest-suite",
+                "192.168.1.1",
+                MagicMock(spec=Sessions),
+            )
 
 
 valid_session = MagicMock(spec=Session)
