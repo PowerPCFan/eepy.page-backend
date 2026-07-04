@@ -11,6 +11,7 @@ fi
 
 if ! command -v "$RUFF" >/dev/null 2>&1; then
     echo "pre-commit: ruff is not installed, please install it (\`pip install ruff\` inside your venv)" >&2
+    echo
     exit 1
 fi
 
@@ -20,8 +21,10 @@ after_status="$(git status --porcelain)"
 
 if [ "$before_status" != "$after_status" ]; then
     echo "pre-commit: ruff format changed files. Review and stage them, then commit again." >&2
+    echo
     exit 1
 else
-    echo "pre-commit: files already formatted; all set" >&2
+    echo "pre-commit: files already formatted; all set"
+    echo
     exit 0
 fi
