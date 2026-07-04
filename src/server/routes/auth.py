@@ -38,7 +38,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Auth:
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         table: Users,
         session_table: Sessions,
@@ -151,7 +151,7 @@ class Auth:
         body: LoginRequest,
         x_captcha_code: Annotated[str, Header()],
         x_mfa_code: Annotated[str | None, Header()] = None,
-    ):
+    ) -> JSONResponse | None:
         # plain_username can backfill display-name/username for older rows that only stored hashes.
 
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
@@ -211,7 +211,7 @@ class Auth:
             return resp
         return None
 
-    def refresh(self, request: Request):
+    def refresh(self, request: Request) -> JSONResponse:
         refresh_token: str | None = request.cookies.get("refresh-token")
 
         if not refresh_token:

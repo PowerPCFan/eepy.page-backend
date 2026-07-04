@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import MongoClient
 
-from database.tables.blogs import Blogs
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
@@ -28,7 +27,6 @@ from security.session import SessionError, SessionPermissonError
 from server.routes.admin import Admin
 from server.routes.api import API
 from server.routes.auth import Auth
-from server.routes.blog import Blog
 from server.routes.domain import Domain
 from server.routes.invite import Invite
 from server.routes.kofi import Kofi
@@ -104,9 +102,6 @@ class VariableInitializer:
         self.domains: Domains = Domains(client)
         self.dns: DNS = DNS(self.domains)
 
-    def gather_blogs(self) -> None:
-        self.blogs: Blogs = Blogs(client)
-
     def gather_status(self) -> None:
         self.status = Status(client)
 
@@ -119,7 +114,6 @@ threads: dict[str, threading.Thread] = {
     "invites": threading.Thread(target=v.gather_invites),
     "codes": threading.Thread(target=v.gather_codes),
     "domains": threading.Thread(target=v.gather_domains),
-    "blogs": threading.Thread(target=v.gather_blogs),
     "status": threading.Thread(target=v.gather_status),
 }
 
@@ -135,9 +129,6 @@ app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
 
 threads["invites"].join()
 app.include_router(Invite(v.users, v.sessions, v.invites).router)
-
-threads["blogs"].join()
-app.include_router(Blog(v.blogs, v.users, v.sessions).router)
 
 threads["codes"].join()
 

@@ -23,10 +23,17 @@ class Status(Table):
 
     def get(self) -> StatusType | None:
         logger.info("Getting active status")
-        return self.find_item({"active": True})  # type: ignore
+        return self.find_item({"active": True}) # pyright: ignore[reportReturnType]
 
     def set(self, message: str) -> None:
-        self.modify_document({"active": True}, "$set", "active", False, False, True)
+        self.modify_document(
+            filter={"active": True},
+            operation="$set",
+            key="active",
+            value=False,
+            create_if_not_exist=False,
+            ignore_no_matches=True,
+        )
         self.insert_document(
             {
                 "_id": Encryption.generate_random_string(16),

@@ -18,6 +18,7 @@ class Captcha:
                 {"secret": self.turnstile_key, "response": code, "remoteip": ip},
             ),
             headers={"Content-Type": "application/json"},
+            timeout=5,
         )
 
         success = response.json()["success"]

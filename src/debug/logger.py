@@ -1,5 +1,7 @@
 import threading
+from collections.abc import Callable
 from time import time
+from typing import Any
 
 
 class Webhook:
@@ -9,7 +11,7 @@ class Webhook:
 
 
 class LogManager(threading.Thread):
-    def __init__(self, message, webhook: Webhook, importance: str, filename: str) -> None:
+    def __init__(self, message: str, webhook: Webhook, importance: str, filename: str) -> None:
         super().__init__()
         self.daemon = True
         self.webhook = webhook
@@ -56,12 +58,11 @@ class Logger:
     def critical(self, message: str) -> None:
         print(f"{self.filename} - CRITICAL: {message}")
 
-    def time(self, func):
-        def wrap(*args, **kwargs):
+    def time(self, func: Callable) -> Callable:
+        def wrap(*args: tuple, **kwargs: dict) -> Any:  # noqa: ANN401
             start = time()
             result = func(*args, **kwargs)
             end = time()
             self.time_log(f"{func.__name__}: {abs(end - start)}")
             return result
-
         return wrap

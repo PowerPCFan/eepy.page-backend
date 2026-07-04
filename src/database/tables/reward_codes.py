@@ -35,7 +35,7 @@ class Rewards(Table):
 
         :param rewards: a mongodb mapping which specifies what properties to change. Eg: `{"$set": {"permissions.wildcards": True}}`
         :type rewards: dict
-        """
+        """  # noqa: E501
 
         document: RewardType = {
             "_id": Encryption.generate_random_string(16),

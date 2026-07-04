@@ -36,7 +36,7 @@ class Referrals(Table):
     def create(self, user_id: str, requested_code: str) -> None:
         requested_code = requested_code.lower()
         logger.info("Creating referral code")
-        if len(requested_code) < 3 or len(requested_code) > 50:
+        if len(requested_code) < 3 or len(requested_code) > 50:  # noqa: PLR2004
             msg = f"requested code is too long or too short! {requested_code}"
             raise ValueError(
                 msg,
@@ -89,7 +89,7 @@ class Referrals(Table):
         referral_code = referral_code.lower()
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # type: ignore
+        referral: ReferralType | None = self.find_item({"_id": lookup_request_code}) # pyright: ignore[reportAssignmentType]
         return referral is not None
 
     def use(self, user: "UserType", referral_code: str) -> None:
@@ -106,7 +106,7 @@ class Referrals(Table):
         logger.info(f"Using referral {referral_code}")
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # type: ignore
+        referral: ReferralType | None = self.find_item({"_id": lookup_request_code}) # pyright: ignore[reportAssignmentType]
 
         if referral is None:
             logger.warning("Referral does not exist!")
@@ -123,6 +123,6 @@ class Referrals(Table):
 
     def get_users(self, referral_code: str) -> list["UserType"]:
         referral_code = referral_code.lower()
-        referrals: list[UserType] = self.find_items({"referred-by": referral_code})  # type: ignore
+        referrals: list[UserType] = self.find_items({"referred-by": referral_code}) # pyright: ignore[reportAssignmentType]
 
         return referrals

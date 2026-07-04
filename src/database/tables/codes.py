@@ -44,7 +44,7 @@ class Codes(Table):
 
         codes_found: int = 0
         for code in codes:
-            id: str = code["_id"]  # noqa: A001
+            id: str = code["_id"]
             getattr(self, f"{code['type']}_codes")[id] = {
                 "account": code["account"],
                 "expire": code["expire"],
@@ -54,7 +54,7 @@ class Codes(Table):
 
         logger.info(f"Synced {codes_found} codes")
 
-    def create_code(self, type: str, target_username: str) -> str:  # noqa: A002
+    def create_code(self, type: str, target_username: str) -> str:
         logger.info(f"Creating code with the type of {type}")
         code: str = Encryption.generate_random_string(16)
 
@@ -106,7 +106,7 @@ class Codes(Table):
 
         return code
 
-    def is_valid(self, code: str, type: str) -> CodeStatus:  # noqa: A002
+    def is_valid(self, code: str, type: str) -> CodeStatus:
         code_result = getattr(self, f"{type}_codes").get(code)
 
         if code_result is None:
@@ -123,7 +123,7 @@ class Codes(Table):
             "account": self.encryption.decrypt(code_result["account"]),
         }
 
-    def delete_code(self, code: str, type: str) -> None:  # noqa: A002
+    def delete_code(self, code: str, type: str) -> None:
         logger.info(f"Deleting code {code}")
         if type == "verification":
             with contextlib.suppress(Exception):

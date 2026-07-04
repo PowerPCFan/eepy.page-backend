@@ -187,7 +187,7 @@ class Session:
     @staticmethod
     def __get_payload(
         token: str,
-        type: Literal["any", "refresh", "access"] = "any",  # noqa: A002
+        type: Literal["any", "refresh", "access"] = "any",
     ) -> AccessTokenData | RefreshTokenData | InvalidToken:
         """
         Gets the payload insided the JWT token. Returns InvalidToken enum if toke nis inalid in some way
@@ -422,7 +422,7 @@ class Session:
 
         return True
 
-    def delete(self, id: str) -> bool:  # noqa: A002
+    def delete(self, id: str) -> bool:
         """Deletes a specific session.
 
         Arguments:

@@ -84,16 +84,18 @@ class Admin:
 
         return True
 
-    def reinstate_user(self, user_id: str):
+    def reinstate_user(self, user_id: str) -> None:
         user_data: UserType | None = self.users.find_user(
             {"_id": user_id},
             find_banned=True,
         )
 
         if not user_data:
-            return UserNotExistError("User not found!")
+            msg = "User not found!"
+            raise UserNotExistError(msg)
         if not user_data.get("banned", False):
-            return ValueError("User is not banned!")
+            msg_0 = "User is not banned!"
+            raise ValueError(msg_0)
 
         self.users.table.update_one(
             {"_id": user_id},
@@ -110,7 +112,6 @@ class Admin:
             self.users.encryption.decrypt(user_data["email"]),
             "Account reinstated",
         )
-        return None
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
         user_data = self.users.find_user(
@@ -172,9 +173,9 @@ class Admin:
     ) -> AccountData | None:
         user_profile: UserPageType | None = self.users.get_user_profile(
             user_id,
-            self.sessions,
-            True,
-            user_type,
+            session_table=self.sessions,
+            find_banned=True,
+            user_type=user_type,
         )
 
         if not user_profile:
@@ -182,8 +183,8 @@ class Admin:
             return None
 
         user_data: UserType | None = user_type or self.users.find_user(
-            {"_id": user_id},
-            True,
+            filter={"_id": user_id},
+            find_banned=True,
         )
 
         if user_data is None:
@@ -270,4 +271,9 @@ class Admin:
         self.users.modify_document({"_id": user_id}, "$pull", "owned-tlds", tld)
 
     def verify(self, user_id: str) -> None:
-        self.users.modify_document({"_id": user_id}, "$set", "verified", True)
+        self.users.modify_document(
+            filter={"_id": user_id},
+            operation="$set",
+            key="verified",
+            value=True,
+        )

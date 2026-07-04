@@ -1,9 +1,10 @@
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-import resend  # type:ignore[import-untyped]
-import resend.exceptions  # type:ignore[import-untyped]
+import resend
+import resend.exceptions
 
 from security.encryption import Encryption
 
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
     from database.tables.users import Users, UserType
 
 
-template_path: str = os.path.join(".", "src", "mail", "templates")
+template_path: Path = Path("src") / "mail" / "templates"
 
 verify_template: str
 recovery_template: str
@@ -22,25 +23,25 @@ domain_delete_template: str
 purchase_template: str
 admin_template: str
 
-with open(os.path.join(template_path, "verify.html"), "r") as f:
+with (template_path / "verify.html").open() as f:
     verify_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "deletion.html"), "r") as f:
+with (template_path / "deletion.html").open() as f:
     deletion_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "recovery.html"), "r") as f:
+with (template_path / "recovery.html").open() as f:
     recovery_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "banned.html"), "r") as f:
+with (template_path / "banned.html").open() as f:
     banned_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "domain_removal.html"), "r") as f:
+with (template_path / "domain_removal.html").open() as f:
     domain_delete_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "purchase.html"), "r") as f:
+with (template_path / "purchase.html").open() as f:
     purchase_template = "\n".join(f.readlines())
 
-with open(os.path.join(template_path, "admin_action.html"), "r") as f:
+with (template_path / "admin_action.html").open() as f:
     admin_template = "\n".join(f.readlines())
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -80,8 +81,8 @@ class Email:
                     "text": f"Go to {base_url}/account/verify/email?code={code} to verify your account",
                 },
             )
-        except resend.exceptions.ResendError as e:
-            logger.exception(f"Failed to send verification code {e}")
+        except resend.exceptions.ResendError:
+            logger.exception("Failed to send verification code:")
             return False
         return True
 
@@ -104,8 +105,8 @@ class Email:
                     "text": f"To activate your product, go to {purchase_link}",
                 },
             )
-        except resend.exceptions.ResendError as e:
-            logger.exception(f"Failed to purchase code {e}")
+        except resend.exceptions.ResendError:
+            logger.exception("Failed to purchase code:")
             return False
         return True
 
@@ -123,8 +124,8 @@ class Email:
                 },
             )
 
-        except resend.exceptions.ResendError as e:
-            logger.exception(f"Failed to send verification code {e}")
+        except resend.exceptions.ResendError:
+            logger.exception("Failed to send verification code:")
             return False
 
         logger.info(f"Sent account deletion code to username {username}")
@@ -153,8 +154,8 @@ class Email:
                     ),
                 },
             )
-        except resend.exceptions.ResendError as e:
-            logger.exception(f"Failed to send verification code {e}")
+        except resend.exceptions.ResendError:
+            logger.exception("Failed to send verification code:")
             return False
 
         logger.info(f"Sent password reset code to username {username}")

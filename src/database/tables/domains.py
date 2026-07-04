@@ -1,6 +1,8 @@
 import logging
 from typing import NotRequired, TypedDict, get_args
 
+from pymongo import MongoClient
+
 from database.exceptions import UserNotExistError
 from database.tables.users import Users, UserType
 from dns_.types import AVAILABLE_TLDS, TYPES
@@ -31,7 +33,7 @@ class Domains(Users):
     Please make sure to validate the domain BEFORE you use any functions here!
     """
 
-    def __init__(self, mongo_client) -> None:
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client)
 
     @staticmethod
@@ -46,7 +48,7 @@ class Domains(Users):
         :type domain: str
         :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks osmething like this: (a, eepy.page)
         :rtype: Tuple[str, str]
-        """
+        """  # noqa: E501
         tld: str = "eepy.page"
 
         beautiful_domain = Domains.unclean_domain_name(domain)

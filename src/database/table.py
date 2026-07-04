@@ -63,12 +63,12 @@ class Table:
         """
         self.table.insert_one(document)
 
-    def modify_document(
+    def modify_document(  # noqa: PLR0913
         self,
         filter: dict[str, Any],
         operation: str,
         key: str,
-        value: Any,
+        value: Any,  # noqa: ANN401
         create_if_not_exist: bool = False,
         ignore_no_matches: bool = False,
     ) -> None:
@@ -128,5 +128,4 @@ class Table:
         return self.table.delete_many(filter).deleted_count
 
     def remove_key(self, filter: dict[str, Any], key: str) -> bool:
-        updateResult = self.table.update_one(filter, {"$unset": {key: ""}})
-        return updateResult.matched_count != 0
+        return self.table.update_one(filter, {"$unset": {key: ""}}).matched_count != 0

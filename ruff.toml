@@ -25,6 +25,8 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
+
+    "src/tests",  # ignore tests (for now)
 ]
 
 line-length = 120
@@ -49,12 +51,21 @@ ignore = [
     "RET505",  # Checks for elif/else after a return statement - this is also annoying
     "FLY002",  # Checks for str.join calls and tries to replace with f-strings - not a great suggestion in most cases
     "FIX002",  # Tells you to resolve TODOs (true, but ion want a "problem" showing just bcz I haven't fixed/added smth)
-    "TD003",   # Asks you to provide an issue link in a TODO (I don't necessarily have issues to link)
+    "TD002",   # Other annoying todo comment stuff
+    "TD003",
     "S101",    # Checks for assert statements - using pytest so this is fine
+    "B904",    # Checks for exceptions that are raised in an except clause without `from e` - seems to be fastapi false positive
+    "TRY301",  # Seems useless and is quite annoying - "abstract raise to an inner function"
+    "A001",    # Checks for shadowing of built-in arguments/vars - there are so many builtins being shadowed its a lost cause atp
+    "A002",
+    "N818",    # Tries to force exception names to have "Error" suffix - annoying and plus Exception is fine as well imo
 ]
 
 fixable = ["ALL"]
 unfixable = []
 
+typing-extensions = false
+
 [lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+

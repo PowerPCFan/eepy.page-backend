@@ -187,8 +187,8 @@ class API:
                 body.type,
                 f"Registered through API user: {api.username}",
             )
-        except DNSException as e:
-            logger.exception(e)
+        except DNSException:
+            logger.exception("DNSException occurred during domain registration:")
             raise HTTPException(status_code=500, detail="DNS Registration failed")
 
         self.domains.add_domain(

@@ -143,7 +143,7 @@ class Domain:
         logger.info("Initialized")
 
     @Session.requires_auth
-    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:
+    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:  # noqa: C901
         domain_name = body.domain
 
         if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
@@ -169,19 +169,19 @@ class Domain:
                 session.user_cache_data["domains"],
             )
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid record name")  # noqa: B904
+            raise HTTPException(status_code=400, detail="Invalid record name")
         except DNSException as e:
-            raise HTTPException(status_code=412, detail=f"Invalid type {e.type_}")  # noqa: B904
+            raise HTTPException(status_code=412, detail=f"Invalid type {e.type_}")
         except SubdomainError as e:
-            raise HTTPException(  # noqa: B904
+            raise HTTPException(
                 status_code=403,
                 detail=f"You need to own {e.required_domain} before registering {domain_name}",
             )
         except DomainExistsError:
-            raise HTTPException(status_code=409, detail="Domain is already registered")  # noqa: B904
+            raise HTTPException(status_code=409, detail="Domain is already registered")
         except ReservedDomainError:
             # use slightly more generic message than saying its reserved
-            raise HTTPException(status_code=409, detail="Domain is unavailable")  # noqa: B904
+            raise HTTPException(status_code=409, detail="Domain is unavailable")
 
         if not is_domain_available:
             raise HTTPException(status_code=409, detail="Domain is not available")
@@ -194,7 +194,7 @@ class Domain:
                 f"Registered through website user: {session.username}",
             )
         except ConflictingDomain:
-            raise HTTPException(status_code=409, detail="Domain is already registered")  # noqa: B904
+            raise HTTPException(status_code=409, detail="Domain is already registered")
 
         if not success:
             logger.error("DNS registration failed")
@@ -253,11 +253,11 @@ class Domain:
             if not success:
                 db_thread.join()
                 self.domains.delete_domain(session.user_cache_data["_id"], body.domain)
-                raise DNSException("Not successful", {"success": success})  # noqa: EM101, TRY003, TRY301
+                raise DNSException("Not successful", {"success": success})  # noqa: EM101, TRY003
 
         except DNSException:
             logger.exception("DNSException:")
-            raise HTTPException(status_code=500)  # noqa: B904
+            raise HTTPException(status_code=500)
 
         db_thread.join()
 

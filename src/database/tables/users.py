@@ -133,7 +133,7 @@ class Users(Table):
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY") or "none")
         self.referrals: Referrals = Referrals(mongo_client, self)
 
-    def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:  # noqa: A002
+    def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:
         data: UserType = self.find_item(filter)  # type: ignore[return-value,assignment]
 
         if data:
@@ -143,7 +143,7 @@ class Users(Table):
 
         return data
 
-    def find_users(self, filter: dict) -> list[UserType] | None:  # noqa: A002
+    def find_users(self, filter: dict) -> list[UserType] | None:
         return self.find_items(filter)  # type: ignore[return-value]
 
     def send_discord_analytic_webhook(

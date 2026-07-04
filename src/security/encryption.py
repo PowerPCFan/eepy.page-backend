@@ -16,7 +16,7 @@ class Encryption:
         self.argon = argon2.PasswordHasher()
 
     @staticmethod
-    def sha256(input: str) -> str:  # noqa: A002
+    def sha256(input: str) -> str:
         return sha256(input.encode("utf-8")).hexdigest()
 
     def create_password(self, plain_password: str) -> str:

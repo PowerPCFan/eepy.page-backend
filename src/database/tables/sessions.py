@@ -31,7 +31,7 @@ class Sessions(Table):
         self,
         uid: str,
         user_id: str,
-        type: Literal["access", "refresh"],  # noqa: A002
+        type: Literal["access", "refresh"],
         expires: int,
         user_agent: str,
         ip: str,

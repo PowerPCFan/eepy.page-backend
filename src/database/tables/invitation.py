@@ -1,6 +1,8 @@
 import logging
 import time
 
+from pymongo import MongoClient
+
 from database.exceptions import InviteException, UserNotExistError
 from database.tables.users import InviteType, Users, UserType
 from security.encryption import Encryption
@@ -11,7 +13,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Invites(Users):
-    def __init__(self, mongo_client) -> None:
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client)
 
     def is_valid(self, code: str) -> bool:
@@ -58,7 +60,7 @@ class Invites(Users):
 
         user_invites: dict[str, InviteType] = user_data.get("invites", {})
 
-        if len(user_invites) >= 3:
+        if len(user_invites) >= 3:  # noqa: PLR2004
             msg = "User has made too many invites"
             raise InviteException(msg)
 

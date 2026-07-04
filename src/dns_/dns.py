@@ -33,7 +33,7 @@ class DNS:
         self.key: str = os.getenv("PDNS_API_KEY") or ""
         self.domain: str = os.getenv("PDNS_DOMAIN") or ""
 
-    def modify_domain(
+    def modify_domain(  # noqa: PLR0913
         self,
         values: list[str],
         type: TYPES,
@@ -75,8 +75,8 @@ class DNS:
             "records": [],
         }
 
-        for content in values:
-            content = sanitize(content, type)
+        for content_raw in values:
+            content = sanitize(content_raw, type)
             rrset["records"].append(
                 {
                     "content": content,
@@ -89,6 +89,7 @@ class DNS:
             f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
             data=json.dumps({"rrsets": [rrset]}),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
+            timeout=10,
         )
 
         if not request.ok:
@@ -121,7 +122,7 @@ class DNS:
         Raises:
             DNSException: If the request to register the domain fails.
             ValueError: If the ID of the newly created DNS record cannot be retrieved.
-        """
+        """  # noqa: E501
 
         content = sanitize(content, type)
 
@@ -149,6 +150,7 @@ class DNS:
                 },
             ),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
+            timeout=10,
         )
 
         if not request.ok:
@@ -206,6 +208,7 @@ class DNS:
                 f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
+                timeout=10,
             )
 
             if not request.ok:
@@ -251,6 +254,7 @@ class DNS:
                 },
             ),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
+            timeout=10,
         )
 
         if not request.ok:
@@ -295,6 +299,7 @@ class DNS:
                 f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": tld_rrsets}),
                 headers={"Content-Type": "application/json", "X-API-Key": self.key},
+                timeout=10,
             )
 
             if not request.ok:

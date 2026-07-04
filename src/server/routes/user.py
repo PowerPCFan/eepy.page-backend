@@ -1,3 +1,5 @@
+# ruff: noqa: ARG002
+
 import logging
 import os
 from datetime import UTC, datetime
@@ -43,7 +45,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class User:
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         table: Users,
         session_table: Sessions,
@@ -346,7 +348,7 @@ class User:
 
     def delete_mfa_with_username_pass(
         self,
-        request: Request,
+        _request: Request,
         body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
     ) -> None:
@@ -375,7 +377,7 @@ class User:
                 x_backup_code,
             )
         except ValueError:
-            raise HTTPException(status_code=409)  # noqa: B904
+            raise HTTPException(status_code=409)
 
     @Session.requires_auth
     def get_settings(
@@ -418,10 +420,10 @@ class User:
 
         try:
             self.table.modify_document(
-                {"_id": code_status.get("account", None)},
-                "$set",
-                "verified",
-                True,
+                filter={"_id": code_status.get("account", None)},
+                operation="$set",
+                key="verified",
+                value=True,
             )
 
             user: UserType | None = self.table.find_user(

@@ -1,3 +1,5 @@
+# ruff: noqa: PLR2004, C901, PLR0911, PLR0912
+
 import logging
 import re
 import string
@@ -20,7 +22,8 @@ class UserCanRegisterResult(NamedTuple):
     comment: str
 
 
-# TODO: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json in the future
+# TODO: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json
+# in the future
 RESERVED_ROOT_LABELS: set[str] = {
     "abuse",
     "account",
@@ -321,7 +324,7 @@ class Validation:
         :raises UserNotExistError: if the user does not exist
         :return: whether user owns domain
         :rtype: bool
-        """
+        """  # noqa: E501
         if not user:
             user_data: UserType | None = self.table.find_user({"_id": user_id})
         else:
@@ -350,7 +353,7 @@ class Validation:
         user_domain_amount = 0
         subdomain_amount = 0
 
-        for domain in [Domains.clean_domain_name(domain) for domain in list(user["domains"].keys())]:
+        for _ in [Domains.clean_domain_name(domain) for domain in list(user["domains"].keys())]:
             if Validation.find_required_domain(name):
                 subdomain_amount += 1
             else:
@@ -364,9 +367,9 @@ class Validation:
         user_max_subdomains = user.get("permissions", {}).get("max-subdomains", 5)
 
         if not is_subdomain and user_domain_amount >= user_max_domains:
-            return UserCanRegisterResult(False, "Domain limit exceeded")
+            return UserCanRegisterResult(success=False, comment="Domain limit exceeded")
 
         if is_subdomain and subdomain_amount >= user_max_subdomains:
-            return UserCanRegisterResult(False, "Subdomain limit exceeded")
+            return UserCanRegisterResult(success=False, comment="Subdomain limit exceeded")
 
-        return UserCanRegisterResult(True, "")
+        return UserCanRegisterResult(success=True, comment="")

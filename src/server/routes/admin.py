@@ -224,7 +224,7 @@ class Admin:
 
     @Session.requires_auth
     @Session.requires_permission(permission="account")
-    def delete_user(self, body: BanUser, session: Session = Depends(converter.create)) -> None:
+    def delete_user(self, body: BanUser, _session: Session = Depends(converter.create)) -> None:
         user_data: UserType | None = self.users.find_user({"_id": body.user_id})
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -242,7 +242,7 @@ class Admin:
     def reinstate_user(
         self,
         user_id: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         try:
             self.admin_tools.reinstate_user(user_id)
@@ -260,7 +260,7 @@ class Admin:
         domain: str,
         userid: str,
         reason: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         target_user = self.admin_tools.get_user_details_by_id(userid)
         if not target_user:
@@ -292,7 +292,7 @@ class Admin:
     def find_user_by_domain(
         self,
         domain: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> AccountData:
         user_profile: AccountData | None = self.admin_tools.find_user_by_domain(domain)
         if user_profile is None:
@@ -305,7 +305,7 @@ class Admin:
     def find_user_by_referral(
         self,
         referral: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> AccountData:
         user_profile: AccountData | None = self.admin_tools.find_by_referral(referral)
         if user_profile is None:
@@ -318,11 +318,11 @@ class Admin:
     def find_user_by_email(
         self,
         email: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data = self.users.find_user(
             {"email-hash": Encryption.sha256(email + "supahcool")},
-            True,
+            find_banned=True,
         )
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found (find_item)")
@@ -341,7 +341,7 @@ class Admin:
     def find_user_by_ips(
         self,
         body: IpFind,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> list[AccountData]:
         user_profiles: list[AccountData] | None = self.admin_tools.find_by_ips(body.ips)
         if user_profiles is None:
@@ -354,7 +354,7 @@ class Admin:
     def find_user_by_id(
         self,
         id: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data: AccountData | None = self.admin_tools.get_user_details_by_id(id)
 
@@ -368,7 +368,7 @@ class Admin:
     def find_user_by_username(
         self,
         username: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data: AccountData | None = self.admin_tools.find_by_username(username)
 
@@ -383,7 +383,7 @@ class Admin:
         self,
         record: str,
         type: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         if not self.admin_tools.dns.delete_domain(record, type):
             raise HTTPException(status_code=503, detail="Failed to delete record")
@@ -395,7 +395,7 @@ class Admin:
         id: str,
         permission: str,
         value: bool | int | str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         if not self.admin_tools.change_permission(id, permission, value):
             raise HTTPException(status_code=404, detail="User not found")
@@ -406,12 +406,12 @@ class Admin:
         self,
         id: str,
         tld: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.add_domain(id, tld)  # type: ignore
+        self.admin_tools.add_domain(id, tld) # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="manage-permissions")
@@ -419,21 +419,21 @@ class Admin:
         self,
         id: str,
         tld: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.remove_domain(id, tld)  # type: ignore
+        self.admin_tools.remove_domain(id, tld) # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def verify(
         self,
         id: str,
-        session: Session = Depends(converter.create),
+        _session: Session = Depends(converter.create),
     ) -> None:
-        self.admin_tools.verify(id)  # type: ignore
+        self.admin_tools.verify(id)
 
     @Session.requires_auth
     def can_access(self, session: Session = Depends(converter.create)) -> None:

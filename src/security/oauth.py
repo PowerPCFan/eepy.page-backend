@@ -61,6 +61,7 @@ class OAuth:
                 "redirect_uri": callback_url,
                 "grant_type": "authorization_code",
             },
+            timeout=5,
         )
         token: str | None = req.json().get("access_token")
 
@@ -74,6 +75,7 @@ class OAuth:
         data: GoogleUserResponse = requests.get(
             "https://openidconnect.googleapis.com/v1/userinfo",
             headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
         ).json()
 
         return data
@@ -107,7 +109,6 @@ class OAuth:
             raise EmailError(msg)
 
         email_hash: str = Encryption.sha256(data["email"] + "supahcool")
-        # supahcool is a basic salt that we made in ~march 2024 and just never got rid of as the emails were already using it
         target_user: UserType | None = self.users.find_user({"email-hash": email_hash})
 
         country = ipinfo_handler.getDetails(request.client.host).all  # type: ignore[union-attr]
@@ -139,7 +140,7 @@ class OAuth:
             user_id,
             data["name"],
             None,
-            request.client.host,  # type: ignore
+            request.client.host if request.client else "",
             request.headers.get("User-Agent", "Google sign in"),
             self.users,
             self.sessions,
@@ -151,12 +152,12 @@ class OAuth:
             msg = "Failed to create session"
             raise SessionError(msg)
 
-        return (session["access_token"], session["refresh_token"])  # type: ignore
+        return (session["access_token"], session["refresh_token"]) # pyright: ignore[reportReturnType]
 
     def link_google_account(
         self,
         session: Session,
-        request: Request,
+        _request: Request,
         code: str,
         callback_url: str,
     ) -> bool:
@@ -183,9 +184,9 @@ class OAuth:
             raise ValueError(msg)
 
         self.users.modify_document(
-            {"_id": session.user_id},
-            "$set",
-            "has-linked-google",
-            True,
+            filter={"_id": session.user_id},
+            operation="$set",
+            key="has-linked-google",
+            value=True,
         )
         return True
