@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 
 import pytest
@@ -12,52 +13,52 @@ logger = logging.getLogger(__name__)
 
 
 class TestDomainValidation:
-    def test_valid_name(self):
+    def test_valid_name(self) -> None:
         assert Validation.record_name_valid("example-domain.eepy.page", "A")
         assert Validation.record_name_valid("test_dkim.eepy.page", "CNAME")
 
-    def test_valid_subdomain(self):
+    def test_valid_subdomain(self) -> None:
         assert Validation.record_name_valid("example.domain.eepy.page", "A")
 
-    def test_invalid_name(self):
+    def test_invalid_name(self) -> None:
         assert not Validation.record_name_valid("Invälid_Recörd_Nämë.eepy.page", "A")
         assert not Validation.record_name_valid("a..b.eepy.page", "A")
         assert not Validation.record_name_valid("a..eepy.page", "A")
         assert not Validation.record_name_valid("", "A")
 
-    def test_invalid_start_and_end(self):
+    def test_invalid_start_and_end(self) -> None:
         assert not Validation.record_name_valid("example.eepy.page.", "A")
         assert not Validation.record_name_valid(".example.eepy.page", "A")
 
-    def test_txt_record(self):
+    def test_txt_record(self) -> None:
         assert Validation.record_name_valid("_verification.eepy.page", "TXT")
 
-    def test_underscore_not_txt_record(self):
+    def test_underscore_not_txt_record(self) -> None:
         assert not Validation.record_name_valid("_verification.eepy.page", "A")
 
-    def test_valid_content(self):
+    def test_valid_content(self) -> None:
         assert Validation.record_value_valid(["1.2.3.4"], "A")
         assert Validation.record_value_valid(["test.cname.fi."], "CNAME")
         assert Validation.record_value_valid(["test.cname.fi"], "CNAME")
 
-    def test_duplicate_content(self):
+    def test_duplicate_content(self) -> None:
         assert not Validation.record_value_valid(["0.0.0.0", "0.0.0.0"], "A")
 
-    def test_invalid_type(self):
+    def test_invalid_type(self) -> None:
         assert not Validation.record_value_valid(["0.0.0.0"], "C")
 
-    def test_invalid_content_for_type(self):
+    def test_invalid_content_for_type(self) -> None:
         assert not Validation.record_value_valid(["test.cname.fi"], "A")
         assert not Validation.record_value_valid(["0.0.0.0.0.0.0"], "A")
         assert not Validation.record_value_valid(["1500.120.15.2"], "A")
         assert not Validation.record_value_valid(["320.120.15.2"], "A")
 
-    def test_domain_clean(self):
+    def test_domain_clean(self) -> None:
         assert Domains.clean_domain_name("a.b") == "a[dot]b"
         assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b"  # pyright: ignore[reportArgumentType]
         assert Domains.unclean_domain_name("a[dot]b") == "a.b"
 
-    def test_separation(self):
+    def test_separation(self) -> None:
         assert Domains.separate_domain_into_parts("test.eepy.page") == (
             "test",
             "eepy.page",
@@ -73,11 +74,11 @@ class TestDomainValidation:
             "worksonmymachine.top",
         )
 
-    def test_sanitization(self):
+    def test_sanitization(self) -> None:
         assert sanitize("test.com", "CNAME") == "test.com."
         assert sanitize("test", "TXT") == '"test"'
 
-    def test_reserved_domains(self, validation: Validation):
+    def test_reserved_domains(self, validation: Validation) -> None:
         assert Validation.is_reserved_domain("eepy.page")
         assert Validation.is_reserved_domain("api.eepy.page")
         assert Validation.is_reserved_domain("API.eepy.page")
@@ -94,7 +95,7 @@ class TestDomainValidation:
 
 
 class TestDomainUser:
-    def test_register(self, domains: Domains, users: Users, test_user: UserType):
+    def test_register(self, domains: Domains, users: Users, test_user: UserType) -> None:
         domains.add_domain(
             test_user["_id"],
             "TEST.eepy.page",
@@ -122,7 +123,7 @@ class TestDomainUser:
         assert updated_user_data.get("domains", {}).get("test3[dot]eepy[dot]page") is not None
         users.remove_key({"_id": test_user["_id"]}, "domains.test3")
 
-    def test_domain_not_free(self, validation: Validation, domains: Domains):
+    def test_domain_not_free(self, validation: Validation, domains: Domains) -> None:
         assert not validation.is_free("test.eepy.page", "A", {}, False)
         assert not validation.is_free("test.unowned.eepy.page", "A", {}, False)
         assert not validation.is_free("test.unowned.eepy.page.", "A", {}, False)
@@ -133,13 +134,13 @@ class TestDomainUser:
 
         assert validation.is_free("test20.eepy.page", "A", {}, False)
 
-    def test_domain_highest_detection(self, validation: Validation, domains: Domains):
+    def test_domain_highest_detection(self, validation: Validation, domains: Domains) -> None:
         assert Validation.find_required_domain("a.b.eepy.page") == "b[dot]eepy[dot]page"
         assert Validation.find_required_domain("a[dot]b[dot]eepy[dot]page") == "b[dot]eepy[dot]page"
         assert Validation.find_required_domain("a.eepy.page") is None
         assert Validation.find_required_domain("a[dot]eepy[dot]page") is None
 
-    def test_domain_limits(self, test_user: UserType, users: Users):
+    def test_domain_limits(self, test_user: UserType, users: Users) -> None:
         # First test the default domain limit
         assert Validation.can_user_register("test2.eepy.page", test_user)[0]
         assert Validation.can_user_register("subdomain.test2.eepy.page", test_user)[0]
@@ -155,7 +156,7 @@ class TestDomainUser:
         modified_user = users.find_user({"_id": test_user["_id"]})
         if not modified_user:
             logger.critical("Failed to get testing account")
-            quit()
+            sys.exit()
 
         assert not Validation.can_user_register("test2.eepy.page", modified_user)[0]
         assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[0]
@@ -171,7 +172,7 @@ class TestDomainUser:
         modified_user = users.find_user({"_id": test_user["_id"]})
         if not modified_user:
             logger.critical("Failed to get testing account")
-            quit()
+            sys.exit()
 
         assert not Validation.can_user_register(
             "subdomain.test2.eepy.page",

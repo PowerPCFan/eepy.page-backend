@@ -3,9 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Literal
-
-from typing_extensions import TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from database.tables.domains import DomainFormat, Domains
 from security.encryption import Encryption
@@ -144,7 +142,7 @@ class Api:
         user_data = self.users_table.find_item(
             {
                 f"api-keys.{self.encrypted_key}": {"$exists": True},
-            }
+            },
         )
 
         if user_data is None:

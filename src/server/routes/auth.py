@@ -302,7 +302,7 @@ class Auth:
                 path="/refresh",
                 httponly=True,
                 samesite="lax" if is_debug else "none",
-                secure=False if is_debug else True,
+                secure=not is_debug,
             )
 
             return resp
@@ -310,7 +310,8 @@ class Auth:
             status = self.codes.is_valid(state.get("linking-code", ""), "link")
             if not status["valid"]:
                 logger.info(f"Invalid linking code! {state.get('linking-code')}")
-                raise SessionError("Invalid session!")
+                msg = "Invalid session!"
+                raise SessionError(msg)
 
             session: Session = Session(
                 status.get("account", ""),
@@ -319,7 +320,8 @@ class Auth:
             )
             if not session.valid:
                 logger.info("Linking code's session was invalid!")
-                raise SessionError("Invalid session!")
+                msg = "Invalid session!"
+                raise SessionError(msg)
 
             resp = RedirectResponse(f"{origin}/account/manage")
 
@@ -350,7 +352,7 @@ class Auth:
         if refer:
             logger.info(f"Using refer {refer}")
         try:
-            user_id: str = self.table.create_user(
+            self.table.create_user(
                 body.username,
                 body.password,
                 body.email,

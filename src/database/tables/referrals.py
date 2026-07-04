@@ -1,10 +1,9 @@
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from pymongo import MongoClient
-from typing_extensions import TypedDict
 
 from database.table import Table
 
@@ -27,7 +26,7 @@ class ReferralType(TypedDict):
 
 
 class Referrals(Table):
-    def __init__(self, mongo_client: MongoClient, users: "Users"):
+    def __init__(self, mongo_client: MongoClient, users: "Users") -> None:
         super().__init__(mongo_client, "referrals")
         self.users: Users = users
 
@@ -38,25 +37,30 @@ class Referrals(Table):
         requested_code = requested_code.lower()
         logger.info("Creating referral code")
         if len(requested_code) < 3 or len(requested_code) > 50:
+            msg = f"requested code is too long or too short! {requested_code}"
             raise ValueError(
-                f"requested code is too long or too short! {requested_code}",
+                msg,
             )
 
         if not re.fullmatch("[a-z0-9-]+", requested_code):
-            raise ValueError("Invalid code regex!")
+            msg = "Invalid code regex!"
+            raise ValueError(msg)
 
         lookup_request_code: str = self.users.encryption.sha256(requested_code)
 
         user: UserType | None = self.users.find_user({"_id": user_id})
 
         if user is None:
-            raise UserNotExistError("User does not exist!")
+            msg = "User does not exist!"
+            raise UserNotExistError(msg)
 
         if user.get("referral-code") is not None:
-            raise ValueError("User already has a referral code")
+            msg = "User already has a referral code"
+            raise ValueError(msg)
 
         if self.find_item({"_id": lookup_request_code}) is not None:
-            raise ConflictingReferralCode("Referral code already exists!")
+            msg = "Referral code already exists!"
+            raise ConflictingReferralCode(msg)
 
         self.insert(
             {
@@ -88,7 +92,7 @@ class Referrals(Table):
         referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # type: ignore
         return referral is not None
 
-    def use(self, user: "UserType", referral_code: str):
+    def use(self, user: "UserType", referral_code: str) -> None:
         """Uses referral code. Does NOT modify the referred user directly, please handle that yourself
 
         :param user: the user who got referred
@@ -106,7 +110,8 @@ class Referrals(Table):
 
         if referral is None:
             logger.warning("Referral does not exist!")
-            raise ValueError("Referral does not exist!")
+            msg = "Referral does not exist!"
+            raise ValueError(msg)
 
         logger.info(f"Updating user {referral['owner']} max domains")
         self.users.table.update_one(

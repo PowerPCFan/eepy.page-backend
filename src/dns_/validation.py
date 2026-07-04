@@ -87,7 +87,7 @@ RESERVED_ROOT_LABELS: set[str] = {
 
 
 class Validation:
-    def __init__(self, table: Domains, dns: "DNS"):
+    def __init__(self, table: Domains, dns: "DNS") -> None:
         self.dns = dns
         self.table = table
 
@@ -207,7 +207,7 @@ class Validation:
         type: str,
         domains: dict[str, DomainFormat],
         raise_exceptions: bool = True,
-    ):
+    ) -> bool:
         """
         Checks if a given domain name is free for registration.
         Args:
@@ -229,7 +229,8 @@ class Validation:
             tuple([f".{tld}" for tld in get_args(AVAILABLE_TLDS)]),
         ):
             if raise_exceptions:
-                raise ValueError(f"Invalid record name '{name}' (does not include TLD)")
+                msg = f"Invalid record name '{name}' (does not include TLD)"
+                raise ValueError(msg)
             return False
 
         cleaned_domain: str = Domains.clean_domain_name(name)
@@ -237,27 +238,30 @@ class Validation:
         if not Validation.record_name_valid(name, type):
             logger.info(f"{name} Name is not valid")
             if raise_exceptions:
-                raise ValueError(f"Invalid record name '{name}'")
+                msg = f"Invalid record name '{name}'"
+                raise ValueError(msg)
             return False
 
         if Validation.is_reserved_domain(name):
             logger.info(f"{name} is reserved")
             if raise_exceptions:
-                raise ReservedDomainError(f"Domain '{name}' is reserved")
+                msg = f"Domain '{name}' is reserved"
+                raise ReservedDomainError(msg)
             return False
 
         if type.upper() not in ALLOWED_TYPES:
             logger.info(f"{type} is not a valid type")
 
             if raise_exceptions:
-                raise DNSException(f"Invalid type '{type}'", type_=type)
+                msg = f"Invalid type '{type}'"
+                raise DNSException(msg, type_=type)
             return False
 
         if cleaned_domain in domains:
             logger.info(f"User already owns domain {cleaned_domain}")
             return False
 
-        domain, tld = Domains.separate_domain_into_parts(name)
+        domain, _tld = Domains.separate_domain_into_parts(name)
 
         domain = Domains.clean_domain_name(domain)
 
@@ -266,8 +270,9 @@ class Validation:
         if required_domain and required_domain not in domains:
             logger.warning(f"User does not own {required_domain}")
             if raise_exceptions:
+                msg = f"User doesn't own '{required_domain}'"
                 raise SubdomainError(
-                    f"User doesn't own '{required_domain}'",
+                    msg,
                     required_domain,
                 )
             return False
@@ -291,7 +296,8 @@ class Validation:
             logger.warning(f"Domain {cleaned_domain} already exists in database")
 
             if raise_exceptions:
-                raise DomainExistsError("Domain is already registered")
+                msg = "Domain is already registered"
+                raise DomainExistsError(msg)
             return False
 
         logger.info("Domain not found in database.")
@@ -321,7 +327,8 @@ class Validation:
         else:
             user_data = user
         if user_data is None:
-            raise UserNotExistError("User does not exist!")
+            msg = "User does not exist!"
+            raise UserNotExistError(msg)
 
         return user_data["domains"].get(self.table.clean_domain_name(domain)) is not None
 
@@ -338,7 +345,7 @@ class Validation:
         """
         name, _ = Domains.separate_domain_into_parts(domain)
         subdomain_amount: int = 0
-        is_subdomain = Validation.find_required_domain(domain) != None
+        is_subdomain = Validation.find_required_domain(domain) is not None
 
         user_domain_amount = 0
         subdomain_amount = 0
@@ -359,8 +366,7 @@ class Validation:
         if not is_subdomain and user_domain_amount >= user_max_domains:
             return UserCanRegisterResult(False, "Domain limit exceeded")
 
-        if is_subdomain:
-            if subdomain_amount >= user_max_subdomains:
-                return UserCanRegisterResult(False, "Subdomain limit exceeded")
+        if is_subdomain and subdomain_amount >= user_max_subdomains:
+            return UserCanRegisterResult(False, "Subdomain limit exceeded")
 
         return UserCanRegisterResult(True, "")

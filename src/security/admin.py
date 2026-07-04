@@ -1,16 +1,19 @@
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from database.exceptions import FilterMatchError, UserNotExistError
 from database.tables.domains import DomainFormat, Domains
-from database.tables.referrals import ReferralType
 from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
 from dns_.types import AVAILABLE_TLDS, TYPES
 from mail.email import Email
 from security.encryption import Encryption
+
+if TYPE_CHECKING:
+    from database.tables.referrals import ReferralType
 
 
 class DomainDeletionError(Exception): ...
@@ -40,7 +43,7 @@ class Admin:
         domains: Domains,
         dns: DNS,
         mail: Email,
-    ):
+    ) -> None:
         self.users = users_table
         self.domains = domains
         self.dns = dns
@@ -61,7 +64,8 @@ class Admin:
 
     def ban_user(self, reasons: list[str], user_data: UserType) -> bool:
         if len(reasons) == 0:
-            raise ValueError("You need to specify atleast one ban reason")
+            msg = "You need to specify atleast one ban reason"
+            raise ValueError(msg)
 
         domains: dict[str, TYPES] = {k.replace("[dot]", "."): v["type"] for k, v in user_data["domains"].items()}
 
@@ -70,7 +74,8 @@ class Admin:
             logger.critical(
                 "Domain mass deletion failed! Continuing with account deletion.",
             )
-            raise DomainDeletionError("Could not delete users domain")
+            msg = "Could not delete users domain"
+            raise DomainDeletionError(msg)
 
         self.users.mark_deletion_pending(user_data["_id"], reasons)
 
@@ -105,6 +110,7 @@ class Admin:
             self.users.encryption.decrypt(user_data["email"]),
             "Account reinstated",
         )
+        return None
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
         user_data = self.users.find_user(
@@ -181,7 +187,8 @@ class Admin:
         )
 
         if user_data is None:
-            raise ValueError("Could not get user from db")
+            msg = "Could not get user from db"
+            raise ValueError(msg)
 
         account_data: AccountData = user_profile  # type: ignore[assignment]
         account_data["domains"] = user_data["domains"]
@@ -224,7 +231,7 @@ class Admin:
         except FilterMatchError:
             return False
 
-    def add_domain(self, user_id: str, tld: AVAILABLE_TLDS):
+    def add_domain(self, user_id: str, tld: AVAILABLE_TLDS) -> None:
         """Adds domain to TLDs
 
         :param user_id: id of the user
@@ -243,7 +250,7 @@ class Admin:
         )
         self.users.modify_document({"_id": user_id}, "$push", "owned-tlds", tld)
 
-    def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS):
+    def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS) -> None:
         """Removes a TLD
 
         :param user_id: id of the user
@@ -262,5 +269,5 @@ class Admin:
         )
         self.users.modify_document({"_id": user_id}, "$pull", "owned-tlds", tld)
 
-    def verify(self, user_id: str):
+    def verify(self, user_id: str) -> None:
         self.users.modify_document({"_id": user_id}, "$set", "verified", True)

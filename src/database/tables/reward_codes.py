@@ -1,8 +1,8 @@
 import logging
 import time
+from typing import TypedDict
 
 from pymongo import MongoClient
-from typing_extensions import TypedDict
 
 from database.table import Table
 from database.tables.users import Users
@@ -25,7 +25,7 @@ RewardType = TypedDict(
 
 
 class Rewards(Table):
-    def __init__(self, mongo_client: MongoClient, users: Users):
+    def __init__(self, mongo_client: MongoClient, users: Users) -> None:
         self.encryption: Encryption = users.encryption
         self.users: Users = users
         super().__init__(mongo_client, "rewards")

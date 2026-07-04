@@ -1,7 +1,6 @@
-from typing import NotRequired
+from typing import NotRequired, TypedDict
 
 from pymongo import MongoClient
-from typing_extensions import TypedDict
 
 from database.table import Table
 
@@ -12,7 +11,7 @@ class StatusType(TypedDict):
 
 
 class Status(Table):
-    def __init__(self, mongo_client: MongoClient):
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "status")
 
     def get(self) -> StatusType:

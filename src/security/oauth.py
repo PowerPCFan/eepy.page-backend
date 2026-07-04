@@ -68,7 +68,8 @@ class OAuth:
             logger.warning(
                 f"Failed to get token for google sign in. {req.status_code} {req.text}",
             )
-            raise ValueError("Failed to get token for user")
+            msg = "Failed to get token for user"
+            raise ValueError(msg)
 
         data: GoogleUserResponse = requests.get(
             "https://openidconnect.googleapis.com/v1/userinfo",
@@ -102,7 +103,8 @@ class OAuth:
         data = self.get_google_callback_data(callback_url, code)
 
         if not data.get("email_verified", False):
-            raise EmailError("Google email not verified")
+            msg = "Google email not verified"
+            raise EmailError(msg)
 
         email_hash: str = Encryption.sha256(data["email"] + "supahcool")
         # supahcool is a basic salt that we made in ~march 2024 and just never got rid of as the emails were already using it
@@ -128,7 +130,8 @@ class OAuth:
             if not target_user.get("has-linked-google"):
                 logger.info("User hasn't linked google... Giving an invalid response")
                 logger.info(json.dumps(target_user, indent=2))
-                raise DuplicateAccount("User already has an account")
+                msg = "User already has an account"
+                raise DuplicateAccount(msg)
 
             user_id = target_user["_id"]
 
@@ -145,7 +148,8 @@ class OAuth:
 
         if not session["success"]:
             logger.error(f"Failed to create session for user {data['email']}")
-            raise SessionError("Failed to create session")
+            msg = "Failed to create session"
+            raise SessionError(msg)
 
         return (session["access_token"], session["refresh_token"])  # type: ignore
 
@@ -166,7 +170,8 @@ class OAuth:
 
         if not data.get("email_verified", False):
             logger.warning("Google email not verified!")
-            raise EmailError("Google email not verified")
+            msg = "Google email not verified"
+            raise EmailError(msg)
 
         if data.get("email") != self.users.encryption.decrypt(
             session.user_cache_data["email"],
@@ -174,7 +179,8 @@ class OAuth:
             logger.warning(
                 f"Google email {data.get('email')} does not match users email!",
             )
-            raise ValueError("Email mismatch!")
+            msg = "Email mismatch!"
+            raise ValueError(msg)
 
         self.users.modify_document(
             {"_id": session.user_id},

@@ -18,7 +18,7 @@ invalid_key.valid = False
 
 @pytest.mark.order(-1)
 class TestUserApi:
-    def test_creation(self, test_session: Session, users: Users, test_user: UserType):
+    def test_creation(self, test_session: Session, users: Users, test_user: UserType) -> None:
         Api.create(
             test_user["_id"],
             users,
@@ -36,7 +36,7 @@ class TestUserApi:
                 domains=["domain-that-isnt-owned.eepy.page"],
             )
 
-    def test_key_permissions(self, test_user: UserType, users: Users):
+    def test_key_permissions(self, test_user: UserType, users: Users) -> None:
         key = Api.create(
             test_user["_id"],
             users,
@@ -49,22 +49,22 @@ class TestUserApi:
 
         @Api.requires_auth
         @Api.requires_permission("modify")
-        def test_modify(api: Api, domain: str):
+        def test_modify(api: Api, domain: str) -> bool:
             return True
 
         @Api.requires_auth
         @Api.requires_permission("register")
-        def test_register(api: Api):
+        def test_register(api: Api) -> bool:
             return True
 
         @Api.requires_auth
         @Api.requires_permission("delete")
-        def test_delete(api: Api, domain: str):
+        def test_delete(api: Api, domain: str) -> bool:
             return True
 
         @Api.requires_auth
         @Api.requires_permission("list")
-        def test_list(api: Api):
+        def test_list(api: Api) -> bool:
             return True
 
         # Test without any permissions
@@ -102,58 +102,58 @@ class TestUserApi:
         assert test_list(api)
 
 
-def test_requires_auth_valid_key():
+def test_requires_auth_valid_key() -> None:
     @Api.requires_auth
-    def mock_function(api):
+    def mock_function(api) -> str:
         return "Executed"
 
     result = mock_function(api=valid_key)
     assert result == "Executed"
 
 
-def test_requires_auth_invalid_key():
+def test_requires_auth_invalid_key() -> None:
     @Api.requires_auth
-    def mock_function(api):
+    def mock_function(api) -> str:
         return "Executed"
 
     with pytest.raises(ApiError):
         mock_function(api=invalid_key)
 
 
-def test_requires_perms_valid():
+def test_requires_perms_valid() -> None:
     @Api.requires_auth
     @Api.requires_permission("register")
-    def mock_function(api):
+    def mock_function(api) -> str:
         return "Executed"
 
     result = mock_function(api=valid_key)
     assert result == "Executed"
 
 
-def test_requires_perms_invalid():
+def test_requires_perms_invalid() -> None:
     @Api.requires_auth
     @Api.requires_permission("delete")
-    def mock_function(api):
+    def mock_function(api) -> str:
         return "Executed"
 
     with pytest.raises(ApiPermissionError):
         mock_function(api=valid_key)
 
 
-def test_modification_domain():
+def test_modification_domain() -> None:
     @Api.requires_auth
     @Api.requires_permission("modify")
-    def mock_function(api, domain):
+    def mock_function(api, domain) -> str:
         return "Executed"
 
     result = mock_function(api=valid_key, domain="affected.eepy.page")
     assert result == "Executed"
 
 
-def test_invalid_modification_domain():
+def test_invalid_modification_domain() -> None:
     @Api.requires_auth
     @Api.requires_permission("modify")
-    def mock_function(api, domain):
+    def mock_function(api, domain) -> str:
         return "Executed"
 
     with pytest.raises(ApiRangeError):

@@ -1,13 +1,15 @@
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pymongo import MongoClient
-from pymongo.collection import Collection
-from pymongo.cursor import Cursor
-from pymongo.database import Database
 
 from database.exceptions import FilterMatchError
+
+if TYPE_CHECKING:
+    from pymongo.collection import Collection
+    from pymongo.cursor import Cursor
+    from pymongo.database import Database
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -42,7 +44,7 @@ class Table:
         :rtype: List[dict]
         """
         cursor: Cursor = self.table.find(filter)
-        return [item for item in cursor]
+        return list(cursor)
 
     def get_table(self) -> list[dict]:
         """Gets every item inside a specific table.
@@ -51,7 +53,7 @@ class Table:
         :rtype: List[dict]
         """
         cursor: Cursor = self.table.find()
-        return [item for item in cursor]
+        return list(cursor)
 
     def insert_document(self, document: Mapping[Any, Any]) -> None:
         """Creates a new document in the database
@@ -96,7 +98,8 @@ class Table:
             logger.error(
                 f"Filter {filter} for table {self.name} couldn't match a document",
             )
-            raise FilterMatchError("Filter didn't match anything")
+            msg = "Filter didn't match anything"
+            raise FilterMatchError(msg)
 
     def create_index(self, key: str) -> None:
         """Creates a new index for a specific key

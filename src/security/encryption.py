@@ -34,10 +34,12 @@ class Encryption:
 
     def encrypt(self, plain_data: str) -> str:
         if not self.fernet:
-            raise ValueError("encryption_key not provided to Encryption() instance, so Fernet cannot be used")
+            msg = "encryption_key not provided to Encryption() instance, so Fernet cannot be used"
+            raise ValueError(msg)
         return self.fernet.encrypt(bytes(plain_data, "utf-8")).decode(encoding="utf-8")
 
     def decrypt(self, encrypted_data: str) -> str:
         if not self.fernet:
-            raise ValueError("encryption_key not provided to Encryption() instance, so Fernet cannot be used")
+            msg = "encryption_key not provided to Encryption() instance, so Fernet cannot be used"
+            raise ValueError(msg)
         return self.fernet.decrypt(encrypted_data.encode("utf-8")).decode("utf-8")

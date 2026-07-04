@@ -3,13 +3,13 @@ from time import time
 
 
 class Webhook:
-    def __init__(self, main: str, trace: str):
+    def __init__(self, main: str, trace: str) -> None:
         self.main = main
         self.trace = trace
 
 
 class LogManager(threading.Thread):
-    def __init__(self, message, webhook: Webhook, importance: str, filename: str):
+    def __init__(self, message, webhook: Webhook, importance: str, filename: str) -> None:
         super().__init__()
         self.daemon = True
         self.webhook = webhook
@@ -19,7 +19,7 @@ class LogManager(threading.Thread):
 
 
 class Logger:
-    def __init__(self, filename: str):
+    def __init__(self, filename: str) -> None:
         self.filename = filename
 
     @staticmethod

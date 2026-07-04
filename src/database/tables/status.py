@@ -3,7 +3,6 @@ import time
 from typing import TypedDict
 
 from pymongo import MongoClient
-from typing_extensions import TypedDict
 
 from database.table import Table
 from security.encryption import Encryption
@@ -19,14 +18,14 @@ class StatusType(TypedDict):
 
 
 class Status(Table):
-    def __init__(self, mongo_client: MongoClient):
+    def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "status")
 
     def get(self) -> StatusType | None:
         logger.info("Getting active status")
         return self.find_item({"active": True})  # type: ignore
 
-    def set(self, message: str):
+    def set(self, message: str) -> None:
         self.modify_document({"active": True}, "$set", "active", False, False, True)
         self.insert_document(
             {

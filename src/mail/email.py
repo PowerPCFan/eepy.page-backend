@@ -47,7 +47,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Email:
-    def __init__(self, codes: "Codes", users: "Users", encryption: Encryption):
+    def __init__(self, codes: "Codes", users: "Users", encryption: Encryption) -> None:
         self.codes: Codes = codes
         self.users: Users = users
         self.encryption: Encryption = encryption  # type: ignore[arg-type]
@@ -81,7 +81,7 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send verification code {e}")
+            logger.exception(f"Failed to send verification code {e}")
             return False
         return True
 
@@ -105,7 +105,7 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to purchase code {e}")
+            logger.exception(f"Failed to purchase code {e}")
             return False
         return True
 
@@ -124,7 +124,7 @@ class Email:
             )
 
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send verification code {e}")
+            logger.exception(f"Failed to send verification code {e}")
             return False
 
         logger.info(f"Sent account deletion code to username {username}")
@@ -154,13 +154,13 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send verification code {e}")
+            logger.exception(f"Failed to send verification code {e}")
             return False
 
         logger.info(f"Sent password reset code to username {username}")
         return True
 
-    def send_ban_email(self, target_email: str, reasons: list[str]):
+    def send_ban_email(self, target_email: str, reasons: list[str]) -> bool | None:
         reasons_html = ""
         for reason in reasons:
             reasons_html += f"<li>{reason}</li>"
@@ -175,7 +175,7 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send ban email {e.suggested_action}")
+            logger.exception(f"Failed to send ban email {e.suggested_action}")
             return False
 
     def send_domain_termination_email(
@@ -183,7 +183,7 @@ class Email:
         target_email: str,
         domain: str,
         reason: str,
-    ):
+    ) -> bool | None:
         """
         Sends an email to the user that one of their domains have been deleted
 
@@ -203,10 +203,10 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send domain email {e.suggested_action}")
+            logger.exception(f"Failed to send domain email {e.suggested_action}")
             return False
 
-    def send_admin_email(self, target_email: str, action: str):
+    def send_admin_email(self, target_email: str, action: str) -> bool | None:
         try:
             resend.Emails.send(
                 {
@@ -217,5 +217,5 @@ class Email:
                 },
             )
         except resend.exceptions.ResendError as e:
-            logger.error(f"Failed to send domain email {e.suggested_action}")
+            logger.exception(f"Failed to send domain email {e.suggested_action}")
             return False

@@ -11,7 +11,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Invites(Users):
-    def __init__(self, mongo_client):
+    def __init__(self, mongo_client) -> None:
         super().__init__(mongo_client)
 
     def is_valid(self, code: str) -> bool:
@@ -53,12 +53,14 @@ class Invites(Users):
         user_data: UserType | None = self.find_user({"_id": user_id})
 
         if user_data is None:
-            raise UserNotExistError("User does not exist!")
+            msg = "User does not exist!"
+            raise UserNotExistError(msg)
 
         user_invites: dict[str, InviteType] = user_data.get("invites", {})
 
         if len(user_invites) >= 3:
-            raise InviteException("User has made too many invites")
+            msg = "User has made too many invites"
+            raise InviteException(msg)
 
         self.modify_document(
             {"_id": user_id},
@@ -76,7 +78,8 @@ class Invites(Users):
 
     def use(self, user_id: str, invite_code: str) -> bool:
         if not self.is_valid(invite_code):
-            raise InviteException("Invite is not valid")
+            msg = "Invite is not valid"
+            raise InviteException(msg)
 
         self.table.update_one(
             {f"invites.{invite_code}": {"$exists": True}},

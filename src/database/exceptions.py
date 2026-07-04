@@ -31,6 +31,6 @@ class ReferralError(Exception):
 
 
 class SubdomainError(Exception):
-    def __init__(self, message: str, required_domain: str):
+    def __init__(self, message: str, required_domain: str) -> None:
         self.required_domain: str = required_domain
         super().__init__(message)

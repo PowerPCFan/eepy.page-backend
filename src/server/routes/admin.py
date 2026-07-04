@@ -224,7 +224,7 @@ class Admin:
 
     @Session.requires_auth
     @Session.requires_permission(permission="account")
-    def delete_user(self, body: BanUser, session: Session = Depends(converter.create)):
+    def delete_user(self, body: BanUser, session: Session = Depends(converter.create)) -> None:
         user_data: UserType | None = self.users.find_user({"_id": body.user_id})
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -243,7 +243,7 @@ class Admin:
         self,
         user_id: str,
         session: Session = Depends(converter.create),
-    ):
+    ) -> None:
         try:
             self.admin_tools.reinstate_user(user_id)
         except UserNotExistError:
@@ -261,7 +261,7 @@ class Admin:
         userid: str,
         reason: str,
         session: Session = Depends(converter.create),
-    ):
+    ) -> None:
         target_user = self.admin_tools.get_user_details_by_id(userid)
         if not target_user:
             raise HTTPException(status_code=404, detail="Couldnt find a user")
@@ -384,7 +384,7 @@ class Admin:
         record: str,
         type: str,
         session: Session = Depends(converter.create),
-    ):
+    ) -> None:
         if not self.admin_tools.dns.delete_domain(record, type):
             raise HTTPException(status_code=503, detail="Failed to delete record")
 
@@ -436,6 +436,6 @@ class Admin:
         self.admin_tools.verify(id)  # type: ignore
 
     @Session.requires_auth
-    def can_access(self, session: Session = Depends(converter.create)):
+    def can_access(self, session: Session = Depends(converter.create)) -> None:
         if "admin" not in session.permissions:
             raise HTTPException(status_code=403, detail="Invalid permission")

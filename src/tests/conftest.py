@@ -59,7 +59,7 @@ country_data = {
 
 
 # The database is wiped every run, so it's okay to reset these
-def init_env():
+def init_env() -> None:
     print("Initializing environment vars")
     os.environ["ENC_KEY"] = Fernet.generate_key().decode("utf-8")
     os.environ["JWT_KEY"] = secrets.token_urlsafe(64)
@@ -98,7 +98,7 @@ _sessions = Sessions(client)
 _rewards = Rewards(client, _users)
 
 
-def create_first_user():
+def create_first_user() -> None:
     client = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
 
     user_id = _users.create_user(

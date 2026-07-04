@@ -188,7 +188,7 @@ class API:
                 f"Registered through API user: {api.username}",
             )
         except DNSException as e:
-            logger.error(e)
+            logger.exception(e)
             raise HTTPException(status_code=500, detail="DNS Registration failed")
 
         self.domains.add_domain(
@@ -238,7 +238,7 @@ class API:
             )
 
         except ValueError:  # domain id is corrupt
-            logger.error(f"Domain valueerror {body.domain} is corrupted")
+            logger.exception(f"Domain valueerror {body.domain} is corrupted")
         except DNSException as e:
             print(e.json)
             raise HTTPException(status_code=500)
@@ -290,7 +290,7 @@ class API:
     ) -> dict[str, DomainFormat | None]:
         return api.user_domains
 
-    def is_available(self, name: str):
+    def is_available(self, name: str) -> None:
         if not self.dns_validation.is_free(name, "A", {}, raise_exceptions=False):
             raise HTTPException(
                 status_code=409,

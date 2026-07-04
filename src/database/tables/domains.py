@@ -1,7 +1,5 @@
 import logging
-from typing import NotRequired, get_args
-
-from typing_extensions import TypedDict
+from typing import NotRequired, TypedDict, get_args
 
 from database.exceptions import UserNotExistError
 from database.tables.users import Users, UserType
@@ -33,7 +31,7 @@ class Domains(Users):
     Please make sure to validate the domain BEFORE you use any functions here!
     """
 
-    def __init__(self, mongo_client):
+    def __init__(self, mongo_client) -> None:
         super().__init__(mongo_client)
 
     @staticmethod
@@ -85,7 +83,8 @@ class Domains(Users):
     def get_domains(self, target_user: str) -> dict[str, DomainFormat]:
         user_data: UserType | None = self.find_user({"_id": target_user})
         if user_data is None:
-            raise UserNotExistError("User does not exist")
+            msg = "User does not exist"
+            raise UserNotExistError(msg)
 
         return user_data["domains"]
 
@@ -112,7 +111,8 @@ class Domains(Users):
 
         user_data: UserType | None = self.find_user({"_id": target_user})
         if user_data is None:
-            raise ValueError("Failed to find user")
+            msg = "Failed to find user"
+            raise ValueError(msg)
 
         domain_data: DomainFormat = user_data["domains"][cleaned_domain]
 

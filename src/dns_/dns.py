@@ -16,7 +16,7 @@ class ConflictingDomain(Exception):
 
 
 def sanitize(content: str, type: str) -> str:
-    if (type == "CNAME" or type == "NS") and not content.rstrip().endswith("."):
+    if (type in {"CNAME", "NS"}) and not content.rstrip().endswith("."):
         content += "."
 
     if type == "TXT" and not content.startswith('"'):
@@ -28,7 +28,7 @@ def sanitize(content: str, type: str) -> str:
 
 
 class DNS:
-    def __init__(self, domains: Domains):
+    def __init__(self, domains: Domains) -> None:
         self.table = domains
         self.key: str = os.getenv("PDNS_API_KEY") or ""
         self.domain: str = os.getenv("PDNS_DOMAIN") or ""
@@ -58,7 +58,8 @@ class DNS:
         if type != old_type:
             success = self.delete_domain(domain, old_type)
             if not success:
-                raise DNSException("DNS Modification failed", json={"success": success})
+                msg = "DNS Modification failed"
+                raise DNSException(msg, json={"success": success})
 
         (name, tld) = Domains.separate_domain_into_parts(domain)
 
@@ -96,7 +97,8 @@ class DNS:
             if not self.key:
                 logger.critical("API key not defined!")
 
-            raise DNSException("Failed to modify domain", request.json())
+            msg = "Failed to modify domain"
+            raise DNSException(msg, request.json())
 
         return True
 
@@ -155,7 +157,8 @@ class DNS:
             if not self.key:
                 logger.error("API key not defined!")
 
-            raise DNSException("Failed to register domain", request.json())
+            msg = "Failed to register domain"
+            raise DNSException(msg, request.json())
 
         return True
 
@@ -213,7 +216,8 @@ class DNS:
                 if not self.key:
                     logger.critical("API key not defined!")
 
-                raise DNSException("Failed to register domain", request.json())
+                msg = "Failed to register domain"
+                raise DNSException(msg, request.json())
 
         return True
 
@@ -258,7 +262,7 @@ class DNS:
 
         return True
 
-    def delete_multiple(self, domains: dict[str, TYPES]):
+    def delete_multiple(self, domains: dict[str, TYPES]) -> bool:
         """Deleted multiple records at once
 
         Args:

@@ -7,7 +7,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class Captcha:
-    def __init__(self, turnstile_key: str):
+    def __init__(self, turnstile_key: str) -> None:
         self.turnstile_key: str = turnstile_key
 
     def verify(self, code: str, ip: str) -> bool:

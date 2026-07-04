@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import ipinfo  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Header, Request
@@ -18,7 +18,6 @@ from database.tables.reward_codes import Rewards
 from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
-from dns_.types import TYPES
 from mail.email import Email
 from security.api import Api, ApiType
 from security.captcha import Captcha
@@ -35,6 +34,9 @@ from server.routes.models.user import (
     PasswordReset,
     YearWrapped,
 )
+
+if TYPE_CHECKING:
+    from dns_.types import TYPES
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -330,7 +332,7 @@ class User:
         session: Session = Depends(converter.create),
         x_mfa_code: Annotated[str | None, Header()] = None,
         x_backup_code: Annotated[str | None, Header()] = None,
-    ):
+    ) -> None:
         if not x_mfa_code and not x_backup_code:
             raise HTTPException(
                 status_code=412,
@@ -347,7 +349,7 @@ class User:
         request: Request,
         body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
-    ):
+    ) -> None:
         user_data: UserType | None = self.table.find_user({"_id": body.username_hash})
 
         if user_data is None:
@@ -399,7 +401,7 @@ class User:
 
         self.email.send_verification_code(from_url, user_id, email)
 
-    def verify_account(self, code: str):
+    def verify_account(self, code: str) -> None:
         code_status: CodeStatus = self.codes.is_valid(code, "verification")
 
         account: str | None = code_status.get("account")
@@ -426,7 +428,8 @@ class User:
                 {"_id": code_status.get("account")},
             )
             if not user:
-                raise FilterMatchError("User not found")
+                msg = "User not found"
+                raise FilterMatchError(msg)
 
             referred_by: str | None = user.get("referred-by")
 
@@ -448,7 +451,7 @@ class User:
         request: Request,
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
-    ):
+    ) -> None:
         from_url: str = request.headers.get("Origin", "https://www.eepy.page")
         if session.user_cache_data.get("totp", {}).get(
             "verified",
@@ -520,9 +523,8 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> dict[str, ApiType]:
-        api_keys = session.user_cache_data.get("api-keys", {})
+        return session.user_cache_data.get("api-keys", {})
 
-        return api_keys
 
     @Session.requires_auth
     def get_key(
@@ -610,11 +612,11 @@ class User:
         code: str,
         request: Request,
         session: Session = Depends(converter.create),
-    ):
+    ) -> None:
         if not self.rewards.use(session.user_id, code):
             raise HTTPException(status_code=412, detail="Invalid code!")
 
-    def verify_deletion(self, code: str):
+    def verify_deletion(self, code: str) -> None:
         code_status: CodeStatus = self.codes.is_valid(code, "deletion")
 
         if not code_status["valid"]:
@@ -636,7 +638,7 @@ class User:
 
         self.table.delete_document({"_id": user_id})
 
-    def send_recovery_link(self, username: str):  # username being a plaintext string
+    def send_recovery_link(self, username: str) -> None:  # username being a plaintext string
         self.email.send_password_code(username)
 
     def reset_password(self, body: PasswordReset) -> None:

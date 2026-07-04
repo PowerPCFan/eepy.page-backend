@@ -98,7 +98,7 @@ class Codes(Table):
                 "expire": local_code[code]["expire"],
                 "account": local_code[code]["account"],
                 "expiresAfter": datetime.now(UTC) + timedelta(seconds=EXPIRE_TIME),
-            }
+            },
         )
         logger.info(f"Created code for user {target_username}")
 
