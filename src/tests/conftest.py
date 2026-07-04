@@ -14,13 +14,13 @@ from security.session import Session
 
 
 import secrets
-import sys
 import time
 
 import pymongo
 from cryptography.fernet import Fernet
 
 from mail.email import Email
+
 
 def load_user() -> UserType:
     mock_data: UserType = {
@@ -43,92 +43,68 @@ def load_user() -> UserType:
             "country_name": "Finland",
             "isEU": True,
             "country_flag_url": "https://cdn.ipinfo.io/static/images/countries-flags/FI.svg",
-            "country_flag": {
-                "emoji": "\ud83c\uddeb\ud83c\uddee",
-                "unicode": "U+1F1EB U+1F1EE"
-            },
-            "country_currency": {
-                "code": "EUR",
-                "symbol": "\u20ac"
-            },
-            "continent": {
-                "code": "EU",
-                "name": "Europe"
-            },
+            "country_flag": {"emoji": "\ud83c\uddeb\ud83c\uddee", "unicode": "U+1F1EB U+1F1EE"},
+            "country_currency": {"code": "EUR", "symbol": "\u20ac"},
+            "continent": {"code": "EU", "name": "Europe"},
             "latitude": "60.1695",
-            "longitude": "24.9354"
+            "longitude": "24.9354",
         },
         "created": 1715875251,
         "last-login": 1743929055,
-        "permissions": {
-            "max-domains": 3,
-            "max-subdomains": 2
-        },
+        "permissions": {"max-domains": 3, "max-subdomains": 2},
         "verified": True,
         "domains": {
             "testing-domains": {
                 "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
-                "registered": 1744103140
+                "registered": 1744103140,
             },
             "testing-domain2": {
                 "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
-                "registered": 1744103140
+                "registered": 1744103140,
             },
             "testing-domain3": {
                 "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
-                "registered": 1744103140
+                "registered": 1744103140,
             },
             "test1[dot]testing-domains": {
                 "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
-                "registered": 1744103140
+                "registered": 1744103140,
             },
             "test2[dot]testing-domains": {
                 "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
-                "registered": 1744103140
-            }
+                "registered": 1744103140,
+            },
         },
         "beta-enroll": False,
         "credits": 400,
-        "feature-flags": {
-            "credits": True
-        },
+        "feature-flags": {"credits": True},
         "api-keys": {
             "00795e160f60a2c94731ceed8fcba87c3949e5d3aa7ccffc55eb7330ab731636": {
                 "string": "gAAAAABm4vb60u99B3l6mTZGccDAhfAe3BXqvfRhT5spLhS9LMraIfGVVVfsHZ1kQewtScDeQBuCl7cVgyJFo6Rjondeb_hp-du-UDfskX05gy7wuWGMT3_Qk2OFSBvJdNDLRkitdyBQ",
-                "perms": [
-                    "delete",
-                    "modify"
-                ],
-                "domains": [
-                    "testing-domain"
-                ],
-                "comment": "Example comment"
+                "perms": ["delete", "modify"],
+                "domains": ["testing-domain"],
+                "comment": "Example comment",
             }
         },
-        "accessed-from": [
-            "176.93.129.231",
-            "217.152.116.140"
-        ],
+        "accessed-from": ["176.93.129.231", "217.152.116.140"],
         "invites": {
             "6MY6Y1YE05Wfkex9": {
                 "used": True,
-                "used_by": "5350e01c2a017d2e0a3f4664750f4ca22ded5e0ee553a69ebafc246b28d99867"
+                "used_by": "5350e01c2a017d2e0a3f4664750f4ca22ded5e0ee553a69ebafc246b28d99867",
             },
-            "zc8qcUcMLNqE3Dbj": {
-                "used": False
-            }
+            "zc8qcUcMLNqE3Dbj": {"used": False},
         },
-        "owned-tlds": []
+        "owned-tlds": [],
     }
 
     return mock_data
