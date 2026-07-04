@@ -71,7 +71,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": email,
                     "subject": "Verify your account",
                     "html": verify_template.replace(
@@ -95,7 +95,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": email,
                     "subject": "Order completed",
                     "html": purchase_template.replace(
@@ -116,7 +116,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": email,
                     "subject": "Account deletion",
                     "html": deletion_template.replace("{{link}}", url),
@@ -145,7 +145,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": user_email,
                     "subject": "Password recovery",
                     "html": recovery_template.replace(
@@ -169,7 +169,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": target_email,
                     "subject": "Account termination",
                     "html": banned_template.replace("{{reasons}}", reasons_html),
@@ -194,7 +194,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": target_email,
                     "subject": "Domain removed",
                     "html": domain_delete_template.replace(
@@ -211,7 +211,7 @@ class Email:
         try:
             resend.Emails.send(
                 {
-                    "from": "send@eepy.page",
+                    "from": "noreply@eepy.page",
                     "to": target_email,
                     "subject": "An action on your account",
                     "html": admin_template.replace("{{action}}", action),
