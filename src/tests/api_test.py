@@ -1,10 +1,10 @@
+from unittest.mock import MagicMock  # type: ignore[import-untyped]
+
 import pytest
-from mock import MagicMock  # type: ignore[import-untyped]
-from security.api import Api, ApiRangeError, ApiPermissionError, ApiError
+
 from database.tables.users import Users, UserType
-from database.tables.sessions import Sessions
+from security.api import Api, ApiError, ApiPermissionError, ApiRangeError
 from security.session import Session
-from security.api import Api
 
 valid_key: Api = MagicMock(spec=Api)
 valid_key.valid = True
@@ -14,7 +14,7 @@ valid_key.affected_domains = ["test[dot]eepy[dot]page", "affected[dot]eepy[dot]p
 
 invalid_key: Api = MagicMock(spec=Api)
 invalid_key.valid = False
- 
+
 
 @pytest.mark.order(-1)
 class TestUserApi:

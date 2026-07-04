@@ -1,5 +1,5 @@
-from time import time
 import threading
+from time import time
 
 
 class Webhook:
@@ -10,7 +10,7 @@ class Webhook:
 
 class LogManager(threading.Thread):
     def __init__(self, message, webhook: Webhook, importance: str, filename: str):
-        super(LogManager, self).__init__()
+        super().__init__()
         self.daemon = True
         self.webhook = webhook
         self.importance = importance
@@ -61,7 +61,7 @@ class Logger:
             start = time()
             result = func(*args, **kwargs)
             end = time()
-            self.time_log(f"{func.__name__}: {abs(end-start)}")
+            self.time_log(f"{func.__name__}: {abs(end - start)}")
             return result
 
         return wrap

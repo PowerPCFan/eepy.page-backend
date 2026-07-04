@@ -1,29 +1,34 @@
-import pytest
-import os
 import json
-from database.tables.users import UserType, Users
+import os
+from pathlib import Path
+
+import pytest
+
 from database.tables.codes import Codes
 from database.tables.domains import Domains
-from database.tables.sessions import Sessions
 from database.tables.reward_codes import Rewards
-from dns_.validation import Validation
+from database.tables.sessions import Sessions
+from database.tables.users import Users, UserType
 from dns_.dns import DNS
+from dns_.validation import Validation
 from security.encryption import Encryption
 from security.session import Session
-from pathlib import Path
 
 
 def load_user() -> UserType:
     with (Path("src") / "tests" / "example-data" / "user.json").open() as f:
         return json.load(f)
 
+
+import secrets
+import sys
+import time
+
 import pymongo
 from cryptography.fernet import Fernet
-import secrets
-from mail.email import Email
-import time
 from dotenv import load_dotenv
-import sys
+
+from mail.email import Email
 
 load_dotenv()
 
@@ -61,10 +66,10 @@ def init_env():
 
     client = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
     if not os.environ["MONGODB_TEST_URL"].startswith(
-        "mongodb://192.168"
+        "mongodb://192.168",
     ) and not os.environ["MONGODB_TEST_URL"].startswith("mongodb://localhost"):
         print(
-            f"WARNING: test db url: {os.environ['MONGODB_TEST_URL']}. Are you sure it's real?"
+            f"WARNING: test db url: {os.environ['MONGODB_TEST_URL']}. Are you sure it's real?",
         )
         sys.exit()
 
@@ -135,55 +140,55 @@ def mongo_client():
 
 @pytest.fixture(scope="session")
 def users():
-    yield _users
+    return _users
 
 
 @pytest.fixture(scope="session")
 def email():
-    yield _email
+    return _email
 
 
 @pytest.fixture(scope="session")
 def encryption():
-    yield _encryption
+    return _encryption
 
 
 @pytest.fixture(scope="session")
 def codes():
-    yield _codes
+    return _codes
 
 
 @pytest.fixture(scope="session")
 def domains():
-    yield _domains
+    return _domains
 
 
 @pytest.fixture(scope="session")
 def validation():
-    yield _validation
+    return _validation
 
 
 @pytest.fixture(scope="session")
 def sessions():
-    yield _sessions
+    return _sessions
 
 
 @pytest.fixture(scope="session")
 def rewards():
-    yield _rewards
+    return _rewards
 
 
 @pytest.fixture(scope="session")
 def test_session():
     assert _test_session["access_token"]
-    yield Session(_test_session["access_token"], _users, _sessions)
+    return Session(_test_session["access_token"], _users, _sessions)
 
 
 @pytest.fixture(scope="session")
 def test_session_refresh():
-    yield _test_session["refresh_token"]
+    return _test_session["refresh_token"]
 
 
 @pytest.fixture(scope="session")
 def test_user():
-    yield _test_user
+    return _test_user

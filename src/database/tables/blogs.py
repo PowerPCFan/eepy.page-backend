@@ -1,10 +1,9 @@
-from typing import Dict, List
-from typing_extensions import NotRequired, TypedDict
-import time
 import logging
-from pymongo import MongoClient
-from database.table import Table
+import time
 
+from pymongo import MongoClient
+
+from database.table import Table
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -16,5 +15,5 @@ class Blogs(Table):
     def create(self, title: str, body: str):
         url = title.lower().replace(" ", "-")
         self.insert_document(
-            {"_id": url[:24], "date": round(time.time()), "title": title, "body": body}
+            {"_id": url[:24], "date": round(time.time()), "title": title, "body": body},
         )

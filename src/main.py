@@ -19,6 +19,7 @@ if __name__ == "__main__":
         os.environ["DEBUG"] = "True"
 
         import uvicorn  # pyright: ignore[reportMissingImports]
+
         uvicorn.run(app, host="0.0.0.0")  # noqa: S104
     else:
         print(

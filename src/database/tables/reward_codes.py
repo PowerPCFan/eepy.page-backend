@@ -1,10 +1,11 @@
-from typing import Dict, List
-from typing_extensions import NotRequired, TypedDict
-import time
 import logging
+import time
+
 from pymongo import MongoClient
-from database.tables.users import Users
+from typing_extensions import TypedDict
+
 from database.table import Table
+from database.tables.users import Users
 from security.encryption import Encryption
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -63,6 +64,7 @@ class Rewards(Table):
 
         self.users.table.update_one({"_id": user_id}, reward.get("mappings", {}))
         self.table.update_one(
-            {"_id": code}, {"$set": {"used": True, "used-by": user_id}}
+            {"_id": code},
+            {"$set": {"used": True, "used-by": user_id}},
         )
         return True

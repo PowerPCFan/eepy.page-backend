@@ -1,9 +1,8 @@
-from typing import Dict
 import logging
 import time
-from database.tables.users import Users
-from database.tables.users import UserType, InviteType
-from database.exceptions import UserNotExistError, InviteException
+
+from database.exceptions import InviteException, UserNotExistError
+from database.tables.users import InviteType, Users, UserType
 from security.encryption import Encryption
 
 INVITE_LENGTH: int = 16
@@ -22,7 +21,7 @@ class Invites(Users):
             return False
 
         invite_holder: UserType | None = self.find_user(
-            {f"invites.{code}": {"$exists": True}}
+            {f"invites.{code}": {"$exists": True}},
         )
 
         if invite_holder is None:
@@ -56,7 +55,7 @@ class Invites(Users):
         if user_data is None:
             raise UserNotExistError("User does not exist!")
 
-        user_invites: Dict[str, InviteType] = user_data.get("invites", {})
+        user_invites: dict[str, InviteType] = user_data.get("invites", {})
 
         if len(user_invites) >= 3:
             raise InviteException("User has made too many invites")
@@ -86,7 +85,7 @@ class Invites(Users):
                     f"invites.{invite_code}.used": True,
                     f"invites.{invite_code}.used_by": user_id,
                     f"invites.{invite_code}.used_at": round(time.time()),
-                }
+                },
             },
         )
 

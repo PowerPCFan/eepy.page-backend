@@ -1,16 +1,15 @@
-from typing import List, Annotated
-import time
 import logging
-from fastapi import APIRouter, Request, Header, Depends
+
+from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
-from server.routes.models.blog import BlogType
+
 from database.tables.blogs import Blogs
-from database.tables.users import Users
 from database.tables.sessions import Sessions
-from database.exceptions import UserNotExistError, InviteException
-from security.session import Session
+from database.tables.users import Users
 from security.convert import Convert
+from security.session import Session
+from server.routes.models.blog import BlogType
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -62,11 +61,11 @@ class Blog:
             raise HTTPException(status_code=404)
         return JSONResponse(blog)  # type:ignore[return-value]
 
-    def get_all(self, n: int = 5, content: int | None = None) -> List[BlogType]:
+    def get_all(self, n: int = 5, content: int | None = None) -> list[BlogType]:
         amount = n
         content_length = content
         blogs = self.blog_table.get_table()  # type: ignore[assignment]
-        formatted_blogs: List[BlogType] = []
+        formatted_blogs: list[BlogType] = []
 
         for blog in blogs:
             new_blog: BlogType = BlogType(
@@ -78,7 +77,9 @@ class Blog:
             formatted_blogs.append(new_blog)
 
         formatted_blogs = sorted(
-            formatted_blogs, key=lambda blog: blog.date, reverse=True
+            formatted_blogs,
+            key=lambda blog: blog.date,
+            reverse=True,
         )
 
         return formatted_blogs[:amount]

@@ -1,24 +1,21 @@
-from typing import List, Dict, get_args
-import time
 import logging
-from fastapi import APIRouter, Request, Header, Depends, Response
+import time
+
+from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
-from server.routes.models.domain import DomainType
-from database.table import Table
-from database.tables.users import UserPageType, Users as UsersTable, UserType
-from database.tables.invitation import Invites as InviteTable
-from database.tables.domains import Domains as DomainTable, DomainFormat
+
+from database.exceptions import SubdomainError, UserNotExistError
+from database.tables.domains import DomainFormat
+from database.tables.domains import Domains as DomainTable
 from database.tables.sessions import Sessions as SessionTable
-from database.exceptions import UserNotExistError, InviteException, SubdomainError
-from security.encryption import Encryption
+from database.tables.users import UserPageType
+from database.tables.users import Users as UsersTable
+from dns_.dns import DNS
+from dns_.exceptions import DNSException, DomainExistsError
+from dns_.validation import Validation
 from security.api import Api, ApiPermission
 from security.convert import ConvertAPI
-from dns_.dns import DNS
-from dns_.validation import Validation
-from dns_.exceptions import DNSException, DomainExistsError
-from mail.email import Email
-from dns_.types import AVAILABLE_TLDS, TYPES
+from server.routes.models.domain import DomainType
 
 converter: ConvertAPI = ConvertAPI()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -51,7 +48,7 @@ class API:
                 200: {"description": "Domain created"},
                 400: {"description": "Invalid domain name"},
                 403: {
-                    "description": "Domain missing for subdomain (e.g: a.b.eepy.page needs b.eepy.page registered)"
+                    "description": "Domain missing for subdomain (e.g: a.b.eepy.page needs b.eepy.page registered)",
                 },
                 405: {"description": "Domain limit exceeded"},
                 409: {"description": "Domain already in use"},
@@ -73,7 +70,7 @@ class API:
                 412: {"description": "Invalid record name or value"},
                 460: {"description": "Invalid API key"},
                 461: {
-                    "description": "API key cannot do operations on requested domain"
+                    "description": "API key cannot do operations on requested domain",
                 },
                 462: {"description": "Invalid API key permissions ('content' needed)"},
             },
@@ -115,11 +112,11 @@ class API:
                 200: {"description": "Domain deleted successfully"},
                 403: {"description": "Domain does not exist, or user does not own it."},
                 404: {
-                    "description": "Domain type couldn't be fetched, specify the type using the query parameter `type`"
+                    "description": "Domain type couldn't be fetched, specify the type using the query parameter `type`",
                 },
                 460: {"description": "Invalid session"},
                 461: {
-                    "description": "API key cannot do operations on requested domain"
+                    "description": "API key cannot do operations on requested domain",
                 },
                 462: {"description": "Invalid API key permissions ('delete' needed)"},
             },
@@ -132,7 +129,7 @@ class API:
             methods=["GET"],
             status_code=200,
             responses={
-                200: {"description": "Returns a list of intents which the key has"}
+                200: {"description": "Returns a list of intents which the key has"},
             },
         )
 
@@ -155,7 +152,8 @@ class API:
     @Api.requires_permission("register")
     def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:
         can_user_register = self.dns_validation.can_user_register(
-            body.domain, api.user_cache_data
+            body.domain,
+            api.user_cache_data,
         )
 
         if not can_user_register.success:
@@ -163,7 +161,9 @@ class API:
 
         try:
             is_domain_available: bool = self.dns_validation.is_free(
-                body.domain, body.type, api.user_cache_data["domains"]
+                body.domain,
+                body.type,
+                api.user_cache_data["domains"],
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -212,18 +212,20 @@ class API:
         clean_domain_name: str = self.domains.clean_domain_name(body.domain)
         if not self.dns_validation.record_name_valid(body.domain, body.type):
             raise HTTPException(
-                status_code=412, detail=f"Invalid domain name {body.domain}"
+                status_code=412,
+                detail=f"Invalid domain name {body.domain}",
             )
 
         if not self.dns_validation.record_value_valid(body.values, body.type):
             raise HTTPException(
-                status_code=412, detail=f"Invalid value in {body.values}"
+                status_code=412,
+                detail=f"Invalid value in {body.values}",
             )
-
 
         if not self.dns_validation.user_owns_domain(api.username, body.domain):
             raise HTTPException(
-                status_code=403, detail=f"You do not own the domain {body.domain}"
+                status_code=403,
+                detail=f"You do not own the domain {body.domain}",
             )
 
         try:
@@ -255,13 +257,14 @@ class API:
     @Api.requires_auth
     @Api.requires_permission("delete")
     def delete(
-        self, domain: str, type: str | None = None, api: Api = Depends(converter.create)
+        self,
+        domain: str,
+        type: str | None = None,
+        api: Api = Depends(converter.create),
     ) -> None:
         if type is None:
             try:
-                type = api.user_cache_data["domains"][
-                    self.domains.clean_domain_name(domain)
-                ]["type"]
+                type = api.user_cache_data["domains"][self.domains.clean_domain_name(domain)]["type"]
             except KeyError:
                 raise HTTPException(
                     status_code=404,
@@ -282,14 +285,16 @@ class API:
     @Api.requires_auth
     @Api.requires_permission("list")
     def get_domains(
-        self, api: Api = Depends(converter.create)
-    ) -> Dict[str, DomainFormat | None]:
+        self,
+        api: Api = Depends(converter.create),
+    ) -> dict[str, DomainFormat | None]:
         return api.user_domains
 
     def is_available(self, name: str):
         if not self.dns_validation.is_free(name, "A", {}, raise_exceptions=False):
             raise HTTPException(
-                status_code=409, detail=f"Domain {name} is not available"
+                status_code=409,
+                detail=f"Domain {name} is not available",
             )
 
     @Api.requires_auth
@@ -302,6 +307,7 @@ class API:
 
     @Api.requires_auth
     def get_key_intents(
-        self, api: Api = Depends(converter.create)
-    ) -> List[ApiPermission]:
+        self,
+        api: Api = Depends(converter.create),
+    ) -> list[ApiPermission]:
         return api.permissions

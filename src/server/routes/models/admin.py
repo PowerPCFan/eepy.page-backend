@@ -1,11 +1,10 @@
 from pydantic import BaseModel
-from typing import List
 
 
 class BanUser(BaseModel):
     user_id: str
-    reasons: List[str]
+    reasons: list[str]
 
 
 class IpFind(BaseModel):
-    ips: List[str]
+    ips: list[str]

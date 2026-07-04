@@ -1,11 +1,12 @@
-from typing import Dict, List
-from typing_extensions import NotRequired, TypedDict
-import time
 import logging
+import time
+from typing import TypedDict
+
 from pymongo import MongoClient
+from typing_extensions import TypedDict
+
 from database.table import Table
 from security.encryption import Encryption
-from typing import TypedDict
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -33,5 +34,5 @@ class Status(Table):
                 "time": time.time(),
                 "message": message,
                 "active": True,
-            }
+            },
         )

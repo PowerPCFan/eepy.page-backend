@@ -1,21 +1,19 @@
-from typing import List, Annotated, get_args
-import time
 import logging
-from fastapi import APIRouter, Request, Header, Depends
+from typing import get_args
+
+from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
-from server.routes.models.blog import BlogType
-from database.tables.blogs import Blogs
-from database.tables.users import Users, UserType, UserPageType
+
+from database.exceptions import UserNotExistError
 from database.tables.sessions import Sessions
-from database.exceptions import UserNotExistError, InviteException
-from mail.email import Email
+from database.tables.users import Users, UserType
 from dns_.exceptions import DNSException
 from dns_.types import AVAILABLE_TLDS
-from security.session import Session
-from security.encryption import Encryption
+from security.admin import AccountData, DomainDeletionError
+from security.admin import Admin as AdminTools
 from security.convert import Convert
-from security.admin import Admin as AdminTools, DomainDeletionError, AccountData
+from security.encryption import Encryption
+from security.session import Session
 from server.routes.models.admin import BanUser, IpFind
 
 converter: Convert = Convert()
@@ -242,7 +240,9 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="account")
     def reinstate_user(
-        self, user_id: str, session: Session = Depends(converter.create)
+        self,
+        user_id: str,
+        session: Session = Depends(converter.create),
     ):
         try:
             self.admin_tools.reinstate_user(user_id)
@@ -270,15 +270,15 @@ class Admin:
 
         dns_success = self.admin_tools.dns.delete_domain(
             self.admin_tools.domains.beautify_domain_name(domain),
-            target_user["domains"][self.admin_tools.domains.clean_domain_name(domain)][
-                "type"
-            ],
+            target_user["domains"][self.admin_tools.domains.clean_domain_name(domain)]["type"],
         )
 
         if dns_success:
             if self.admin_tools.domains.delete_domain(userid, domain):
                 self.admin_tools.email.send_domain_termination_email(
-                    email, self.admin_tools.domains.beautify_domain_name(domain), reason
+                    email,
+                    self.admin_tools.domains.beautify_domain_name(domain),
+                    reason,
                 )
                 logger.info(f"Deleted domain {domain}")
             else:
@@ -290,7 +290,9 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_domain(
-        self, domain: str, session: Session = Depends(converter.create)
+        self,
+        domain: str,
+        session: Session = Depends(converter.create),
     ) -> AccountData:
         user_profile: AccountData | None = self.admin_tools.find_user_by_domain(domain)
         if user_profile is None:
@@ -301,7 +303,9 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_referral(
-        self, referral: str, session: Session = Depends(converter.create)
+        self,
+        referral: str,
+        session: Session = Depends(converter.create),
     ) -> AccountData:
         user_profile: AccountData | None = self.admin_tools.find_by_referral(referral)
         if user_profile is None:
@@ -312,16 +316,19 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_email(
-        self, email: str, session: Session = Depends(converter.create)
+        self,
+        email: str,
+        session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data = self.users.find_user(
-            {"email-hash": Encryption.sha256(email + "supahcool")}, True
+            {"email-hash": Encryption.sha256(email + "supahcool")},
+            True,
         )
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found (find_item)")
 
         user_profile: AccountData | None = self.admin_tools.get_user_details_by_id(
-            user_data["_id"]
+            user_data["_id"],
         )
 
         if not user_profile:
@@ -332,9 +339,11 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_ips(
-        self, body: IpFind, session: Session = Depends(converter.create)
-    ) -> List[AccountData]:
-        user_profiles: List[AccountData] | None = self.admin_tools.find_by_ips(body.ips)
+        self,
+        body: IpFind,
+        session: Session = Depends(converter.create),
+    ) -> list[AccountData]:
+        user_profiles: list[AccountData] | None = self.admin_tools.find_by_ips(body.ips)
         if user_profiles is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -343,7 +352,9 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_id(
-        self, id: str, session: Session = Depends(converter.create)
+        self,
+        id: str,
+        session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data: AccountData | None = self.admin_tools.get_user_details_by_id(id)
 
@@ -355,7 +366,9 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
     def find_user_by_username(
-        self, username: str, session: Session = Depends(converter.create)
+        self,
+        username: str,
+        session: Session = Depends(converter.create),
     ) -> AccountData:
         user_data: AccountData | None = self.admin_tools.find_by_username(username)
 
@@ -367,7 +380,10 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="dns")
     def delete_dns_record(
-        self, record: str, type: str, session: Session = Depends(converter.create)
+        self,
+        record: str,
+        type: str,
+        session: Session = Depends(converter.create),
     ):
         if not self.admin_tools.dns.delete_domain(record, type):
             raise HTTPException(status_code=503, detail="Failed to delete record")

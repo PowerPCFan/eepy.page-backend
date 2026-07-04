@@ -1,19 +1,19 @@
+import logging
+from unittest.mock import MagicMock  # type: ignore[import-untyped]
+
+import pyotp
 import pytest
-from mock import MagicMock  # type: ignore[import-untyped]
+
+from database.exceptions import UserNotExistError
+from database.tables.sessions import Sessions
+from database.tables.users import Users, UserType
 from security.session import (
+    InvalidToken,
     Session,
     SessionError,
     SessionFlagError,
     SessionPermissonError,
-    InvalidToken,
 )
-from database.tables.users import Users, UserType
-from database.tables.sessions import Sessions
-from database.exceptions import UserNotExistError
-from security.session import Session
-import logging
-import pyotp
-
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class TestCreation:
     def test_object(self, test_session: Session, test_user: UserType, users: Users):
         assert test_session.user_id == test_session.user_cache_data["_id"]
         assert test_session.token_result != InvalidToken
-        
+
         user = users.find_user({"_id": test_user["_id"]})
         assert user != None
 

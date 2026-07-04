@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger("eepy.page")
 
+
 class Encryption:
     def __init__(self, encryption_key: str | None = None) -> None:
         self.fernet: Fernet | None = Fernet(bytes(encryption_key, "utf-8")) if encryption_key else None
@@ -29,10 +30,7 @@ class Encryption:
 
     @staticmethod
     def generate_random_string(length: int) -> str:
-        return "".join(
-            random.SystemRandom().choice(string.ascii_letters + string.digits)
-            for _ in range(length)
-        )
+        return "".join(random.SystemRandom().choice(string.ascii_letters + string.digits) for _ in range(length))
 
     def encrypt(self, plain_data: str) -> str:
         if not self.fernet:

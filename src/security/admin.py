@@ -1,22 +1,16 @@
-import os
-from typing import List, Dict
-from typing_extensions import TypedDict
-from security.session import Session
-from security.encryption import Encryption
-from database.tables.users import Users
-from database.tables.users import UserType, UserPageType
-from database.tables.domains import Domains, DomainFormat
-from database.tables.sessions import Sessions
-from database.tables.referrals import ReferralType
-from dns_.dns import DNS
-from dns_.types import AVAILABLE_TLDS, TYPES
-from dns_.exceptions import DNSException
-from mail.email import Email
-from database.exceptions import UserNotExistError, FilterMatchError
-import time
-
 import logging
 import threading
+import time
+
+from database.exceptions import FilterMatchError, UserNotExistError
+from database.tables.domains import DomainFormat, Domains
+from database.tables.referrals import ReferralType
+from database.tables.sessions import Sessions
+from database.tables.users import UserPageType, Users, UserType
+from dns_.dns import DNS
+from dns_.types import AVAILABLE_TLDS, TYPES
+from mail.email import Email
+from security.encryption import Encryption
 
 
 class DomainDeletionError(Exception): ...
@@ -26,13 +20,13 @@ class GenericDeletionError(Exception): ...
 
 
 class AccountData(UserPageType):
-    domains: Dict[str, DomainFormat]
+    domains: dict[str, DomainFormat]
     id: str
     banned: bool
-    ban_reasons: List[str] | List[List[str]] | None
+    ban_reasons: list[str] | list[list[str]] | None
     last_login: int
     api_key_amount: int
-    accessed_from: List[str]
+    accessed_from: list[str]
 
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -54,26 +48,27 @@ class Admin:
         self.sessions = sessions_table
 
     def send_nonblocking_action_email(
-        self, email: str, actions: str
+        self,
+        email: str,
+        actions: str,
     ) -> threading.Thread:
         thread = threading.Thread(
-            target=self.email.send_admin_email, args=(email, actions)
+            target=self.email.send_admin_email,
+            args=(email, actions),
         )
         thread.start()
         return thread
 
-    def ban_user(self, reasons: List[str], user_data: UserType) -> bool:
+    def ban_user(self, reasons: list[str], user_data: UserType) -> bool:
         if len(reasons) == 0:
             raise ValueError("You need to specify atleast one ban reason")
 
-        domains: Dict[str, TYPES] = {
-            k.replace("[dot]", "."): v["type"] for k, v in user_data["domains"].items()
-        }
+        domains: dict[str, TYPES] = {k.replace("[dot]", "."): v["type"] for k, v in user_data["domains"].items()}
 
         success = self.dns.delete_multiple(domains)
         if not success:
             logger.critical(
-                "Domain mass deletion failed! Continuing with account deletion."
+                "Domain mass deletion failed! Continuing with account deletion.",
             )
             raise DomainDeletionError("Could not delete users domain")
 
@@ -86,7 +81,8 @@ class Admin:
 
     def reinstate_user(self, user_id: str):
         user_data: UserType | None = self.users.find_user(
-            {"_id": user_id}, find_banned=True
+            {"_id": user_id},
+            find_banned=True,
         )
 
         if not user_data:
@@ -106,7 +102,8 @@ class Admin:
 
         self.dns.register_multiple(domains, user_id)
         self.send_nonblocking_action_email(
-            self.users.encryption.decrypt(user_data["email"]), "Account reinstated"
+            self.users.encryption.decrypt(user_data["email"]),
+            "Account reinstated",
         )
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
@@ -131,8 +128,8 @@ class Admin:
                 "$or": [
                     {"_id": Encryption.sha256(username)},
                     {"username": Encryption.sha256(username.lower())},
-                ]
-            }
+                ],
+            },
         )
 
         if not user:
@@ -142,7 +139,7 @@ class Admin:
 
     def find_by_referral(self, referral_code: str) -> AccountData | None:
         referral: ReferralType | None = self.users.referrals.find_item(
-            {"_id": self.users.encryption.sha256(referral_code)}
+            {"_id": self.users.encryption.sha256(referral_code)},
         )  # type: ignore[assignment]
 
         if referral is None:
@@ -150,7 +147,7 @@ class Admin:
 
         return self.get_user_details_by_id(referral["owner"])
 
-    def find_by_ips(self, ips: List[str]) -> List[AccountData] | None:
+    def find_by_ips(self, ips: list[str]) -> list[AccountData] | None:
         users = self.users.find_users({"accessed-from": {"$in": ips}})
 
         if users is None:
@@ -158,19 +155,20 @@ class Admin:
 
         return [
             user
-            for user in [
-                self.get_user_details_by_id(user["_id"], user)
-                for user in users
-                if user is not None
-            ]
+            for user in [self.get_user_details_by_id(user["_id"], user) for user in users if user is not None]
             if user is not None
         ]
 
     def get_user_details_by_id(
-        self, user_id: str, user_type: UserType | None = None
+        self,
+        user_id: str,
+        user_type: UserType | None = None,
     ) -> AccountData | None:
         user_profile: UserPageType | None = self.users.get_user_profile(
-            user_id, self.sessions, True, user_type
+            user_id,
+            self.sessions,
+            True,
+            user_type,
         )
 
         if not user_profile:
@@ -178,7 +176,8 @@ class Admin:
             return None
 
         user_data: UserType | None = user_type or self.users.find_user(
-            {"_id": user_id}, True
+            {"_id": user_id},
+            True,
         )
 
         if user_data is None:
@@ -192,14 +191,15 @@ class Admin:
         account_data["last_login"] = round(user_data.get("last-login", 0))
         account_data["created"] = round(user_data.get("created", 0))
         account_data["api_key_amount"] = len(user_data.get("api-keys", []))
-        account_data["accessed_from"] = list(set(user_data.get("accessed-from", [])))[
-            :100
-        ]
+        account_data["accessed_from"] = list(set(user_data.get("accessed-from", [])))[:100]
 
         return account_data
 
     def change_permission(
-        self, user_id: str, permission: str, new_value: str | bool | int
+        self,
+        user_id: str,
+        permission: str,
+        new_value: str | bool | int,
     ) -> bool:
         logger.info(f"Changing user permission {permission}->{new_value}")
         try:
@@ -208,11 +208,15 @@ class Admin:
                 return False
 
             self.send_nonblocking_action_email(
-                user["email"], f"Account permission changed ({permission}: {new_value})"
+                user["email"],
+                f"Account permission changed ({permission}: {new_value})",
             )
 
             self.users.modify_document(
-                {"_id": user_id}, "$set", f"permissions.{permission}", new_value
+                {"_id": user_id},
+                "$set",
+                f"permissions.{permission}",
+                new_value,
             )
 
             return True
@@ -234,7 +238,8 @@ class Admin:
             return
 
         self.send_nonblocking_action_email(
-            user["email"], f"New TLD added to your account. (.{tld})"
+            user["email"],
+            f"New TLD added to your account. (.{tld})",
         )
         self.users.modify_document({"_id": user_id}, "$push", "owned-tlds", tld)
 
@@ -252,7 +257,8 @@ class Admin:
             return
 
         self.send_nonblocking_action_email(
-            user["email"], f"TLD .{tld} has been removed from your account"
+            user["email"],
+            f"TLD .{tld} has been removed from your account",
         )
         self.users.modify_document({"_id": user_id}, "$pull", "owned-tlds", tld)
 

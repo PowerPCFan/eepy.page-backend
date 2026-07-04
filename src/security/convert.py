@@ -1,8 +1,9 @@
 from fastapi import Request
-from database.tables.users import Users
+
 from database.tables.sessions import Sessions
+from database.tables.users import Users
+from security.api import Api, ApiError
 from security.session import Session, SessionError
-from security.api import Api, ApiError, ApiPermissionError
 
 
 class Convert:

@@ -1,14 +1,6 @@
-import pytest
-import pymongo
-import os
 import logging
-from mock import MagicMock, patch  # type: ignore[import-untyped]
+
 from mail.email import Email
-from database.exceptions import SubdomainError
-from database.tables.domains import Domains
-from database.tables.domains import Domains
-from database.tables.users import Users, UserType
-from database.tables.codes import Codes
 
 logger = logging.getLogger(__name__)
 

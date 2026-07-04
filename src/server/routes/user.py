@@ -1,55 +1,40 @@
-import os
-from typing import List, Dict, Annotated, Any
-import time
 import logging
+import os
 from datetime import UTC, datetime
-import json
-from fastapi import APIRouter, Request, Depends, Header, Query
-from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from typing import Annotated, Any
+
 import ipinfo  # type: ignore[import-untyped]
+from fastapi import APIRouter, Depends, Header, Request
+from fastapi.exceptions import HTTPException
+from fastapi.responses import JSONResponse
+
 from database.exceptions import (
     ConflictingReferralCode,
-    EmailException,
-    UserConflictError,
-    UsernameException,
     FilterMatchError,
 )
-from database.tables.users import Users, UserType, CountryType, UserPageType
-from database.tables.invitation import Invites
-from database.tables.sessions import Sessions
 from database.tables.codes import Codes, CodeStatus
-from database.tables.domains import DomainFormat
+from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
-
+from database.tables.sessions import Sessions
+from database.tables.users import UserPageType, Users, UserType
+from dns_.dns import DNS
+from dns_.types import TYPES
+from mail.email import Email
+from security.api import Api, ApiType
+from security.captcha import Captcha
+from security.convert import Convert
 from security.encryption import Encryption
-from security.oauth import EmailError, OAuth, DuplicateAccount
 from security.session import (
     Session,
-    SessionCreateStatus,
-    SessionError,
-    SessionPermissonError,
-    REFRESH_AMOUNT,
-    ACCESS_AMOUNT,
 )
-from security.api import Api, ApiPermission, ApiType
-from security.convert import Convert
-from mail.email import Email
-from security.captcha import Captcha
-
-from dns_.dns import DNS
-
 from server.routes.models.user import (
     ApiCreationBody,
     ApiDeletion,
-    MfaRecovery,
     MFACreation,
-    SignUp,
+    MfaRecovery,
     PasswordReset,
-    ApiGetKeys,
     YearWrapped,
 )
-from dns_.types import TYPES
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -319,7 +304,9 @@ class User:
         logger.info("Initialized")
 
     def create_mfa(
-        self, _request: Request, session: Session = Depends(converter.create)
+        self,
+        _request: Request,
+        session: Session = Depends(converter.create),
     ) -> MFACreation:
         if session.user_cache_data.get("totp", {}).get("verified"):
             raise HTTPException(status_code=409, detail="MFA code already exists!")
@@ -370,22 +357,28 @@ class User:
             raise HTTPException(412, detail="User does not have MFA")
 
         if user_data.get(
-            "registered-with", "email"
+            "registered-with",
+            "email",
         ) == "email" and not Encryption().check_password(
-            body.password, user_data["password"], # pyright: ignore[reportArgumentType]
+            body.password,
+            user_data["password"],  # pyright: ignore[reportArgumentType]
         ):
             raise HTTPException(status_code=401, detail="Invalid password")
 
         try:
             Session.remove_mfa_static(
-                body.username_hash, self.table, user_data, x_backup_code,
+                body.username_hash,
+                self.table,
+                user_data,
+                x_backup_code,
             )
         except ValueError:
             raise HTTPException(status_code=409)  # noqa: B904
 
     @Session.requires_auth
     def get_settings(
-        self, session: Session = Depends(converter.create)
+        self,
+        session: Session = Depends(converter.create),
     ) -> UserPageType:
         return JSONResponse(self.table.get_user_profile(session.username, self.session_table))  # type: ignore[return-value]
 
@@ -423,11 +416,14 @@ class User:
 
         try:
             self.table.modify_document(
-                {"_id": code_status.get("account", None)}, "$set", "verified", True
+                {"_id": code_status.get("account", None)},
+                "$set",
+                "verified",
+                True,
             )
 
             user: UserType | None = self.table.find_user(
-                {"_id": code_status.get("account")}
+                {"_id": code_status.get("account")},
             )
             if not user:
                 raise FilterMatchError("User not found")
@@ -455,7 +451,7 @@ class User:
     ):
         from_url: str = request.headers.get("Origin", "https://www.eepy.page")
         if session.user_cache_data.get("totp", {}).get(
-            "verified"
+            "verified",
         ) and not session.check_code(x_mfa_code):
             raise HTTPException(status_code=412, detail="Invalid MFA code")
 
@@ -472,20 +468,19 @@ class User:
         if user is None:
             raise HTTPException(status_code=404, detail="Account not found")
         this_year_timestamp = datetime(
-            datetime.now(UTC).year, 1, 1, tzinfo=UTC
+            datetime.now(UTC).year,
+            1,
+            1,
+            tzinfo=UTC,
         ).timestamp()
         domains_registered: int = len(
-            [
-                x
-                for x, v in user["domains"].items()
-                if v["registered"] > this_year_timestamp
-            ]
+            [x for x, v in user["domains"].items() if v["registered"] > this_year_timestamp],
         )
 
         unique_ips: int = len(user.get("accessed-from", []))
 
         accounts_made_after: int = self.table.table.count_documents(
-            {"created": {"$gt": user["created"]}}
+            {"created": {"$gt": user["created"]}},
         )
 
         total_users: int = self.table.db.command("collstats", "eepy.page")["count"]
@@ -521,8 +516,10 @@ class User:
 
     @Session.requires_auth
     def get_api_keys(
-        self, request: Request, session: Session = Depends(converter.create)
-    ) -> Dict[str, ApiType]:
+        self,
+        request: Request,
+        session: Session = Depends(converter.create),
+    ) -> dict[str, ApiType]:
         api_keys = session.user_cache_data.get("api-keys", {})
 
         return api_keys
@@ -557,16 +554,19 @@ class User:
             raise HTTPException(status_code=404, detail="Key does not exist")
 
         self.table.remove_key(
-            {"_id": session.user_cache_data["_id"]}, f"api-keys.{body.hash}"
+            {"_id": session.user_cache_data["_id"]},
+            f"api-keys.{body.hash}",
         )
 
     @Session.requires_auth
     def get_gdpr(
-        self, request: Request, session: Session = Depends(converter.create)
-    ) -> Dict[Any, Any]:
+        self,
+        request: Request,
+        session: Session = Depends(converter.create),
+    ) -> dict[Any, Any]:
         user_data: UserType = session.user_cache_data
 
-        gdpr_keys: List[str] = [
+        gdpr_keys: list[str] = [
             "_id",
             "lang",
             "country",
@@ -586,11 +586,15 @@ class User:
 
     @Session.requires_auth
     def create_referral(
-        self, code: str, request: Request, session: Session = Depends(converter.create)
+        self,
+        code: str,
+        request: Request,
+        session: Session = Depends(converter.create),
     ) -> None:
         if session.user_cache_data.get("referral-code"):
             raise HTTPException(
-                status_code=412, detail="User already has referral code!"
+                status_code=412,
+                detail="User already has referral code!",
             )
 
         try:
@@ -602,7 +606,10 @@ class User:
 
     @Session.requires_auth
     def redeem_code(
-        self, code: str, request: Request, session: Session = Depends(converter.create)
+        self,
+        code: str,
+        request: Request,
+        session: Session = Depends(converter.create),
     ):
         if not self.rewards.use(session.user_id, code):
             raise HTTPException(status_code=412, detail="Invalid code!")
@@ -619,14 +626,12 @@ class User:
         if user_data is None:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        domains: Dict[str, TYPES] = {
-            k: v["type"] for k, v in user_data["domains"].items()
-        }
+        domains: dict[str, TYPES] = {k: v["type"] for k, v in user_data["domains"].items()}
 
         success = self.dns.delete_multiple(domains)
         if not success:
             logger.error(
-                "Domain mass deletion failed! Continuing with account deletion."
+                "Domain mass deletion failed! Continuing with account deletion.",
             )
 
         self.table.delete_document({"_id": user_id})

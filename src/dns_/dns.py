@@ -1,13 +1,12 @@
-import os
-from typing import Dict, List
-import logging
 import json
-from pymongo import MongoClient
+import logging
+import os
+
 import requests  # type: ignore[import-untyped]
-from database.tables.domains import Domains, RepairFormat, DomainFormat
+
+from database.tables.domains import DomainFormat, Domains
 from dns_.exceptions import DNSException
-from dns_.validation import Validation
-from dns_.types import RRSet, TYPES
+from dns_.types import TYPES, RRSet
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -36,7 +35,7 @@ class DNS:
 
     def modify_domain(
         self,
-        values: List[str],
+        values: list[str],
         type: TYPES,
         old_type: str,
         domain: str,
@@ -82,7 +81,7 @@ class DNS:
                     "content": content,
                     "disabled": False,
                     "comment": f"Modified by Session based auth ({user_id})",
-                }
+                },
             )
 
         request = requests.patch(
@@ -102,7 +101,11 @@ class DNS:
         return True
 
     def register_domain(
-        self, domain: str, content: str, type: str, user_id: str
+        self,
+        domain: str,
+        content: str,
+        type: str,
+        user_id: str,
     ) -> bool:
         """
         Registers a new DNS record for the specified domain.
@@ -137,11 +140,11 @@ class DNS:
                                     "content": content,
                                     "disabled": False,
                                     "comment": f"Created with Session based auth ({user_id})",
-                                }
+                                },
                             ],
-                        }
-                    ]
-                }
+                        },
+                    ],
+                },
             ),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
         )
@@ -156,7 +159,7 @@ class DNS:
 
         return True
 
-    def register_multiple(self, domains: Dict[str, DomainFormat], user_id: str) -> bool:
+    def register_multiple(self, domains: dict[str, DomainFormat], user_id: str) -> bool:
         """
         Registers a new DNS record for the specified domain.
         Args:
@@ -171,7 +174,7 @@ class DNS:
             ValueError: If the ID of the newly created DNS record cannot be retrieved.
         """
 
-        rrsets: List[RRSet] = []
+        rrsets: list[RRSet] = []
 
         for domain, values in domains.items():
             (name, tld) = Domains.separate_domain_into_parts(domain)
@@ -191,7 +194,7 @@ class DNS:
                         "content": value,
                         "disabled": False,
                         "comment": f"Reinstated from banned user ({user_id})",
-                    }
+                    },
                 )
 
             rrsets.append(rrset)
@@ -204,7 +207,7 @@ class DNS:
 
             if not request.ok:
                 logger.error(
-                    f"Failed to register domains for TLD {tld}. {request.json()}"
+                    f"Failed to register domains for TLD {tld}. {request.json()}",
                 )
 
                 if not self.key:
@@ -239,9 +242,9 @@ class DNS:
                             "type": type,
                             "changetype": "DELETE",
                             "records": [{}],
-                        }
-                    ]
-                }
+                        },
+                    ],
+                },
             ),
             headers={"Content-Type": "application/json", "X-API-Key": self.key},
         )
@@ -255,7 +258,7 @@ class DNS:
 
         return True
 
-    def delete_multiple(self, domains: Dict[str, TYPES]):
+    def delete_multiple(self, domains: dict[str, TYPES]):
         """Deleted multiple records at once
 
         Args:
@@ -264,11 +267,11 @@ class DNS:
 
         logger.info(f"mass deleting records {list(domains.keys())}")
 
-        rrsets: Dict[str, List[dict]] = {}
+        rrsets: dict[str, list[dict]] = {}
 
         for domain, type in domains.items():
             (name, tld) = Domains.separate_domain_into_parts(
-                Domains.unclean_domain_name(domain)
+                Domains.unclean_domain_name(domain),
             )
 
             if tld not in rrsets:
@@ -280,7 +283,7 @@ class DNS:
                     "type": type,
                     "changetype": "DELETE",
                     "records": [{}],
-                }
+                },
             )
 
         for tld, tld_rrsets in rrsets.items():
@@ -292,7 +295,7 @@ class DNS:
 
             if not request.ok:
                 logger.error(
-                    f"Failed to delete domains for TLD {tld}. {request.json()}"
+                    f"Failed to delete domains for TLD {tld}. {request.json()}",
                 )
 
                 if not self.key:

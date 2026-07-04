@@ -1,9 +1,14 @@
-from typing_extensions import NotRequired, TypedDict
+from typing import NotRequired
+
 from pymongo import MongoClient
+from typing_extensions import TypedDict
+
 from database.table import Table
 
 
-StatusType = TypedDict("StatusType", {"issues": bool, "message": NotRequired[str]})
+class StatusType(TypedDict):
+    issues: bool
+    message: NotRequired[str]
 
 
 class Status(Table):

@@ -1,23 +1,17 @@
-import pytest
-import pymongo
-import os
 import logging
-from mock import MagicMock, patch  # type: ignore[import-untyped]
-from mail.email import Email
-from database.exceptions import SubdomainError
-from database.tables.domains import Domains
+import time
+
+import pytest
+
 from database.tables.domains import Domains
 from database.tables.users import Users, UserType
-from database.tables.codes import Codes
-from dns_.dns import DNS, sanitize
-import time
+from dns_.dns import sanitize
 from dns_.validation import Validation
 
 logger = logging.getLogger(__name__)
 
 
 class TestDomainValidation:
-
     def test_valid_name(self):
         assert Validation.record_name_valid("example-domain.eepy.page", "A")
         assert Validation.record_name_valid("test_dkim.eepy.page", "CNAME")
@@ -60,7 +54,7 @@ class TestDomainValidation:
 
     def test_domain_clean(self):
         assert Domains.clean_domain_name("a.b") == "a[dot]b"
-        assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b" # pyright: ignore[reportArgumentType]
+        assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b"  # pyright: ignore[reportArgumentType]
         assert Domains.unclean_domain_name("a[dot]b") == "a.b"
 
     def test_separation(self):
@@ -101,18 +95,17 @@ class TestDomainValidation:
 
 class TestDomainUser:
     def test_register(self, domains: Domains, users: Users, test_user: UserType):
-        domains.add_domain(test_user["_id"], "TEST.eepy.page", {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"})  # type: ignore
+        domains.add_domain(
+            test_user["_id"],
+            "TEST.eepy.page",
+            {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
+        )  # type: ignore
         updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert (
-            updated_user_data.get("domains", {}).get("TEST[dot]eepy[dot]page") is None
-        )
-        assert (
-            updated_user_data.get("domains", {}).get("test[dot]eepy[dot]page")
-            is not None
-        )
+        assert updated_user_data.get("domains", {}).get("TEST[dot]eepy[dot]page") is None
+        assert updated_user_data.get("domains", {}).get("test[dot]eepy[dot]page") is not None
 
         users.modify_document(
             {"_id": test_user["_id"]},
@@ -125,13 +118,8 @@ class TestDomainUser:
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert (
-            updated_user_data.get("domains", {}).get("TEST3[dot]eepy[dot]page") is None
-        )
-        assert (
-            updated_user_data.get("domains", {}).get("test3[dot]eepy[dot]page")
-            is not None
-        )
+        assert updated_user_data.get("domains", {}).get("TEST3[dot]eepy[dot]page") is None
+        assert updated_user_data.get("domains", {}).get("test3[dot]eepy[dot]page") is not None
         users.remove_key({"_id": test_user["_id"]}, "domains.test3")
 
     def test_domain_not_free(self, validation: Validation, domains: Domains):
@@ -158,7 +146,10 @@ class TestDomainUser:
 
         # Change domain limit to be 0. This stops the user from creating new domains, but still allows them to create subdomains
         users.modify_document(
-            {"_id": test_user["_id"]}, "$set", "permissions.max-domains", 0
+            {"_id": test_user["_id"]},
+            "$set",
+            "permissions.max-domains",
+            0,
         )
 
         modified_user = users.find_user({"_id": test_user["_id"]})
@@ -167,13 +158,14 @@ class TestDomainUser:
             quit()
 
         assert not Validation.can_user_register("test2.eepy.page", modified_user)[0]
-        assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[
-            0
-        ]
+        assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[0]
 
         # Disable subdomain registration too
         users.modify_document(
-            {"_id": test_user["_id"]}, "$set", "permissions.max-subdomains", 0
+            {"_id": test_user["_id"]},
+            "$set",
+            "permissions.max-subdomains",
+            0,
         )
 
         modified_user = users.find_user({"_id": test_user["_id"]})
@@ -182,13 +174,20 @@ class TestDomainUser:
             quit()
 
         assert not Validation.can_user_register(
-            "subdomain.test2.eepy.page", modified_user
+            "subdomain.test2.eepy.page",
+            modified_user,
         )[0]
 
         users.modify_document(
-            {"_id": test_user["_id"]}, "$set", "permissions.max-subdomains", 50
+            {"_id": test_user["_id"]},
+            "$set",
+            "permissions.max-subdomains",
+            50,
         )
 
         users.modify_document(
-            {"_id": test_user["_id"]}, "$set", "permissions.max-domains", 3
+            {"_id": test_user["_id"]},
+            "$set",
+            "permissions.max-domains",
+            3,
         )

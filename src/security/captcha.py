@@ -1,6 +1,7 @@
-import requests  # type: ignore[import-untyped]
-import logging
 import json
+import logging
+
+import requests  # type: ignore[import-untyped]
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -14,7 +15,7 @@ class Captcha:
         response = requests.post(
             "https://challenges.cloudflare.com/turnstile/v0/siteverify",
             data=json.dumps(
-                {"secret": self.turnstile_key, "response": code, "remoteip": ip}
+                {"secret": self.turnstile_key, "response": code, "remoteip": ip},
             ),
             headers={"Content-Type": "application/json"},
         )

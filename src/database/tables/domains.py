@@ -1,15 +1,17 @@
-from typing import Dict, List, Literal, Tuple, get_args
 import logging
-from typing_extensions import NotRequired, TypedDict
-from database.tables.users import Users, UserType
+from typing import NotRequired, get_args
+
+from typing_extensions import TypedDict
+
 from database.exceptions import UserNotExistError
-from dns_.types import TYPES, AVAILABLE_TLDS
+from database.tables.users import Users, UserType
+from dns_.types import AVAILABLE_TLDS, TYPES
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
 class DomainFormat(TypedDict):
-    ip: List[str] | str
+    ip: list[str] | str
     registered: int | float
     type: TYPES
     id: str | None
@@ -21,7 +23,7 @@ RepairFormat = TypedDict(
         "fixed": int,
         "skipped": int,
         "duplicates": int,
-        "broken-id": NotRequired[Dict[str, DomainFormat]],
+        "broken-id": NotRequired[dict[str, DomainFormat]],
     },
 )
 
@@ -39,7 +41,7 @@ class Domains(Users):
         return input.replace(".", "[dot]").lower()
 
     @staticmethod
-    def separate_domain_into_parts(domain: str) -> Tuple[str, str]:
+    def separate_domain_into_parts(domain: str) -> tuple[str, str]:
         """Returns the name and TLD of the domain
 
         :param domain: the full domain (e.g a.eepy.page)
@@ -66,7 +68,10 @@ class Domains(Users):
         return Domains.unclean_domain_name(input)
 
     def add_domain(
-        self, target_user: str, domain: str, domain_data: DomainFormat
+        self,
+        target_user: str,
+        domain: str,
+        domain_data: DomainFormat,
     ) -> None:
         cleaned_domain: str = Domains.clean_domain_name(domain.lower())
 
@@ -77,7 +82,7 @@ class Domains(Users):
             value=domain_data,
         )
 
-    def get_domains(self, target_user: str) -> Dict[str, DomainFormat]:
+    def get_domains(self, target_user: str) -> dict[str, DomainFormat]:
         user_data: UserType | None = self.find_user({"_id": target_user})
         if user_data is None:
             raise UserNotExistError("User does not exist")

@@ -1,19 +1,15 @@
-from typing import List, Annotated
-import time
 import logging
-from fastapi import APIRouter, Request, Header, Depends
+
+from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
-from server.routes.models.invite import InviteCreate
-from database.table import Table
-from database.tables.users import Users as UsersTable, UserType
+
+from database.exceptions import InviteException, UserNotExistError
 from database.tables.invitation import Invites as InviteTable
 from database.tables.sessions import Sessions as SessionTable
-from database.exceptions import UserNotExistError, InviteException
-from security.encryption import Encryption
-from security.session import Session, SessionCreateStatus
+from database.tables.users import Users as UsersTable
 from security.convert import Convert
-from mail.email import Email
+from security.session import Session
+from server.routes.models.invite import InviteCreate
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -21,7 +17,10 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 class Invite:
     def __init__(
-        self, table: UsersTable, sessions: SessionTable, invites: InviteTable
+        self,
+        table: UsersTable,
+        sessions: SessionTable,
+        invites: InviteTable,
     ) -> None:
         converter.init_vars(table, sessions)
         self.table: UsersTable = table

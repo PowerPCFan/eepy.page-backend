@@ -1,8 +1,9 @@
-from locust import FastHttpUser, task
+import os
 import random
 import string
+
 from dotenv import load_dotenv
-import os
+from locust import FastHttpUser, task
 
 load_dotenv()
 

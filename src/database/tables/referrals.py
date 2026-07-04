@@ -1,34 +1,35 @@
-from typing import Dict, List, TYPE_CHECKING
-from typing_extensions import NotRequired, TypedDict
-import time
 import logging
-from threading import Thread
-from pymongo import MongoClient
-from database.table import Table
-import json
 import re
+import time
+from typing import TYPE_CHECKING
+
+from pymongo import MongoClient
+from typing_extensions import TypedDict
+
+from database.table import Table
 
 if TYPE_CHECKING:
     from database.tables.users import Users, UserType
 
 from database.exceptions import (
-    UserNotExistError,
     ConflictingReferralCode,
-    UserConflictError,
+    UserNotExistError,
 )
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-ReferralType = TypedDict(
-    "ReferralType", {"_id": str, "owner": str, "users": List[str], "created": int}
-)
+class ReferralType(TypedDict):
+    _id: str
+    owner: str
+    users: list[str]
+    created: int
 
 
 class Referrals(Table):
     def __init__(self, mongo_client: MongoClient, users: "Users"):
         super().__init__(mongo_client, "referrals")
-        self.users: "Users" = users
+        self.users: Users = users
 
     def insert(self, document: ReferralType) -> None:
         return super().insert_document(document)
@@ -38,7 +39,7 @@ class Referrals(Table):
         logger.info("Creating referral code")
         if len(requested_code) < 3 or len(requested_code) > 50:
             raise ValueError(
-                f"requested code is too long or too short! {requested_code}"
+                f"requested code is too long or too short! {requested_code}",
             )
 
         if not re.fullmatch("[a-z0-9-]+", requested_code):
@@ -46,7 +47,7 @@ class Referrals(Table):
 
         lookup_request_code: str = self.users.encryption.sha256(requested_code)
 
-        user: "UserType | None" = self.users.find_user({"_id": user_id})
+        user: UserType | None = self.users.find_user({"_id": user_id})
 
         if user is None:
             raise UserNotExistError("User does not exist!")
@@ -63,11 +64,14 @@ class Referrals(Table):
                 "owner": user_id,
                 "users": [],
                 "created": round(time.time()),
-            }
+            },
         )
 
         self.users.modify_document(
-            {"_id": user_id}, "$set", "referral-code", requested_code
+            {"_id": user_id},
+            "$set",
+            "referral-code",
+            requested_code,
         )
 
     def check(self, referral_code: str) -> bool:
@@ -112,8 +116,8 @@ class Referrals(Table):
 
         self.modify_document({"_id": referral["_id"]}, "$push", "users", user["_id"])
 
-    def get_users(self, referral_code: str) -> List["UserType"]:
+    def get_users(self, referral_code: str) -> list["UserType"]:
         referral_code = referral_code.lower()
-        referrals: List["UserType"] = self.find_items({"referred-by": referral_code})  # type: ignore
+        referrals: list[UserType] = self.find_items({"referred-by": referral_code})  # type: ignore
 
         return referrals

@@ -27,11 +27,13 @@ type ApiPermission = Literal["register", "modify", "delete", "list", "userdetail
 
 type GenericFunction = Callable[..., Any]
 
+
 class ApiType(TypedDict):
     string: str
     perms: list[ApiPermission]
     domains: list[str]
     comment: str
+
 
 logger = logging.getLogger("eepy.page")
 
@@ -96,7 +98,9 @@ class Api:
                     logger.debug(f"API Key can modify domain {target_domain}")
 
                 return func(*args, **kwargs)
+
             return wrapper
+
         return decor
 
     def __init__(self, api_key: str, users: Users) -> None:
@@ -122,17 +126,14 @@ class Api:
         self.permissions: list[ApiPermission] = self.__get_permimssions()
 
         if self.key_data:
-            self.affected_domains: list[str] = [
-                Domains.clean_domain_name(d) for d in self.key_data.get("domains", [])
-            ]
+            self.affected_domains: list[str] = [Domains.clean_domain_name(d) for d in self.key_data.get("domains", [])]
 
             if "*" in self.affected_domains:
                 logger.info("Wildcard in affected domains! Filling with users domains...")
                 self.affected_domains = list(self.user_cache_data["domains"].keys())
 
             self.user_domains: dict[str, DomainFormat | None] = {
-                domain: self.user_cache_data["domains"].get(domain)
-                for domain in self.affected_domains
+                domain: self.user_cache_data["domains"].get(domain) for domain in self.affected_domains
             }
 
         else:
@@ -140,9 +141,11 @@ class Api:
             self.user_domains = {}
 
     def __cache_data(self) -> ApiType | None:
-        user_data = self.users_table.find_item({
-            f"api-keys.{self.encrypted_key}": {"$exists": True},
-        })
+        user_data = self.users_table.find_item(
+            {
+                f"api-keys.{self.encrypted_key}": {"$exists": True},
+            }
+        )
 
         if user_data is None:
             msg = "User not found"
@@ -192,10 +195,7 @@ class Api:
 
         cleaned_domains: list[str] = [Domains.clean_domain_name(d) for d in domains]
         for domain in cleaned_domains:
-            if (
-                Domains.clean_domain_name(domain) not in list(user_domains.keys())
-                and domain != "*"
-            ):
+            if Domains.clean_domain_name(domain) not in list(user_domains.keys()) and domain != "*":
                 logger.warning(f"Domain {domain} not in user_domain")
                 msg_0 = f"User does not own domain {domain}"
                 raise PermissionError(msg_0)

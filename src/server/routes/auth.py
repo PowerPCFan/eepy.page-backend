@@ -1,35 +1,33 @@
-import os
-from typing import Annotated
-import time
-import logging
 import json
-from fastapi import APIRouter, Request, Depends, Header, Query
+import logging
+import os
+import time
+from typing import Annotated
+
+import ipinfo  # type: ignore[import-untyped]
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
-import ipinfo  # type: ignore[import-untyped]
 
 from database.exceptions import EmailException, UsernameException
-from database.tables.users import Users, UserType
+from database.tables.codes import Codes
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.codes import Codes
-
+from database.tables.users import Users, UserType
+from dns_.dns import DNS
+from mail.email import Email
+from security.captcha import Captcha
+from security.convert import Convert
 from security.encryption import Encryption
-from security.oauth import EmailError, OAuth, DuplicateAccount
+from security.oauth import DuplicateAccount, EmailError, OAuth
 from security.session import (
+    ACCESS_AMOUNT,
+    REFRESH_AMOUNT,
     Session,
     SessionCreateStatus,
     SessionError,
     SessionPermissonError,
-    REFRESH_AMOUNT,
-    ACCESS_AMOUNT,
 )
-from security.convert import Convert
-from mail.email import Email
-from security.captcha import Captcha
-
-from dns_.dns import DNS
-
 from server.routes.models.user import (
     LoginRequest,
     SignUp,
@@ -76,7 +74,7 @@ class Auth:
                         "application/json": {
                             "auth-token": "Token you can use for accessing things",
                             "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
-                        }
+                        },
                     },
                 },
                 400: {"description": "User signed up with Google"},
@@ -99,7 +97,7 @@ class Auth:
                         "application/json": {
                             "auth-token": "Token you can use for accessing things",
                             "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
-                        }
+                        },
                     },
                 },
                 460: {"description": "Invalid key"},
@@ -108,10 +106,14 @@ class Auth:
         )
 
         self.router.add_api_route(
-            "/auth/google/callback", self.google_oauth2, methods=["GET", "POST"],
+            "/auth/google/callback",
+            self.google_oauth2,
+            methods=["GET", "POST"],
         )
         self.router.add_api_route(
-            "/auth/link", self.create_linking_code, methods=["POST"],
+            "/auth/link",
+            self.create_linking_code,
+            methods=["POST"],
         )
 
         self.router.add_api_route(
@@ -168,14 +170,11 @@ class Auth:
         if not user_data["verified"]:
             raise HTTPException(status_code=403, detail="Verification required")
 
-        if (
-            user_data.get("password") is None
-            or user_data.get("registered-with") == "google"
-        ):
+        if user_data.get("password") is None or user_data.get("registered-with") == "google":
             raise HTTPException(status_code=400, detail="Account made with google")
 
         ip: str = request.client.host  # type: ignore[union-attr]
-        if not Encryption().check_password(body.password, user_data["password"]): # pyright: ignore[reportArgumentType]
+        if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=401, detail="Invalid password")
 
         logger.info(f"Login attempt from {body.username_hash}")
@@ -260,7 +259,8 @@ class Auth:
         origin = state.get("url", "https://www.eepy.page")
         mode = state.get("mode", "login")
         redirect_url = state.get(
-            "redirect", "https://api.eepy.page/auth/google/callback"
+            "redirect",
+            "https://api.eepy.page/auth/google/callback",
         )
 
         logger.info(f"Request {mode} coming from origin {origin}")
@@ -273,7 +273,11 @@ class Auth:
         if mode == "login":
             try:
                 access, refresh = oauth.create_google_session(
-                    request, self.handler, code, redirect_url, state.get("referrer")
+                    request,
+                    self.handler,
+                    code,
+                    redirect_url,
+                    state.get("referrer"),
                 )
             except ValueError:
                 return RedirectResponse(f"{origin}/login?c=500&r=/")
@@ -309,7 +313,9 @@ class Auth:
                 raise SessionError("Invalid session!")
 
             session: Session = Session(
-                status.get("account", ""), self.table, self.session_table
+                status.get("account", ""),
+                self.table,
+                self.session_table,
             )
             if not session.valid:
                 logger.info("Linking code's session was invalid!")
@@ -329,7 +335,10 @@ class Auth:
         raise HTTPException(status_code=412, detail=f"Invalid mode {mode}")
 
     def sign_up(
-        self, request: Request, body: SignUp, x_captcha_code: Annotated[str, Header()]
+        self,
+        request: Request,
+        body: SignUp,
+        x_captcha_code: Annotated[str, Header()],
     ) -> None:
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
             raise HTTPException(429, detail="Invalid captcha")
@@ -359,7 +368,9 @@ class Auth:
 
     @Session.requires_auth
     def logout(
-        self, request: Request, session: Session = Depends(converter.create)
+        self,
+        request: Request,
+        session: Session = Depends(converter.create),
     ) -> None:
         session_id: str
         if request.headers.get("specific") == "true":

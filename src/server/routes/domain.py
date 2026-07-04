@@ -143,7 +143,7 @@ class Domain:
         logger.info("Initialized")
 
     @Session.requires_auth
-    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:, C901
+    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:
         domain_name = body.domain
 
         if not domain_name.endswith(get_args(AVAILABLE_TLDS)):

@@ -1,9 +1,12 @@
 import logging
-from typing import Dict, List, Any, Mapping
+from collections.abc import Mapping
+from typing import Any
+
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
 from pymongo.database import Database
+
 from database.exceptions import FilterMatchError
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -17,7 +20,7 @@ class Table:
         self.db: Database = self.cluster["database"]
         self.table: Collection = self.db[table_name]
 
-    def find_item(self, filter: Dict[str, Any]) -> dict | None:
+    def find_item(self, filter: dict[str, Any]) -> dict | None:
         """Finds and item from the database
 
         :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
@@ -26,11 +29,11 @@ class Table:
         :rtype: dict | None
         """
         result: dict | None = self.table.find_one(
-            filter
+            filter,
         )  # Not simply returning the result in case we need to do something in the future
         return result
 
-    def find_items(self, filter: Dict[str, Any]) -> List[dict]:
+    def find_items(self, filter: dict[str, Any]) -> list[dict]:
         """Finds multiple items from the database
 
         :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
@@ -41,7 +44,7 @@ class Table:
         cursor: Cursor = self.table.find(filter)
         return [item for item in cursor]
 
-    def get_table(self) -> List[dict]:
+    def get_table(self) -> list[dict]:
         """Gets every item inside a specific table.
 
         :return: a list of every document inside the collection
@@ -60,7 +63,7 @@ class Table:
 
     def modify_document(
         self,
-        filter: Dict[str, Any],
+        filter: dict[str, Any],
         operation: str,
         key: str,
         value: Any,
@@ -84,12 +87,14 @@ class Table:
         :raises FilterMatchError: if no document is found
         """
         result = self.table.update_one(
-            filter, {operation: {key: value}}, upsert=create_if_not_exist
+            filter,
+            {operation: {key: value}},
+            upsert=create_if_not_exist,
         )
 
         if result.matched_count == 0 and not ignore_no_matches:
             logger.error(
-                f"Filter {filter} for table {self.name} couldn't match a document"
+                f"Filter {filter} for table {self.name} couldn't match a document",
             )
             raise FilterMatchError("Filter didn't match anything")
 
@@ -111,14 +116,14 @@ class Table:
         logger.info(f"Creating delete index for key {date_key} on table {self.name}")
         self.table.create_index(date_key, expireAfterSeconds=1)
 
-    def delete_document(self, filter: Dict[str, Any]) -> int:
+    def delete_document(self, filter: dict[str, Any]) -> int:
         logger.info(f"Deleting document with filter {filter} on table {self.name}")
         return self.table.delete_one(filter).deleted_count
 
-    def delete_many(self, filter: Dict[str, Any]) -> int:
+    def delete_many(self, filter: dict[str, Any]) -> int:
         logger.info(f"Deleting many with filter {filter} on table {self.name}")
         return self.table.delete_many(filter).deleted_count
 
-    def remove_key(self, filter: Dict[str, Any], key: str) -> bool:
+    def remove_key(self, filter: dict[str, Any], key: str) -> bool:
         updateResult = self.table.update_one(filter, {"$unset": {key: ""}})
         return updateResult.matched_count != 0

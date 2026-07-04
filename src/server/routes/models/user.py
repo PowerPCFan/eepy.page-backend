@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import List
 
 from security.api import ApiPermission
 
@@ -28,20 +27,20 @@ class MfaRecovery(BaseModel):
 
 
 class MFACreation(BaseModel):
-    backup_codes: List[str]
+    backup_codes: list[str]
     app_link: str
 
 
 class ApiCreationBody(BaseModel):
-    permissions: List[ApiPermission]
-    domains: List[str]
+    permissions: list[ApiPermission]
+    domains: list[str]
     comment: str
 
 
 class ApiGetKeys(BaseModel):
     key: str
-    domains: List[str]
-    perms: List[ApiPermission]
+    domains: list[str]
+    perms: list[ApiPermission]
     comment: str
 
 

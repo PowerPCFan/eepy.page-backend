@@ -1,19 +1,18 @@
-import os
-import logging
 import json
-import requests  # type: ignore[import-untyped]
+import logging
+import os
 import time
-from typing import TypedDict, Tuple
+from typing import TypedDict
+
+import requests  # type: ignore[import-untyped]
+from fastapi import Request
 from ipinfo import Handler  # type: ignore[import-untyped]
 
-from database.tables.users import Users, UserType
 from database.tables.sessions import Sessions
-from security.session import SessionError
-from security.encryption import Encryption
-from security.session import Session
+from database.tables.users import Users, UserType
 from mail.email import Email
-
-from fastapi import Request
+from security.encryption import Encryption
+from security.session import Session, SessionError
 
 logger = logging.getLogger("eepy.page")
 
@@ -24,18 +23,14 @@ class EmailError(Exception): ...
 class DuplicateAccount(Exception): ...
 
 
-GoogleUserResponse = TypedDict(
-    "GoogleUserResponse",
-    {
-        "sub": str,
-        "name": str,
-        "given_name": str,
-        "family_name": str,
-        "picture": str,
-        "email": str,
-        "email_verified": bool,
-    },
-)
+class GoogleUserResponse(TypedDict):
+    sub: str
+    name: str
+    given_name: str
+    family_name: str
+    picture: str
+    email: str
+    email_verified: bool
 
 
 class OAuth:
@@ -51,7 +46,9 @@ class OAuth:
         self.emails: Email = emails
 
     def get_google_callback_data(
-        self, callback_url: str, code: str
+        self,
+        callback_url: str,
+        code: str,
     ) -> GoogleUserResponse:
         logger.info(f"Checking google with code {code}")
         req = requests.post(
@@ -69,7 +66,7 @@ class OAuth:
 
         if token is None:
             logger.warning(
-                f"Failed to get token for google sign in. {req.status_code} {req.text}"
+                f"Failed to get token for google sign in. {req.status_code} {req.text}",
             )
             raise ValueError("Failed to get token for user")
 
@@ -87,7 +84,7 @@ class OAuth:
         code: str,
         callback_url: str,
         refer_code: str | None,
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         """Creates a session pair from a google auth callback
 
         :param request: the request object
@@ -150,15 +147,19 @@ class OAuth:
             logger.error(f"Failed to create session for user {data['email']}")
             raise SessionError("Failed to create session")
 
-        return (session["access_token" ], session["refresh_token"])  # type: ignore
+        return (session["access_token"], session["refresh_token"])  # type: ignore
 
     def link_google_account(
-        self, session: Session, request: Request, code: str, callback_url: str
+        self,
+        session: Session,
+        request: Request,
+        code: str,
+        callback_url: str,
     ) -> bool:
         data: GoogleUserResponse = self.get_google_callback_data(callback_url, code)
 
         if session.user_cache_data.get(
-            "registered-with"
+            "registered-with",
         ) == "google" or session.user_cache_data.get("has-linked-google"):
             logger.warning("User already has registered with google")
             return False
@@ -168,14 +169,17 @@ class OAuth:
             raise EmailError("Google email not verified")
 
         if data.get("email") != self.users.encryption.decrypt(
-            session.user_cache_data["email"]
+            session.user_cache_data["email"],
         ):
             logger.warning(
-                f"Google email {data.get('email')} does not match users email!"
+                f"Google email {data.get('email')} does not match users email!",
             )
             raise ValueError("Email mismatch!")
 
         self.users.modify_document(
-            {"_id": session.user_id}, "$set", "has-linked-google", True
+            {"_id": session.user_id},
+            "$set",
+            "has-linked-google",
+            True,
         )
         return True

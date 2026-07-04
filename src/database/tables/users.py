@@ -59,10 +59,12 @@ class InviteType(TypedDict):
 
 SignupType = Literal["email", "google"]
 
+
 class MFA(TypedDict):
     verified: bool
     key: str
     recovery: list[str]
+
 
 type EncryptedString = str
 
@@ -169,7 +171,7 @@ class Users(Table):
                         ],
                         "attachments": [],
                     },
-                ), # pyright: ignore[reportArgumentType]
+                ),  # pyright: ignore[reportArgumentType]
                 headers={"Content-Type": "application/json"},
             )
         logger.debug(time.time() - start)
@@ -217,11 +219,7 @@ class Users(Table):
         account_data: UserType = {
             "_id": hashed_username,
             "email": self.encryption.encrypt(email),
-            "password": (
-                None
-                if password is None
-                else self.encryption.create_password(password)
-            ),
+            "password": (None if password is None else self.encryption.create_password(password)),
             "display-name": self.encryption.encrypt(original_username),
             "username": lowercase_hashed_username,
             "lang": language,
@@ -263,7 +261,9 @@ class Users(Table):
                 "Don't send info activated in create_user. This is only meant for testing environments",
             )
         elif not skip_verification and not email_instance.send_verification_code(
-            target_url, hashed_username, email,
+            target_url,
+            hashed_username,
+            email,
         ):
             logger.info("Failed to send verification")
             msg_2 = "Email already in use!"
@@ -346,7 +346,8 @@ class Users(Table):
     ) -> UserPageType:
         logger.info(f"Getting user profile for {user_id}")
         user_data: UserType | None = user_type or self.find_user(
-            {"_id": user_id}, find_banned,
+            {"_id": user_id},
+            find_banned,
         )
 
         if user_data is None:
@@ -396,7 +397,10 @@ class Users(Table):
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
         self.modify_document({"_id": user_id}, "$set", "beta-enroll", mode)
         self.modify_document(
-            {"_id": user_id}, "$set", "beta-updated", round(time.time()),
+            {"_id": user_id},
+            "$set",
+            "beta-updated",
+            round(time.time()),
         )
 
     def mark_deletion_pending(self, userid: str, reasons: list[str]) -> None:
@@ -405,8 +409,7 @@ class Users(Table):
             {
                 "$set": {
                     "banned": True,
-                    "deleted-in": datetime.now(UTC)
-                    + timedelta(weeks=52),
+                    "deleted-in": datetime.now(UTC) + timedelta(weeks=52),
                 },
                 "$push": {"ban-reasons": {"$each": reasons}},
             },
@@ -422,11 +425,7 @@ class Users(Table):
         for domain_name, domain in user["domains"].items():
             new_domain_name: str = domain_name.lower()
 
-            if (
-                not domain_name.lower()
-                .replace("[dot]", ".")
-                .endswith(get_args(AVAILABLE_TLDS))
-            ):
+            if not domain_name.lower().replace("[dot]", ".").endswith(get_args(AVAILABLE_TLDS)):
                 fixed_domains = True
                 logger.info(
                     f"Updated domain {domain_name.lower()} to have the new syntax",
@@ -455,7 +454,10 @@ class Users(Table):
                 self.encryption.decrypt(user.get("email", "")) + "supahcool",
             )
             self.modify_document(
-                {"_id": user["_id"]}, "$set", "email-hash", user["email-hash"],
+                {"_id": user["_id"]},
+                "$set",
+                "email-hash",
+                user["email-hash"],
             )
 
         if len(set(user.get("accessed-from", []))) != len(
@@ -472,9 +474,12 @@ class Users(Table):
         if user.get("owned-tlds") is None:
             logger.info("Updated owned TLDs")
             self.modify_document(
-                {"_id": user["_id"]}, "$set", "owned-tlds", ["eepy.page"],
+                {"_id": user["_id"]},
+                "$set",
+                "owned-tlds",
+                ["eepy.page"],
             )
 
-        logger.debug(f"Migrations took {time.time() - start :.5f}s")
+        logger.debug(f"Migrations took {time.time() - start:.5f}s")
 
         return user

@@ -14,11 +14,13 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
+
 class UserCanRegisterResult(NamedTuple):
     success: bool
     comment: str
 
-# todo: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json in the future
+
+# TODO: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json in the future
 RESERVED_ROOT_LABELS: set[str] = {
     "abuse",
     "account",
@@ -85,7 +87,6 @@ RESERVED_ROOT_LABELS: set[str] = {
 
 
 class Validation:
-
     def __init__(self, table: Domains, dns: "DNS"):
         self.dns = dns
         self.table = table
@@ -102,7 +103,6 @@ class Validation:
         for part in name.removesuffix(".").split("."):
             if len(part) == 0:
                 return False
-        
 
         if type.upper() in ["TXT", "CNAME"]:
             allowed.append("_")
@@ -113,12 +113,7 @@ class Validation:
 
         valid: bool = all(char in allowed for char in name)
 
-        if not name:
-            valid = False
-
-        elif type.upper() != "TXT" and (
-            name[0] not in always_allowed or name[-1] not in allowed_end
-        ):
+        if not name or (type.upper() != "TXT" and (name[0] not in always_allowed or name[-1] not in allowed_end)):
             valid = False
         return valid
 
@@ -161,7 +156,7 @@ class Validation:
 
             elif type.upper() == "AAAA":
                 ipv6_pattern = re.compile(
-                    r"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
+                    r"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))",
                 )
                 return re.match(string=value, pattern=ipv6_pattern) is not None
             else:  # If type is not in checks
@@ -202,9 +197,7 @@ class Validation:
         logger.info(domain_parts)
         is_subdomain: bool = len(domain_parts) > 1
 
-        required_domain: str = (
-            domain_parts[-1] + "[dot]" + Domains.clean_domain_name(tld)
-        )
+        required_domain: str = domain_parts[-1] + "[dot]" + Domains.clean_domain_name(tld)
 
         return required_domain if is_subdomain else None
 
@@ -233,7 +226,7 @@ class Validation:
         name = name.removesuffix(".")
 
         if not Domains.unclean_domain_name(name).endswith(
-            tuple([f".{tld}" for tld in get_args(AVAILABLE_TLDS)])
+            tuple([f".{tld}" for tld in get_args(AVAILABLE_TLDS)]),
         ):
             if raise_exceptions:
                 raise ValueError(f"Invalid record name '{name}' (does not include TLD)")
@@ -274,7 +267,8 @@ class Validation:
             logger.warning(f"User does not own {required_domain}")
             if raise_exceptions:
                 raise SubdomainError(
-                    f"User doesn't own '{required_domain}'", required_domain
+                    f"User doesn't own '{required_domain}'",
+                    required_domain,
                 )
             return False
 
@@ -285,12 +279,12 @@ class Validation:
                         "$or": [
                             {f"domains.{cleaned_domain}": {"$exists": True}},
                             {
-                                f"domains.{domain}": {"$exists": True}
+                                f"domains.{domain}": {"$exists": True},
                             },  # for legacy domains
-                        ]
-                    }
+                        ],
+                    },
                 )
-                or []
+                or [],
             )
             != 0
         ):
@@ -305,7 +299,10 @@ class Validation:
         return True
 
     def user_owns_domain(
-        self, user_id: str, domain: str, user: UserType | None = None
+        self,
+        user_id: str,
+        domain: str,
+        user: UserType | None = None,
     ) -> bool:
         """Returns whether user has a specfic domain owned. Can bee passed a user_id or user. If user_id is passed, a database lookup occurs.
 
@@ -326,9 +323,7 @@ class Validation:
         if user_data is None:
             raise UserNotExistError("User does not exist!")
 
-        return (
-            user_data["domains"].get(self.table.clean_domain_name(domain)) is not None
-        )
+        return user_data["domains"].get(self.table.clean_domain_name(domain)) is not None
 
     @staticmethod
     def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:
@@ -348,17 +343,14 @@ class Validation:
         user_domain_amount = 0
         subdomain_amount = 0
 
-        for domain in [
-            Domains.clean_domain_name(domain) for domain in list(user["domains"].keys())
-        ]:
+        for domain in [Domains.clean_domain_name(domain) for domain in list(user["domains"].keys())]:
             if Validation.find_required_domain(name):
                 subdomain_amount += 1
             else:
                 user_domain_amount += 1
 
-
         logger.info(
-            f"User has {subdomain_amount} subdomains and {user_domain_amount} domains"
+            f"User has {subdomain_amount} subdomains and {user_domain_amount} domains",
         )
 
         user_max_domains = user.get("permissions", {}).get("max-domains", 3)
