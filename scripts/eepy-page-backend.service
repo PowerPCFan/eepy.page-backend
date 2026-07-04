@@ -1,0 +1,34 @@
+# ====================================================================================
+# ==== SYSTEMD UNIT FILE FOR PRODUCTION SETUP ========================================
+# ====================================================================================
+# Symlink this as /etc/systemd/system/eepy-page-backend.service.
+# scripts/setup-prod-debian.sh can do this for you.
+# ====================================================================================
+# Note: You may need to change file paths for this to work
+# ====================================================================================
+
+[Unit]
+Description=eepy.page backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=eepy
+Group=eepy
+WorkingDirectory=/home/eepy/eepy.page-backend
+EnvironmentFile=/home/eepy/eepy.page-backend/.env
+ExecStart=/home/eepy/eepy.page-backend/scripts/backend.sh
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/eepy/eepy.page-backend
+
+[Install]
+WantedBy=multi-user.target
