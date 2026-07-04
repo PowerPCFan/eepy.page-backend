@@ -136,7 +136,7 @@ class Auth:
         body: LoginRequest,
         x_captcha_code: Annotated[str, Header()],
         x_mfa_code: Annotated[str | None, Header()] = None,
-    ) -> JSONResponse | None:
+    ) -> JSONResponse:
         # plain_username can backfill display-name/username for older rows that only stored hashes.
 
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
@@ -192,7 +192,7 @@ class Auth:
             )
 
             return resp
-        return None
+        raise HTTPException(status_code=500, detail="Failed to create session")
 
     def refresh(self, request: Request) -> JSONResponse:
         refresh_token: str | None = request.cookies.get("refresh-token")
