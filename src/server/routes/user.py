@@ -360,10 +360,7 @@ class User:
         if not user_data.get("totp", {}).get("verified"):
             raise HTTPException(412, detail="User does not have MFA")
 
-        if user_data.get(
-            "registered-with",
-            "email",
-        ) == "email" and not Encryption().check_password(
+        if not Encryption().check_password(
             body.password,
             user_data["password"],  # pyright: ignore[reportArgumentType]
         ):
@@ -581,8 +578,6 @@ class User:
             "domains",
             "feature-flags",
             "beta-enroll",
-            "registered-with",
-            "has-linked-google",
         ]
 
         return {k: v for k, v in user_data.items() if k in gdpr_keys}  # type: ignore[has-type, misc]

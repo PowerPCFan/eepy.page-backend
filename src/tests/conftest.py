@@ -137,10 +137,7 @@ def load_user() -> UserType:
 # for now i think we're gonna skip this since we dont want to load the actual config for tests and also this wont be in ci/cd
 # load_dotenv()
 
-if os.getenv("MONGODB_TEST_URL") and not os.getenv("MONGODB_URL"):
-    os.environ["MONGODB_URL"] = os.environ["MONGODB_TEST_URL"]
-
-client: pymongo.MongoClient = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
+client: pymongo.MongoClient = pymongo.MongoClient(os.getenv("MONGODB_TEST_URL"))
 
 country_data = {
     "ip": "176.92.136.59",
@@ -166,20 +163,10 @@ country_data = {
 }
 
 
-# The database is wiped every run, so it's okay to reset these
 def init_env() -> None:
     print("Initializing environment vars")
     os.environ["ENC_KEY"] = Fernet.generate_key().decode("utf-8")
     os.environ["JWT_KEY"] = secrets.token_urlsafe(64)
-
-    client = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
-    if not os.environ["MONGODB_TEST_URL"].startswith(
-        "mongodb://192.168",
-    ) and not os.environ["MONGODB_TEST_URL"].startswith("mongodb://localhost"):
-        print(
-            f"WARNING: test db url: {os.environ['MONGODB_TEST_URL']}. Are you sure it's real?",
-        )
-        sys.exit()
 
     for db in client.list_database_names():
         if db == "admin":
@@ -207,8 +194,6 @@ _rewards = Rewards(client, _users)
 
 
 def create_first_user() -> None:
-    client = pymongo.MongoClient(os.environ["MONGODB_TEST_URL"])
-
     user_id = _users.create_user(
         "testing",
         "testing",

@@ -57,9 +57,11 @@ tags_metadata: list[dict[str, str]] = [
     {"name": "api", "description": "Routes that can be used with the public API"},
 ]
 
+debug = str(os.getenv("DEBUG", "False").lower().strip()) in {"true", "1", "y", "yes"}
+
 sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
-    environment=("development" if os.getenv("DEBUG", "") == "True" else "production"),
+    environment=("development" if debug else "production"),
     send_default_pii=True,
 )
 
@@ -132,9 +134,9 @@ app.include_router(Invite(v.users, v.sessions, v.invites).router)
 
 threads["codes"].join()
 
-email: Email = Email(v.codes, v.users, Encryption(os.environ["ENC_KEY"]))
+email: Email = Email(v.codes, v.users, Encryption(os.getenv("ENC_KEY")))
 app.include_router(User(v.users, v.sessions, v.invites, email, v.codes, v.dns, v.rewards).router)
-app.include_router(Auth(v.users, v.sessions, v.invites, email, v.codes, v.dns).router)
+app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
 app.include_router(Kofi(email, v.rewards).router)
 
 app.include_router(Admin(v.users, v.sessions, AdminTools(v.users, v.sessions, v.domains, v.dns, email)).router)

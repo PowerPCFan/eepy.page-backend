@@ -32,7 +32,6 @@ class Codes(Table):
         self.verification_codes: dict[str, GenericCodeFormat] = {}
         self.recovery_codes: dict[str, GenericCodeFormat] = {}
         self.deletion_codes: dict[str, GenericCodeFormat] = {}
-        self.link_codes: dict[str, GenericCodeFormat] = {}
 
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))
 
@@ -45,7 +44,12 @@ class Codes(Table):
         codes_found: int = 0
         for code in codes:
             id: str = code["_id"]
-            getattr(self, f"{code['type']}_codes")[id] = {
+            target_cache = getattr(self, f"{code['type']}_codes", None)
+            if target_cache is None:
+                logger.warning("Ignoring unknown code type %s", code["type"])
+                continue
+
+            target_cache[id] = {
                 "account": code["account"],
                 "expire": code["expire"],
             }
@@ -80,12 +84,6 @@ class Codes(Table):
                 "expire": round(time.time()) + EXPIRE_TIME,
             }
             local_code = self.recovery_codes
-        elif type == "link":
-            self.link_codes[code] = {
-                "account": self.encryption.encrypt(target_username),
-                "expire": round(time.time() + EXPIRE_TIME),
-            }
-            local_code = self.link_codes
 
         else:
             msg = "Code type is not valid"

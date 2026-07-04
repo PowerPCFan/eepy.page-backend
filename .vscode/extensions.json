@@ -1,6 +1,8 @@
 {
     "recommendations": [
         "charliermarsh.ruff",
-        "ms-python.vscode-pylance"
+        "ms-python.vscode-pylance",
+        "SanjulaGanepola.github-local-actions",
+        "ms-python.python",
     ]
 }

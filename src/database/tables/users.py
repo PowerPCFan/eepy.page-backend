@@ -57,9 +57,6 @@ class InviteType(TypedDict):
     used_at: NotRequired[int]  # epoch timestamp
 
 
-SignupType = Literal["email", "google"]
-
-
 class MFA(TypedDict):
     verified: bool
     key: str
@@ -82,7 +79,6 @@ UserPageType = TypedDict(
         "sessions": list[NewSessionType | OldSessionType] | list[dict],
         "invites": dict[str, InviteType],
         "mfa_enabled": bool,
-        "google-connected": bool,
         "referral-code": str | None,
         "referred-people": int | None,
         "owned-tlds": list[str],
@@ -94,7 +90,7 @@ UserType = TypedDict(
     {
         "_id": str,
         "email": str,
-        # Password is none if registered with google. Argon2 hash if registered with email
+        # Password is an Argon2 hash for email/password accounts.
         "password": str | None,
         "display-name": str,
         "username": NotRequired[str],
@@ -106,8 +102,6 @@ UserType = TypedDict(
         "last-login": int,  # Epoch timestamp
         "permissions": dict,
         "verified": bool,
-        "registered-with": NotRequired[SignupType],
-        "has-linked-google": NotRequired[bool],
         "domains": Required[dict[str, "DomainFormat"]],
         "feature-flags": NotRequired[dict[str, bool]],
         "api-keys": NotRequired[dict[str, "ApiType"]],
@@ -187,7 +181,6 @@ class Users(Table):
         email_instance: Email,
         target_url: str,  # target_url should only be the hostname (e.g canary.eepy.page, www.eepy.page)
         dont_send_email: bool = False,
-        signup_method: SignupType = "email",
         refer_code: str | None = None,
         skip_verification: bool = False,
     ) -> str:
@@ -237,8 +230,6 @@ class Users(Table):
             "verified": bool(skip_verification),
             "domains": {},
             "api-keys": {},
-            "registered-with": signup_method,
-            "has-linked-google": signup_method == "google",
             "credits": 200,
             "owned-tlds": ["eepy.page"],
         }
@@ -385,7 +376,6 @@ class Users(Table):
             "verified": user_data["verified"],
             "permissions": user_data.get("permissions", {}),
             "beta-enroll": user_data.get("beta-enroll", False),
-            "google-connected": user_data.get("has-linked-google") == True,  # noqa: E712
             "sessions": session_data,  # type: ignore[typeddict-item]
             "invites": user_data.get("invites", {}),  # type: ignore[typeddict-item]
             "mfa_enabled": user_data.get("totp", {}).get("verified", False),

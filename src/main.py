@@ -5,7 +5,6 @@ import time
 from dotenv import load_dotenv
 
 load_dotenv()
-os.environ["ZONE_ID"] = os.getenv("ZONEID") or os.getenv("ZONE_ID") or "None"
 
 start = time.time()
 from server.main import app  # noqa: E402
@@ -17,10 +16,22 @@ os.environ["STARTED_AT"] = str(start)
 if __name__ == "__main__":
     if "run" in sys.argv:
         os.environ["DEBUG"] = "True"
+        print("==========\nDebug mode enabled\n==========")
+        print("This mode is only intended for running local development instances of this backend.")
+        print("Running the backend with `python3 src/main.py run` will automatically enable debug mode.")
 
-        import uvicorn  # pyright: ignore[reportMissingImports]
+        try:
+            import uvicorn  # pyright: ignore[reportMissingImports]
+        except ImportError:
+            print("Uvicorn is not installed. Please install it with `pip install uvicorn` and try again.")
+            sys.exit(1)
 
-        uvicorn.run(app, host="0.0.0.0")  # noqa: S104
+        print("\n\n")
+        host, port = str(input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter")).split(":")
+        host_c = str(host).strip().lower()
+        port_c = int(str(port).strip().lower())
+
+        uvicorn.run(app, host=host_c, port=port_c)
     else:
         print(
             "WARNING: If you are trying to self host and want to use uvicorn for debug mode, please run `python src/main.py run`",  # noqa: E501

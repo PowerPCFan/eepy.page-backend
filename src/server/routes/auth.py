@@ -1,16 +1,14 @@
-import json
 import logging
 import os
 import time
 from typing import Annotated
 
 import ipinfo  # type: ignore[import-untyped]
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 
 from database.exceptions import EmailException, UsernameException
-from database.tables.codes import Codes
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
 from database.tables.users import Users, UserType
@@ -19,9 +17,7 @@ from mail.email import Email
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
-from security.oauth import DuplicateAccount, EmailError, OAuth
 from security.session import (
-    ACCESS_AMOUNT,
     REFRESH_AMOUNT,
     Session,
     SessionCreateStatus,
@@ -36,15 +32,16 @@ from server.routes.models.user import (
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
+is_debug = str(os.getenv("DEBUG", "False").lower().strip()) in {"true", "1", "y", "yes"}
+
 
 class Auth:
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         table: Users,
         session_table: Sessions,
         invite_table: Invites,
         email: Email,
-        codes: Codes,
         dns: DNS,
     ) -> None:
         converter.init_vars(table, session_table)
@@ -53,7 +50,6 @@ class Auth:
         self.session_table: Sessions = session_table
         self.invites: Invites = invite_table
         self.email: Email = email
-        self.codes: Codes = codes
         self.dns: DNS = dns
         self.captcha: Captcha = Captcha(os.getenv("TURNSTILE_KEY") or "")
 
@@ -77,7 +73,7 @@ class Auth:
                         },
                     },
                 },
-                400: {"description": "User signed up with Google"},
+                400: {"description": "Account does not support password login"},
                 404: {"description": "User not found"},
                 401: {"description": "Invalid password"},
                 412: {"description": "2FA code required to be passed in X-MFA-Code"},
@@ -103,17 +99,6 @@ class Auth:
                 460: {"description": "Invalid key"},
             },
             tags=["account", "session"],
-        )
-
-        self.router.add_api_route(
-            "/auth/google/callback",
-            self.google_oauth2,
-            methods=["GET", "POST"],
-        )
-        self.router.add_api_route(
-            "/auth/link",
-            self.create_linking_code,
-            methods=["POST"],
         )
 
         self.router.add_api_route(
@@ -170,8 +155,8 @@ class Auth:
         if not user_data["verified"]:
             raise HTTPException(status_code=403, detail="Verification required")
 
-        if user_data.get("password") is None or user_data.get("registered-with") == "google":
-            raise HTTPException(status_code=400, detail="Account made with google")
+        if user_data.get("password") is None:
+            raise HTTPException(status_code=400, detail="Account does not support password login")
 
         ip: str = request.client.host  # type: ignore[union-attr]
         if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
@@ -195,8 +180,6 @@ class Auth:
 
         if session_status["success"]:
             resp = JSONResponse({"auth-token": session_status["access_token"]})
-
-            is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
 
             resp.set_cookie(
                 "refresh-token",
@@ -234,8 +217,6 @@ class Auth:
         access_token, refresh_token = session_data
         resp = JSONResponse({"auth-token": access_token})
 
-        is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
-
         resp.set_cookie(
             "refresh-token",
             refresh_token,
@@ -247,94 +228,6 @@ class Auth:
         )
 
         return resp
-
-    @Session.requires_auth
-    def create_linking_code(self, session: Session = Depends(converter.create)) -> dict:
-        code = self.codes.create_code("link", session.token)
-        return {"code": code}
-
-    def google_oauth2(self, request: Request, code: str = Query()) -> RedirectResponse:
-        access = refresh = ""
-        state: dict = json.loads(request.query_params.get("state", "{}"))
-        origin = state.get("url", "https://www.eepy.page")
-        mode = state.get("mode", "login")
-        redirect_url = state.get(
-            "redirect",
-            "https://api.eepy.page/auth/google/callback",
-        )
-
-        logger.info(f"Request {mode} coming from origin {origin}")
-
-        oauth = OAuth(self.table, self.session_table, self.email)
-
-        if origin not in request.app.state.safe_domains:
-            raise HTTPException(status_code=403, detail=f"Invalid origin {origin}")
-
-        if mode == "login":
-            try:
-                access, refresh = oauth.create_google_session(
-                    request,
-                    self.handler,
-                    code,
-                    redirect_url,
-                    state.get("referrer"),
-                )
-            except ValueError:
-                return RedirectResponse(f"{origin}/login?c=500&r=/")
-            except DuplicateAccount:
-                return RedirectResponse(f"{origin}/login?c=469&r=/")
-
-            resp = RedirectResponse(f"{origin}/account/manage")
-
-            is_debug = os.getenv("DEBUG", "False").lower().strip() == "true"
-
-            resp.set_cookie(
-                "auth-token",
-                access,
-                max_age=ACCESS_AMOUNT,
-                samesite="lax" if is_debug else "none",
-                secure=not is_debug,
-            )
-            resp.set_cookie(
-                "refresh-token",
-                refresh,
-                max_age=REFRESH_AMOUNT,
-                path="/refresh",
-                httponly=True,
-                samesite="lax" if is_debug else "none",
-                secure=not is_debug,
-            )
-
-            return resp
-        elif mode == "link":
-            status = self.codes.is_valid(state.get("linking-code", ""), "link")
-            if not status["valid"]:
-                logger.info(f"Invalid linking code! {state.get('linking-code')}")
-                msg = "Invalid session!"
-                raise SessionError(msg)
-
-            session: Session = Session(
-                status.get("account", ""),
-                self.table,
-                self.session_table,
-            )
-            if not session.valid:
-                logger.info("Linking code's session was invalid!")
-                msg = "Invalid session!"
-                raise SessionError(msg)
-
-            resp = RedirectResponse(f"{origin}/account/manage")
-
-            try:
-                oauth.link_google_account(session, request, code, redirect_url)
-            except EmailError:
-                resp = RedirectResponse(f"{origin}/login?c=472")
-            except ValueError:
-                resp = RedirectResponse(f"{origin}/login?c=409")
-
-            return resp
-
-        raise HTTPException(status_code=412, detail=f"Invalid mode {mode}")
 
     def sign_up(
         self,
