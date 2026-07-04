@@ -25,13 +25,16 @@ if __name__ == "__main__":
             sys.exit(1)
 
         print("\n")
-        host, port = str(input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> ")).split(":")  # noqa: E501
+        host, port = str(
+            input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> "),
+        ).split(":")
         host_c = str(host).strip().lower()
         port_c = int(str(port).strip().lower())
 
         print(f"Starting uvicorn on {host_c}:{port_c}...\n\n")
 
         from server.main import app
+
         uvicorn.run(app, host=host_c, port=port_c)
     else:
         print(

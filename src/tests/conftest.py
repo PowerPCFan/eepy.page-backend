@@ -209,7 +209,6 @@ def create_first_user() -> None:
     _users.modify_document({"_id": user_id}, "$set", "verified", True)
 
     os.environ["USER_ID"] = user_id
-    client.close()
 
 
 create_first_user()
