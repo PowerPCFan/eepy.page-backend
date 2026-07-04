@@ -253,7 +253,8 @@ class Session:
 
         delete_thread = threading.Thread(
             target=session_table.delete_session_pair,
-            args=(token_data["jti"]),
+            # do NOT remove the comma this has to be a tuple
+            args=(token_data["jti"],),
         )
         delete_thread.start()
 
