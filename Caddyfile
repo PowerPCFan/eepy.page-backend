@@ -1,5 +1,29 @@
-api.eepy.page {
+{
+    email {$CADDY_EMAIL}
+    admin off
+}
+
+{$CADDY_DOMAIN} {
     encode zstd gzip
+
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+            roll_keep_days 14
+        }
+        level INFO
+    }
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
 
     reverse_proxy 127.0.0.1:8000
 }
