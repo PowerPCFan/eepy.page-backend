@@ -143,7 +143,7 @@ app.include_router(
         codes=v.codes,
         dns=v.dns,
         rewards=v.rewards,
-    ).router
+    ).router,
 )
 app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
 app.include_router(Kofi(email, v.rewards).router)

@@ -31,10 +31,14 @@ apt-get update
 apt-get install -y ca-certificates curl git gnupg python3 python3-venv python3-pip
 
 # special check: clone if not cloned
+# actually idk why it wouldnt be cloned since thats how youd access the script but uhh whatever
 if [ ! -d "$APP_DIR" ]; then
     echo "Cloning backend repo..."
     runuser -u eepy -- git clone https://github.com/PowerPCFan/eepy.page-backend.git "$APP_DIR"
 fi
+
+# enter toplevel repo root
+cd "$(git rev-parse --show-toplevel)"
 
 if [ ! -f "$ENV_FILE" ]; then
     echo ".env file missing: ${ENV_FILE}" >&2
