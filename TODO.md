@@ -1,1 +1,2 @@
 - possibly add back stuff that's in frii.site but I removed, such as Google OAuth
+- better admin tools would be nice like perhaps a web server that runs locally on the VPS / whatevers hosting backend and lets you do stuff like mass email sends, DB operations, manual DNS operations (although i have powerdns-admin for that), etc --- or i could integrate that into the existing admin tools

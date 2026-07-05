@@ -17,6 +17,6 @@ server_key.pub
 coverage.xml
 .coverage
 .pytest_cache
-.env*
+.env
 .agents/
 .codex/
