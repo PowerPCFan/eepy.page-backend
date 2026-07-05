@@ -26,7 +26,7 @@ if ! id -u eepy >/dev/null 2>&1; then
     exit 1
 fi
 
-required_packages=(ca-certificates curl git gnupg python3 debian-keyring debian-archive-keyring apt-transport-https)
+required_packages=(ca-certificates curl git gnupg python3 python3-venv python3-pip python3-dev debian-keyring debian-archive-keyring apt-transport-https)
 missing_packages=()
 for package in "${required_packages[@]}"; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
@@ -39,19 +39,10 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
     apt-get install -qq -y "${missing_packages[@]}" > /dev/null
 fi
 
-# install venv and pip packages for the detected python version
-python_version="$(python3 -c 'import sys;a=(".".join(map(str,sys.version_info[:2])));print(a or "3",flush=True)')"
-required_packages_py=("python${python_version}-venv" "python${python_version}-pip")
-missing_packages_py=()
-for package in "${required_packages_py[@]}"; do
-    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
-        missing_packages_py+=("$package")
-    fi
-done
-if [ "${#missing_packages_py[@]}" -gt 0 ]; then
-    echo "Installing missing Python addons: ${missing_packages_py[*]}"
-    apt-get update -qq > /dev/null
-    apt-get install -qq -y "${missing_packages_py[@]}" > /dev/null
+python_version="$(python3 -c 'import sys;print(".".join(map(str,sys.version_info[:2])),flush=True)')"
+supported_versions=("3.12" "3.13" "3.14")
+if [[ ! " ${supported_versions[*]} " =~ " ${python_version} " ]]; then
+    echo "Python ${python_version} does not meet the minimum requirement of 3.12. You may experience issues with the backend." >&2
 fi
 
 # enter toplevel repo root
