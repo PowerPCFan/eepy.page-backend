@@ -140,7 +140,12 @@ EOF
 sudo systemctl daemon-reload
 
 echo "Validating and starting Caddy..."
-caddy validate --config "$CADDYFILE_DEST"
+{
+    set -a
+    . "$ENV_FILE"
+    set +a
+    caddy validate --config "$CADDYFILE_DEST"
+}
 systemctl stop caddy
 systemctl enable --now caddy
 
