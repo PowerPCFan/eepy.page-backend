@@ -1,14 +1,9 @@
 import os
 import sys
-import time
 
 from dotenv import load_dotenv
 
 load_dotenv()
-
-start = time.time()
-os.environ["START_ELAPSED"] = str(round(time.time() - start, 2))
-os.environ["STARTED_AT"] = str(start)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -33,6 +34,10 @@ from server.routes.domain import Domain
 from server.routes.invite import Invite
 from server.routes.kofi import Kofi
 from server.routes.user import User
+
+start = time.time()
+os.environ["START_ELAPSED"] = str(round(time.time() - start, 2))
+os.environ["STARTED_AT"] = str(start)
 
 logging.basicConfig(
     level=logging.DEBUG,
