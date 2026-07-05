@@ -65,10 +65,10 @@ class Invites(Users):
             raise InviteException(msg)
 
         self.modify_document(
-            {"_id": user_id},
-            "$set",
-            f"invites.{invite_code}",
-            {
+            filter={"_id": user_id},
+            operation="$set",
+            key=f"invites.{invite_code}",
+            value={
                 "used": False,
                 "used_by": None,
                 "used_at": None,

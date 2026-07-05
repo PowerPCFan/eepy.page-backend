@@ -221,10 +221,10 @@ class Admin:
             )
 
             self.users.modify_document(
-                {"_id": user_id},
-                "$set",
-                f"permissions.{permission}",
-                new_value,
+                filter={"_id": user_id},
+                operation="$set",
+                key=f"permissions.{permission}",
+                value=new_value,
             )
 
             return True
@@ -249,7 +249,12 @@ class Admin:
             user["email"],
             f"New TLD added to your account. (.{tld})",
         )
-        self.users.modify_document({"_id": user_id}, "$push", "owned-tlds", tld)
+        self.users.modify_document(
+            filter={"_id": user_id},
+            operation="$push",
+            key="owned-tlds",
+            value=tld,
+        )
 
     def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS) -> None:
         """Removes a TLD
@@ -268,7 +273,12 @@ class Admin:
             user["email"],
             f"TLD .{tld} has been removed from your account",
         )
-        self.users.modify_document({"_id": user_id}, "$pull", "owned-tlds", tld)
+        self.users.modify_document(
+            filter={"_id": user_id},
+            operation="$pull",
+            key="owned-tlds",
+            value=tld,
+        )
 
     def verify(self, user_id: str) -> None:
         self.users.modify_document(

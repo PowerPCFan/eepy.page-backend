@@ -1,3 +1,5 @@
+# ruff: noqa: RUF029
+
 import datetime
 import logging
 import os
@@ -79,16 +81,6 @@ app.add_middleware(
 
 client: MongoClient = MongoClient(os.getenv("MONGODB_URL"))
 
-# upgraded deps and that caused mongo to start being super noisy for some reason perhaps its reading the DEBUG_MODE env var
-# for logr in [
-#     "pymongo",
-#     "pymongo.topology",
-#     "pymongo.connection",
-#     "pymongo.serverSelection",
-#     "pymongo.command",
-# ]:
-#     logging.getLogger(logr).setLevel(logging.WARNING)
-
 
 class VariableInitializer:
     def __init__(self) -> None:
@@ -142,7 +134,17 @@ app.include_router(Invite(v.users, v.sessions, v.invites).router)
 threads["codes"].join()
 
 email: Email = Email(v.codes, v.users, Encryption(os.getenv("ENC_KEY")))
-app.include_router(User(v.users, v.sessions, v.invites, email, v.codes, v.dns, v.rewards).router)
+app.include_router(
+    User(
+        table=v.users,
+        session_table=v.sessions,
+        invite_table=v.invites,
+        email=email,
+        codes=v.codes,
+        dns=v.dns,
+        rewards=v.rewards,
+    ).router
+)
 app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
 app.include_router(Kofi(email, v.rewards).router)
 

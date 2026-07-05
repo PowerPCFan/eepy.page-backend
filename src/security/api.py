@@ -207,9 +207,9 @@ class Api:
 
         encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
         users.modify_document(
-            {"_id": username},
-            "$set",
-            f"api-keys.{encrypted_api_key}",
-            key,
+            filter={"_id": username},
+            operation="$set",
+            key=f"api-keys.{encrypted_api_key}",
+            value=key,
         )
         return api_key

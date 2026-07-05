@@ -171,18 +171,23 @@ _rewards = Rewards(client, _users)
 
 def create_first_user() -> None:
     user_id = _users.create_user(
-        "testing",
-        "testing",
-        "testing@email.com",
-        "en-US",
-        country_data,
-        time.time(),
-        _email,
-        "TESTING_ENV",
+        username="testing",
+        password="testing",
+        email="testing@email.com",
+        language="en-US",
+        country=country_data,
+        time_signed_up=time.time(),
+        email_instance=_email,
+        target_url="TESTING_ENV",
         dont_send_email=True,
     )
 
-    _users.modify_document({"_id": user_id}, "$set", "verified", True)
+    _users.modify_document(
+        filter={"_id": user_id},
+        operation="$set",
+        key="verified",
+        value=True,
+    )
 
     os.environ["USER_ID"] = user_id
 
@@ -190,13 +195,13 @@ def create_first_user() -> None:
 create_first_user()
 _test_user = _users.find_user({"_id": _encryption.sha256("testing")})
 _test_session = Session.create(
-    _test_user["_id"],  # type: ignore
-    "testing",
-    None,
-    "192.168.1.1",
-    "eepy.page-pytest-suite",
-    _users,
-    _sessions,
+    username=_test_user["_id"],  # pyright: ignore[reportOptionalSubscript]
+    real_username="testing",
+    mfa_code=None,
+    ip="192.168.1.1",
+    user_agent="eepy.page-pytest-suite",
+    users=_users,
+    session_table=_sessions,
 )
 
 

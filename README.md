@@ -13,7 +13,11 @@ Please open issues on the frontend repo unless they are specific to the backend'
 - Keep pull requests focused on a single feature or fix and open multiple if necessary
 
 ## Setting up your development environment
-### Python
+### 1. Repository Setup
+1. Clone the repo: `git clone https://github.com/PowerPCFan/eepy.page-backend`
+2. `cd` the repo: `cd eepy.page-backend`
+3. Set up Git hooks: `git config core.hooksPath .githooks`
+### 2. Python Setup
 #### Required Version
 - Python 3.12 or later
 #### Python Environment (Linux/macOS):
@@ -25,7 +29,7 @@ Please open issues on the frontend repo unless they are specific to the backend'
 2. `./venv/scripts/activate.ps1`
 3. `py -m pip install -r requirements.txt`  
 *If `py` cannot be found, try `python3` and `python`, however modern Python installs on Windows will likely use `py`*
-### IDE
+### 3. IDE Setup
 Visual Studio Code is the recommended IDE for working on this project.  
 Simply install the recommended extensions for this project.  
 VSCode should prompt you but if not, grab these:
@@ -43,7 +47,7 @@ VSCode should prompt you but if not, grab these:
 3. It should be good now! `.vscode/settings.json` and `ruff.toml` will automatically set up the proper settings for you
 
 ## A note on linting and type checking
-Upon pushing or opening a PR, tests will run that automatically scan your code with Pyright and Ruff. Please ensure all linting or type checking errors are fixed or suppressed before opening a PR.
+Upon pushing or opening a PR, tests will run that automatically scan your code with Pyright and Ruff. Please ensure all linting or type checking errors are fixed or suppressed before opening a PR. Additionally, there is a pre-commit hook that formats all of your files with Ruff before committing.
 
 Pylance will automatically check as you code and so will Ruff, but here are some useful Ruff commands:
 - **Checking Files: `ruff check .`**  

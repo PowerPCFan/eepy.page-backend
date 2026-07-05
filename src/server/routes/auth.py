@@ -165,13 +165,13 @@ class Auth:
         logger.info(f"Login attempt from {body.username_hash}")
 
         session_status: SessionCreateStatus = Session.create(
-            body.username_hash,
-            plain_username,
-            x_mfa_code,
-            ip,  # type: ignore[union-attr]
-            request.headers.get("User-Agent", "Unknown"),
-            self.table,
-            self.session_table,
+            username=body.username_hash,
+            real_username=plain_username,
+            mfa_code=x_mfa_code,
+            ip=ip,
+            user_agent=request.headers.get("User-Agent", "Unknown"),
+            users=self.table,
+            session_table=self.session_table,
         )
 
         if session_status["mfa_required"]:
@@ -246,14 +246,14 @@ class Auth:
             logger.info(f"Using refer {refer}")
         try:
             self.table.create_user(
-                body.username,
-                body.password,
-                body.email,
-                body.language,
-                country,
-                round(time.time()),
-                self.email,
-                from_url,
+                username=body.username,
+                password=body.password,
+                email=body.email,
+                language=body.language,
+                country=country,
+                time_signed_up=round(time.time()),
+                email_instance=self.email,
+                target_url=from_url,
                 refer_code=refer,
             )
         except EmailException:

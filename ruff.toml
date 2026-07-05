@@ -1,3 +1,10 @@
+# enables latest rules (possibly unstable)
+
+# commented out since i think its better under [lint] but
+# leaving it here just in case so i can remmeber what i changed
+
+# preview = true
+
 exclude = [
     ".bzr",
     ".direnv",
@@ -58,6 +65,17 @@ ignore = [
     "A001",    # Checks for shadowing of built-in arguments/vars - there are so many builtins being shadowed its a lost cause atp
     "A002",
     "N818",    # Tries to force exception names to have "Error" suffix - annoying and plus Exception is fine as well imo
+]
+
+# enables latest rules (possibly unstable)
+preview = true
+explicit-preview-rules = false
+
+# just using extend-ignore for preview rules so its somewhat separated and easier to read
+extend-ignore = [
+    "CPY001",  # Checks for copyright notice at the top of files
+    "DOC",     # More annoying docstring stuff (#TODO: be more specific with ignore cuz some might be useful)
+    "PLR6301"  # Checks for functions on classes that aren't using `self` and suggests staticmethod/classmethod/normal func - useful but causing fastapi issues
 ]
 
 fixable = ["ALL"]

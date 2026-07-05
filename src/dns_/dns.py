@@ -35,6 +35,7 @@ class DNS:
 
     def modify_domain(  # noqa: PLR0913
         self,
+        *,
         values: list[str],
         type: TYPES,
         old_type: str,

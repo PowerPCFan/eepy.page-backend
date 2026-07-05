@@ -170,6 +170,7 @@ class Users(Table):
 
     def create_user(  # noqa: PLR0913
         self,
+        *,
         username: str,
         password: str | None,
         email: str,
@@ -383,12 +384,17 @@ class Users(Table):
         }
 
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
-        self.modify_document({"_id": user_id}, "$set", "beta-enroll", mode)
         self.modify_document(
-            {"_id": user_id},
-            "$set",
-            "beta-updated",
-            round(time.time()),
+            filter={"_id": user_id},
+            operation="$set",
+            key="beta-enroll",
+            value=mode,
+        )
+        self.modify_document(
+            filter={"_id": user_id},
+            operation="$set",
+            key="beta-updated",
+            value=round(time.time()),
         )
 
     def mark_deletion_pending(self, userid: str, reasons: list[str]) -> None:
@@ -418,7 +424,7 @@ class Users(Table):
                 logger.info(
                     f"Updated domain {domain_name.lower()} to have the new syntax",
                 )
-                new_domain_name = new_domain_name + "[dot]eepy[dot]page"
+                new_domain_name += "[dot]eepy[dot]page"
 
             if not isinstance(domain["ip"], list):
                 fixed_domains = True
@@ -433,7 +439,12 @@ class Users(Table):
 
         elif fixed_domains:
             logger.info("Found domains which were fixed")
-            self.modify_document({"_id": user["_id"]}, "$set", "domains", domains)
+            self.modify_document(
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="domains",
+                value=domains,
+            )
             user["domains"] = domains
 
         if not user.get("email-hash"):
@@ -442,10 +453,10 @@ class Users(Table):
                 self.encryption.decrypt(user.get("email", "")) + "supahcool",
             )
             self.modify_document(
-                {"_id": user["_id"]},
-                "$set",
-                "email-hash",
-                user["email-hash"],
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="email-hash",
+                value=user["email-hash"],
             )
 
         if len(set(user.get("accessed-from", []))) != len(
@@ -453,19 +464,19 @@ class Users(Table):
         ):
             logger.info("Fixing invalid accessed-from property")
             self.modify_document(
-                {"_id": user["_id"]},
-                "$set",
-                "accessed-from",
-                list(set(user.get("accessed-from", []))),
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="accessed-from",
+                value=list(set(user.get("accessed-from", []))),
             )
 
         if user.get("owned-tlds") is None:
             logger.info("Updated owned TLDs")
             self.modify_document(
-                {"_id": user["_id"]},
-                "$set",
-                "owned-tlds",
-                ["eepy.page"],
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="owned-tlds",
+                value=["eepy.page"],
             )
 
         logger.debug(f"Migrations took {time.time() - start:.5f}s")

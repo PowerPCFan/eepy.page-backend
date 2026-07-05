@@ -36,6 +36,10 @@ RESERVED_ROOT_LABELS: set[str] = {
     "autodiscover",
     "billing",
     "blog",
+    "bounce",
+    "noreply",
+    "cache",
+    "content",
     "canary",
     "cdn",
     "checkout",
@@ -107,7 +111,7 @@ class Validation:
             if len(part) == 0:
                 return False
 
-        if type.upper() in ["TXT", "CNAME"]:
+        if type.upper() in {"TXT", "CNAME"}:
             allowed.append("_")
             always_allowed.append("_")
 
@@ -132,7 +136,7 @@ class Validation:
             all_valid = False
 
         for value in values:
-            if type.upper() in ["CNAME", "NS"]:
+            if type.upper() in {"CNAME", "NS"}:
                 if not Validation.record_name_valid(value, type):
                     all_valid = False
 
@@ -229,7 +233,7 @@ class Validation:
         name = name.removesuffix(".")
 
         if not Domains.unclean_domain_name(name).endswith(
-            tuple([f".{tld}" for tld in get_args(AVAILABLE_TLDS)]),
+            tuple(f".{tld}" for tld in get_args(AVAILABLE_TLDS)),
         ):
             if raise_exceptions:
                 msg = f"Invalid record name '{name}' (does not include TLD)"

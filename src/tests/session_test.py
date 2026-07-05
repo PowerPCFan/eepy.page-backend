@@ -21,35 +21,35 @@ logger = logging.getLogger(__name__)
 class TestCreation:
     def test_creation(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
         assert Session.create(
-            test_user["_id"],
-            "testing",
-            None,
-            "192.168.1.1",
-            "eepy.page-pytest-suite",
-            users,
-            sessions,
+            username=test_user["_id"],
+            real_username="testing",
+            mfa_code=None,
+            ip="192.168.1.1",
+            user_agent="eepy.page-pytest-suite",
+            users=users,
+            session_table=sessions,
         )["success"]
 
         with pytest.raises(UserNotExistError):
             Session.create(
-                "random-user-id",
-                "testing",
-                None,
-                "192.168.1.1",
-                "eepy.page-pytest-suite",
-                users,
-                sessions,
+                username="random-user-id",
+                real_username="testing",
+                mfa_code=None,
+                ip="192.168.1.1",
+                user_agent="eepy.page-pytest-suite",
+                users=users,
+                session_table=sessions,
             )["success"]
 
     def test_mfa_setup(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            test_user["_id"],
-            "testing",
-            None,
-            "192.168.1.1",
-            "eepy.page-pytest-suite",
-            users,
-            sessions,
+            username=test_user["_id"],
+            real_username="testing",
+            mfa_code=None,
+            ip="192.168.1.1",
+            user_agent="eepy.page-pytest-suite",
+            users=users,
+            session_table=sessions,
         )
 
         if not session_data["access_token"]:
@@ -112,13 +112,13 @@ class TestCreation:
 
     def test_logging_out(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            test_user["_id"],
-            "testing",
-            None,
-            "192.168.1.1",
-            "eepy.page-pytest-suite",
-            users,
-            sessions,
+            username=test_user["_id"],
+            real_username="testing",
+            mfa_code=None,
+            ip="192.168.1.1",
+            user_agent="eepy.page-pytest-suite",
+            users=users,
+            session_table=sessions,
         )
 
         if not session_data["access_token"]:

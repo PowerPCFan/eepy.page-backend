@@ -29,6 +29,7 @@ class Sessions(Table):
 
     def add_session(  # noqa: PLR0913
         self,
+        *,
         uid: str,
         user_id: str,
         type: Literal["access", "refresh"],

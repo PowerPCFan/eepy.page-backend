@@ -65,6 +65,7 @@ class Table:
 
     def modify_document(  # noqa: PLR0913
         self,
+        *,
         filter: dict[str, Any],
         operation: str,
         key: str,

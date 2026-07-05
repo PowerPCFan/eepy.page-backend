@@ -42,7 +42,7 @@ class Referrals(Table):
                 msg,
             )
 
-        if not re.fullmatch("[a-z0-9-]+", requested_code):
+        if not re.fullmatch(r"[a-z0-9-]+", requested_code):
             msg = "Invalid code regex!"
             raise ValueError(msg)
 
@@ -72,10 +72,10 @@ class Referrals(Table):
         )
 
         self.users.modify_document(
-            {"_id": user_id},
-            "$set",
-            "referral-code",
-            requested_code,
+            filter={"_id": user_id},
+            operation="$set",
+            key="referral-code",
+            value=requested_code,
         )
 
     def check(self, referral_code: str) -> bool:
@@ -119,7 +119,12 @@ class Referrals(Table):
             {"$inc": {"permissions.max-domains": 1, "referred-count": 1}},
         )
 
-        self.modify_document({"_id": referral["_id"]}, "$push", "users", user["_id"])
+        self.modify_document(
+            filter={"_id": referral["_id"]},
+            operation="$push",
+            key="users",
+            value=user["_id"],
+        )
 
     def get_users(self, referral_code: str) -> list["UserType"]:
         referral_code = referral_code.lower()

@@ -19,7 +19,7 @@ RewardType = TypedDict(
         "associated-email": str,
         "email-hash": str,
         "used": bool,
-        "used-by": None | str,
+        "used-by": str | None,
     },
 )
 

@@ -243,11 +243,11 @@ class Domain:
 
         try:
             success = self.dns.modify_domain(
-                body.values,
-                body.type,
-                old_type,
-                body.domain,
-                session.username,
+                values=body.values,
+                type=body.type,
+                old_type=old_type,
+                domain=body.domain,
+                user_id=session.username,
             )
 
             if not success:
@@ -271,7 +271,7 @@ class Domain:
                 "domains": domains,
                 "owned-tlds": session.user_cache_data.get("owned-tlds", ["eepy.page"]),
             },
-        )  # type: ignore[return-value]
+        )  # pyright: ignore[reportReturnType]
 
     @Session.requires_auth
     def delete(self, domain: str, session: Session = Depends(converter.create)) -> None:
@@ -312,12 +312,12 @@ class Domain:
                 logger.info("Updating vercel verification...")
 
                 self.dns.modify_domain(
-                    user_stuff.get("verification", None),  # pyright: ignore[reportArgumentType]
-                    "TXT",
-                    "TXT",
-                    f"_vercel{user_stuff.get('tld', '')}",
-                    user_id,
-                    15,
+                    values=user_stuff.get("verification", None),  # pyright: ignore[reportArgumentType]
+                    type="TXT",
+                    old_type="TXT",
+                    domain=f"_vercel{user_stuff.get('tld', '')}",
+                    user_id=user_id,
+                    ttl=60,
                 )
                 self.current_queue_user = user_id
 

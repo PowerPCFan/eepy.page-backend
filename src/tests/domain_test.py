@@ -109,10 +109,10 @@ class TestDomainUser:
         assert updated_user_data.get("domains", {}).get("test[dot]eepy[dot]page") is not None
 
         users.modify_document(
-            {"_id": test_user["_id"]},
-            "$set",
-            "domains.TEST3[dot]eepy[dot]page",
-            {"ip": "0.0.0.0", "type": "A", "registered": time.time()},
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="domains.TEST3[dot]eepy[dot]page",
+            value={"ip": "0.0.0.0", "type": "A", "registered": time.time()},
         )
 
         updated_user_data = users.find_user({"_id": test_user["_id"]})
@@ -147,10 +147,10 @@ class TestDomainUser:
 
         # Change domain limit to be 0. This stops the user from creating new domains, but still allows them to create subdomains
         users.modify_document(
-            {"_id": test_user["_id"]},
-            "$set",
-            "permissions.max-domains",
-            0,
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="permissions.max-domains",
+            value=0,
         )
 
         modified_user = users.find_user({"_id": test_user["_id"]})
@@ -163,10 +163,10 @@ class TestDomainUser:
 
         # Disable subdomain registration too
         users.modify_document(
-            {"_id": test_user["_id"]},
-            "$set",
-            "permissions.max-subdomains",
-            0,
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="permissions.max-subdomains",
+            value=0,
         )
 
         modified_user = users.find_user({"_id": test_user["_id"]})
@@ -180,15 +180,15 @@ class TestDomainUser:
         )[0]
 
         users.modify_document(
-            {"_id": test_user["_id"]},
-            "$set",
-            "permissions.max-subdomains",
-            50,
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="permissions.max-subdomains",
+            value=50,
         )
 
         users.modify_document(
-            {"_id": test_user["_id"]},
-            "$set",
-            "permissions.max-domains",
-            3,
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="permissions.max-domains",
+            value=3,
         )

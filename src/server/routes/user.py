@@ -47,6 +47,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 class User:
     def __init__(  # noqa: PLR0913
         self,
+        *,
         table: Users,
         session_table: Sessions,
         invite_table: Invites,
@@ -415,7 +416,7 @@ class User:
                 logger.info("Account is already verified")
                 return
 
-        try:
+        try:  # noqa: PLW0717
             self.table.modify_document(
                 filter={"_id": code_status.get("account", None)},
                 operation="$set",
@@ -649,6 +650,11 @@ class User:
         Session.clear_sessions(username, self.session_table)
 
         try:
-            self.table.modify_document({"_id": username}, "$set", "password", password)
+            self.table.modify_document(
+                filter={"_id": username},
+                operation="$set",
+                key="password",
+                value=password,
+            )
         except FilterMatchError:
             raise HTTPException(status_code=404, detail="Invalid user")

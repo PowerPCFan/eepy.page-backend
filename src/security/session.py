@@ -213,7 +213,7 @@ class Session:
                 msg = "Invalid type"
                 raise ValueError(msg)
 
-            return data
+            return data  # pyright: ignore[reportReturnType]
         except InvalidSignatureError:
             logger.warning("Invalid token signature")
             return InvalidToken.invalid
@@ -270,6 +270,7 @@ class Session:
 
     @staticmethod
     def create(  # noqa: PLR0913
+        *,
         username: str,
         real_username: str | None,
         mfa_code: str | None,
@@ -403,21 +404,21 @@ class Session:
         def submit_into_db() -> None:
             logger.info("Sending sessions into db")
             session_table.add_session(
-                access_data["jti"],
-                username,
-                access_data["type"],
-                access_data["exp"],
-                user_agent,
-                ip,
+                uid=access_data["jti"],
+                user_id=username,
+                type=access_data["type"],
+                expires=access_data["exp"],
+                user_agent=user_agent,
+                ip=ip,
                 parent=refresh_data["jti"],
             )
             session_table.add_session(
-                refresh_data["jti"],
-                username,
-                refresh_data["type"],
-                refresh_data["exp"],
-                user_agent,
-                ip,
+                uid=refresh_data["jti"],
+                user_id=username,
+                type=refresh_data["type"],
+                expires=refresh_data["exp"],
+                user_agent=user_agent,
+                ip=ip,
             )
 
         submit_into_db()
@@ -489,14 +490,14 @@ class Session:
             raise ValueError(msg_0)
 
         self.users_table.modify_document(
-            {"_id": self.username},
+            filter={"_id": self.username},
+            operation="$set",
             key="totp",
             value={
                 "key": self.encryption.encrypt(key_for_user),
                 "verified": False,
                 "recovery": encrypted_keys,
             },
-            operation="$set",
         )
 
         display_name = self.encryption.decrypt(self.user_cache_data["display-name"])
@@ -529,10 +530,10 @@ class Session:
 
         if is_valid:
             self.users_table.modify_document(
-                {"_id": self.username},
+                filter={"_id": self.username},
+                operation="$set",
                 key="totp.verified",
                 value=True,
-                operation="$set",
             )
 
         return is_valid

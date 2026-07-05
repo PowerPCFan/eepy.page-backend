@@ -76,7 +76,7 @@ class Domains(Users):
         cleaned_domain: str = Domains.clean_domain_name(domain.lower())
 
         self.modify_document(
-            {"_id": target_user},
+            filter={"_id": target_user},
             operation="$set",
             key=f"domains.{cleaned_domain}",
             value=domain_data,
@@ -126,7 +126,7 @@ class Domains(Users):
         }
 
         self.modify_document(
-            {"_id": target_user},
+            filter={"_id": target_user},
             operation="$set",
             key=f"domains.{cleaned_domain}",
             value=domain_data,
