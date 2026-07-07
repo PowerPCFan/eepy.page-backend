@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
+import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +13,14 @@ from pymongo import MongoClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+scripts_dir = pathlib.Path(__file__).resolve().parent
+dotenv = scripts_dir.parent / ".env"
+
+sys.path.insert(0, str(scripts_dir))
+from simple_python_dotenv import load_dotenv
+load_dotenv(dotenv)
 
 
 DATABASE_NAME = "database"
