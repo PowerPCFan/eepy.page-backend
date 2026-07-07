@@ -33,6 +33,31 @@ class DNS:
         self.key: str = os.getenv("PDNS_API_KEY") or ""
         self.domain: str = os.getenv("PDNS_DOMAIN") or ""
 
+    def record_exists(self, domain: str, type: str) -> bool:
+        """Checks PowerDNS for an existing exact rrset before creating a user record."""
+        name, tld = Domains.separate_domain_into_parts(domain)
+        fqdn = name + f".{tld}."
+
+        request = requests.get(
+            f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
+            headers={"X-API-Key": self.key},
+            timeout=10,
+        )
+
+        if not request.ok:
+            logger.error(f"Failed to check existing PowerDNS records for {domain}. {request.json()}")
+            if not self.key:
+                logger.critical("API key not defined!")
+
+            msg = "Failed to check existing DNS records"
+            raise DNSException(msg, request.json())
+
+        for rrset in request.json().get("rrsets", []):
+            if rrset.get("name") == fqdn and rrset.get("type") == type:
+                return True
+
+        return False
+
     def modify_domain(  # noqa: PLR0913
         self,
         *,

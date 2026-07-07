@@ -182,6 +182,15 @@ class API:
             raise HTTPException(status_code=409, detail="Domain is not available")
 
         try:
+            domain_exists_in_dns = self.dns.record_exists(body.domain, body.type)
+        except DNSException:
+            logger.exception("DNSException occurred while checking existing DNS records:")
+            raise HTTPException(status_code=500, detail="DNS availability check failed")
+
+        if domain_exists_in_dns:
+            raise HTTPException(status_code=409, detail="Domain is already registered")
+
+        try:
             self.dns.register_domain(
                 body.domain,
                 body.values[0],

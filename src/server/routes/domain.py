@@ -143,7 +143,7 @@ class Domain:
         logger.info("Initialized")
 
     @Session.requires_auth
-    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:  # noqa: C901
+    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:  # noqa: C901, PLR0912
         domain_name = body.domain
 
         if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
@@ -186,6 +186,15 @@ class Domain:
 
         if not is_domain_available:
             raise HTTPException(status_code=409, detail="Domain is not available")
+
+        try:
+            domain_exists_in_dns = self.dns.record_exists(domain_name, body.type)
+        except DNSException:
+            logger.exception("DNSException occurred while checking existing DNS records:")
+            raise HTTPException(status_code=500, detail="DNS availability check failed")
+
+        if domain_exists_in_dns:
+            raise HTTPException(status_code=409, detail="Domain is already registered")
 
         try:
             success = self.dns.register_domain(
