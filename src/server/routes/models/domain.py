@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from database.tables.domains import DomainFormat
+from database.tables.domains import DomainRecord
 from dns_.types import TYPES
 
 
@@ -11,5 +11,5 @@ class DomainType(BaseModel):
 
 
 class DomainRetrieve(BaseModel):
-    domains: dict[str, DomainFormat]
+    domains: list[DomainRecord]
     owned_tlds: list[str]

@@ -53,10 +53,11 @@ class TestDomainValidation:
         assert not Validation.record_value_valid(["1500.120.15.2"], "A")
         assert not Validation.record_value_valid(["320.120.15.2"], "A")
 
-    def test_domain_clean(self) -> None:
-        assert Domains.clean_domain_name("a.b") == "a[dot]b"
-        assert Domains.beautify_domain_name(None, "a[dot]b") == "a.b"  # pyright: ignore[reportArgumentType]
-        assert Domains.unclean_domain_name("a[dot]b") == "a.b"
+    def test_domain_name_conversion(self) -> None:
+        assert Domains.canonical_domain_name("a.b") == "a.b"
+        assert Domains.canonical_full_domain_name("mysite") == "mysite.eepy.page"
+        assert Domains.display_domain_name("a[dot]b") == "a.b"
+        assert Domains.legacy_bracket_domain_to_dotted("a[dot]b") == "a.b"
 
     def test_separation(self) -> None:
         assert Domains.separate_domain_into_parts("test.eepy.page") == (
@@ -85,13 +86,23 @@ class TestDomainValidation:
         assert Validation.is_reserved_domain("api.eepy.page.")
         assert Validation.is_reserved_domain("api[dot]eepy[dot]page")
         assert Validation.is_reserved_domain("www.worksonmymachine.top")
+        assert Validation.is_reserved_domain("www123.eepy.page")
         assert Validation.is_reserved_domain("_acme-challenge.eepy.page")
         assert not Validation.is_reserved_domain("my-api.eepy.page")
         assert not Validation.is_reserved_domain("www.project.eepy.page")
 
-        assert not validation.is_free("api.eepy.page", "A", {}, False)
-        assert not validation.is_free("www.worksonmymachine.top", "A", {}, False)
-        assert not validation.is_free("_acme-challenge.eepy.page", "TXT", {}, False)
+        assert not validation.is_free("api.eepy.page", "A", {}, raise_exceptions=False)
+        assert not validation.is_free("www.worksonmymachine.top", "A", {}, raise_exceptions=False)
+        assert not validation.is_free("_acme-challenge.eepy.page", "TXT", {}, raise_exceptions=False)
+
+    def test_admin_can_register_reserved_domain(self, validation: Validation) -> None:
+        assert validation.is_free(
+            "api.eepy.page",
+            "A",
+            {},
+            user_is_admin=True,
+            raise_exceptions=False,
+        )
 
 
 class TestDomainUser:
@@ -105,8 +116,8 @@ class TestDomainUser:
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert updated_user_data.get("domains", {}).get("TEST[dot]eepy[dot]page") is None
-        assert updated_user_data.get("domains", {}).get("test[dot]eepy[dot]page") is not None
+        assert Domains.get_domain(updated_user_data.get("domains", []), "TEST.eepy.page") is not None
+        assert Domains.get_domain(updated_user_data.get("domains", []), "test.eepy.page") is not None
 
         users.modify_document(
             filter={"_id": test_user["_id"]},
@@ -119,24 +130,24 @@ class TestDomainUser:
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert updated_user_data.get("domains", {}).get("TEST3[dot]eepy[dot]page") is None
-        assert updated_user_data.get("domains", {}).get("test3[dot]eepy[dot]page") is not None
-        users.remove_key({"_id": test_user["_id"]}, "domains.test3")
+        assert Domains.get_domain(updated_user_data.get("domains", []), "TEST3.eepy.page") is not None
+        assert Domains.get_domain(updated_user_data.get("domains", []), "test3.eepy.page") is not None
+        domains.delete_domain(test_user["_id"], "test3.eepy.page")
 
     def test_domain_not_free(self, validation: Validation, domains: Domains) -> None:
-        assert not validation.is_free("test.eepy.page", "A", {}, False)
-        assert not validation.is_free("test.unowned.eepy.page", "A", {}, False)
-        assert not validation.is_free("test.unowned.eepy.page.", "A", {}, False)
-        assert not validation.is_free("test.unowned.eepy.page.eepy.page", "A", {}, False)
+        assert not validation.is_free("test.eepy.page", "A", {}, raise_exceptions=False)
+        assert not validation.is_free("test.unowned.eepy.page", "A", {}, raise_exceptions=False)
+        assert not validation.is_free("test.unowned.eepy.page.", "A", {}, raise_exceptions=False)
+        assert not validation.is_free("test.unowned.eepy.page.eepy.page", "A", {}, raise_exceptions=False)
 
         with pytest.raises(ValueError):
             validation.is_free("testwithouttld", "A", {})
 
-        assert validation.is_free("test20.eepy.page", "A", {}, False)
+        assert validation.is_free("test20.eepy.page", "A", {}, raise_exceptions=False)
 
     def test_domain_highest_detection(self, validation: Validation, domains: Domains) -> None:
-        assert Validation.find_required_domain("a.b.eepy.page") == "b[dot]eepy[dot]page"
-        assert Validation.find_required_domain("a[dot]b[dot]eepy[dot]page") == "b[dot]eepy[dot]page"
+        assert Validation.find_required_domain("a.b.eepy.page") == "b.eepy.page"
+        assert Validation.find_required_domain("a[dot]b[dot]eepy[dot]page") == "b.eepy.page"
         assert Validation.find_required_domain("a.eepy.page") is None
         assert Validation.find_required_domain("a[dot]eepy[dot]page") is None
 

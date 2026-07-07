@@ -5,7 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from database.tables.domains import DomainFormat, Domains
+from database.tables.domains import DomainRecord, Domains
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ class Api:
                         msg = "Domain not specified"
                         raise ValueError(msg)
 
-                    lookup_domain: str = Domains.clean_domain_name(target_domain)
+                    lookup_domain: str = Domains.canonical_full_domain_name(target_domain)
 
                     if lookup_domain not in target.affected_domains:
                         logger.warning(f"{target_domain} not in affected domain")
@@ -124,19 +124,22 @@ class Api:
         self.permissions: list[ApiPermission] = self.__get_permimssions()
 
         if self.key_data:
-            self.affected_domains: list[str] = [Domains.clean_domain_name(d) for d in self.key_data.get("domains", [])]
+            self.affected_domains: list[str] = [
+                Domains.canonical_full_domain_name(d) for d in self.key_data.get("domains", [])
+            ]
 
             if "*" in self.affected_domains:
                 logger.info("Wildcard in affected domains! Filling with users domains...")
-                self.affected_domains = list(self.user_cache_data["domains"].keys())
+                self.affected_domains = Domains.domain_names(self.user_cache_data["domains"])
 
-            self.user_domains: dict[str, DomainFormat | None] = {
-                domain: self.user_cache_data["domains"].get(domain) for domain in self.affected_domains
-            }
+            user_domains = Domains.domain_map(self.user_cache_data["domains"])
+            self.user_domains: list[DomainRecord] = [
+                user_domains[domain] for domain in self.affected_domains if domain in user_domains
+            ]
 
         else:
             self.affected_domains = []
-            self.user_domains = {}
+            self.user_domains = []
 
     def __cache_data(self) -> ApiType | None:
         user_data = self.users_table.find_item(
@@ -161,7 +164,7 @@ class Api:
             self.valid = False
             return {}  # type: ignore[typeddict-item]
 
-        return data
+        return self.users_table.perform_migrations(data)
 
     def __get_id(self) -> str:
         if not self.valid or self.key_data is None:
@@ -189,11 +192,11 @@ class Api:
             msg = "User not found"
             raise ValueError(msg)
 
-        user_domains: dict[str, DomainFormat] = user_data["domains"]
+        user_domains = Domains.domain_map(user_data["domains"])
 
-        cleaned_domains: list[str] = [Domains.clean_domain_name(d) for d in domains]
-        for domain in cleaned_domains:
-            if Domains.clean_domain_name(domain) not in list(user_domains.keys()) and domain != "*":
+        canonical_domains: list[str] = [Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in domains]
+        for domain in canonical_domains:
+            if domain not in user_domains and domain != "*":
                 logger.warning(f"Domain {domain} not in user_domain")
                 msg_0 = f"User does not own domain {domain}"
                 raise PermissionError(msg_0)
@@ -201,7 +204,7 @@ class Api:
         key: ApiType = {
             "string": users.encryption.encrypt(api_key),
             "perms": permissions,
-            "domains": cleaned_domains,
+            "domains": canonical_domains,
             "comment": comment,
         }
 

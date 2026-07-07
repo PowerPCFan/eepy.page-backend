@@ -267,17 +267,20 @@ class Admin:
             raise HTTPException(status_code=404, detail="Couldnt find a user")
 
         email: str = target_user["email"]
+        domain_data = self.admin_tools.domains.get_domain(target_user["domains"], domain)
+        if domain_data is None:
+            raise HTTPException(status_code=404, detail="Domain not found")
 
         dns_success = self.admin_tools.dns.delete_domain(
-            self.admin_tools.domains.beautify_domain_name(domain),
-            target_user["domains"][self.admin_tools.domains.clean_domain_name(domain)]["type"],
+            self.admin_tools.domains.display_domain_name(domain),
+            domain_data["type"],
         )
 
         if dns_success:
             if self.admin_tools.domains.delete_domain(userid, domain):
                 self.admin_tools.email.send_domain_termination_email(
                     email,
-                    self.admin_tools.domains.beautify_domain_name(domain),
+                    self.admin_tools.domains.display_domain_name(domain),
                     reason,
                 )
                 logger.info(f"Deleted domain {domain}")

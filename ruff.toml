@@ -32,7 +32,8 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
-    "src/tests",  # ignore tests (for now)
+    "src/tests/**",  # ignore tests (for now)
+    "scripts/**"
 ]
 
 line-length = 120
@@ -83,6 +84,9 @@ unfixable = []
 
 typing-extensions = false
 
+[format]
+quote-style = "double"
+indent-style = "space"
+
 [lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
-

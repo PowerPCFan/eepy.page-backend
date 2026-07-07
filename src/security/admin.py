@@ -4,7 +4,7 @@ import time
 from typing import TYPE_CHECKING
 
 from database.exceptions import FilterMatchError, UserNotExistError
-from database.tables.domains import DomainFormat, Domains
+from database.tables.domains import DomainRecord, Domains
 from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
@@ -23,7 +23,7 @@ class GenericDeletionError(Exception): ...
 
 
 class AccountData(UserPageType):
-    domains: dict[str, DomainFormat]
+    domains: list[DomainRecord]
     id: str
     banned: bool
     ban_reasons: list[str] | list[list[str]] | None
@@ -67,7 +67,9 @@ class Admin:
             msg = "You need to specify atleast one ban reason"
             raise ValueError(msg)
 
-        domains: dict[str, TYPES] = {k.replace("[dot]", "."): v["type"] for k, v in user_data["domains"].items()}
+        domains: dict[str, TYPES] = {
+            domain["name"]: domain["type"] for domain in Domains.normalize_domains(user_data["domains"])
+        }
 
         success = self.dns.delete_multiple(domains)
         if not success:
@@ -105,7 +107,7 @@ class Admin:
             },
         )
 
-        domains = {k.replace("[dot]", "."): v for k, v in user_data["domains"].items()}
+        domains = {domain["name"]: domain for domain in Domains.normalize_domains(user_data["domains"])}
 
         self.dns.register_multiple(domains, user_id)
         self.send_nonblocking_action_email(
@@ -114,8 +116,14 @@ class Admin:
         )
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
+        canonical_domain = Domains.canonical_domain_name(domain)
         user_data = self.users.find_user(
-            {f"domains.{Domains.clean_domain_name(domain)}": {"$exists": True}},
+            {
+                "$or": [
+                    {"domains.name": canonical_domain},
+                    {f"domains.{canonical_domain.replace('.', '[dot]')}": {"$exists": True}},
+                ],
+            },
             find_banned=True,
         )
 

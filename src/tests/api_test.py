@@ -10,7 +10,7 @@ valid_key: Api = MagicMock(spec=Api)
 valid_key.valid = True
 
 valid_key.permissions = ["modify", "register", "list"]
-valid_key.affected_domains = ["test[dot]eepy[dot]page", "affected[dot]eepy[dot]page"]
+valid_key.affected_domains = ["test.eepy.page", "affected.eepy.page"]
 
 invalid_key: Api = MagicMock(spec=Api)
 invalid_key.valid = False

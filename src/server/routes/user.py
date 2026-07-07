@@ -15,6 +15,7 @@ from database.exceptions import (
     FilterMatchError,
 )
 from database.tables.codes import Codes, CodeStatus
+from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
 from database.tables.sessions import Sessions
@@ -476,10 +477,6 @@ class User:
             1,
             tzinfo=UTC,
         ).timestamp()
-        domains_registered: int = len(
-            [x for x, v in user["domains"].items() if v["registered"] > this_year_timestamp],
-        )
-
         unique_ips: int = len(user.get("accessed-from", []))
 
         accounts_made_after: int = self.table.table.count_documents(
@@ -487,11 +484,14 @@ class User:
         )
 
         total_users: int = self.table.db.command("collstats", "eepy.page")["count"]
+        domains = Domains.normalize_domains(user["domains"])
 
         return YearWrapped(
             account_created=user["created"],
             accounts_made_after=accounts_made_after,
-            domains_registered=domains_registered,
+            domains_registered=len(
+                [domain for domain in domains if domain["registered"] > this_year_timestamp],
+            ),
             total_users=total_users,
             unique_ips=unique_ips,
         )
@@ -523,7 +523,17 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> dict[str, ApiType]:
-        return session.user_cache_data.get("api-keys", {})
+        api_keys = session.user_cache_data.get("api-keys", {})
+        return {
+            key: {
+                **value,
+                "domains": [
+                    Domains.canonical_full_domain_name(domain) if domain != "*" else "*"
+                    for domain in value.get("domains", [])
+                ],
+            }
+            for key, value in api_keys.items()
+        }
 
     @Session.requires_auth
     def get_key(
@@ -625,7 +635,9 @@ class User:
         if user_data is None:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        domains: dict[str, TYPES] = {k: v["type"] for k, v in user_data["domains"].items()}
+        domains: dict[str, TYPES] = {
+            domain["name"]: domain["type"] for domain in Domains.normalize_domains(user_data["domains"])
+        }
 
         success = self.dns.delete_multiple(domains)
         if not success:

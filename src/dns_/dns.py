@@ -280,7 +280,7 @@ class DNS:
 
         for domain, type in domains.items():
             (name, tld) = Domains.separate_domain_into_parts(
-                Domains.unclean_domain_name(domain),
+                Domains.legacy_bracket_domain_to_dotted(domain),
             )
 
             if tld not in rrsets:

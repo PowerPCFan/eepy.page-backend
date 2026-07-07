@@ -9,7 +9,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 
 from database.exceptions import SubdomainError
-from database.tables.domains import DomainFormat
+from database.tables.domains import DomainRecord
 from database.tables.domains import Domains as DomainTable
 from database.tables.sessions import Sessions as SessionTable
 from database.tables.users import Users as UsersTable
@@ -167,6 +167,7 @@ class Domain:
                 domain_name,
                 body.type,
                 session.user_cache_data["domains"],
+                user_is_admin=session.user_cache_data["permissions"]["admin"],
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -213,8 +214,6 @@ class Domain:
 
     @Session.requires_auth
     def modify(self, body: DomainType, session: Session = Depends(converter.create)) -> None:
-        clean_domain_name: str = self.domains.clean_domain_name(body.domain)
-
         if not self.dns_validation.record_name_valid(body.domain, body.type):
             raise HTTPException(status_code=412, detail=f"Invalid domain name {body.domain}")
 
@@ -224,7 +223,11 @@ class Domain:
         if not self.dns_validation.user_owns_domain(session.username, body.domain, session.user_cache_data):
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
-        old_type: str = session.user_cache_data["domains"][clean_domain_name]["type"]
+        domain_data = self.domains.get_domain(session.user_cache_data["domains"], body.domain)
+        if domain_data is None:
+            raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
+
+        old_type: str = domain_data["type"]
 
         db_thread = Thread(
             target=self.domains.add_domain,
@@ -263,8 +266,7 @@ class Domain:
 
     @Session.requires_auth
     def get_domains(self, session: Session = Depends(converter.create)) -> DomainRetrieve:
-        domains: dict[str, DomainFormat] = session.user_cache_data["domains"]
-        domains = {k.replace("[dot]", "."): v for k, v in domains.items()}
+        domains: list[DomainRecord] = self.domains.normalize_domains(session.user_cache_data["domains"])
 
         return JSONResponse(
             {
@@ -284,11 +286,8 @@ class Domain:
         if not session.user_cache_data:
             return
 
-        domain_type: str | None = (
-            session.user_cache_data.get("domains", {})  # type: ignore[call-overload]
-            .get(self.domains.clean_domain_name(domain), {})
-            .get("type")
-        )
+        domain_data = self.domains.get_domain(session.user_cache_data.get("domains"), domain)
+        domain_type: str | None = domain_data["type"] if domain_data else None
 
         if domain_type is None:
             return
@@ -309,7 +308,7 @@ class Domain:
                     logger.error("Verification value not found")
                     continue
 
-                logger.info("Updating vercel verification...")
+                logger.info("Updating Vercel verification...")
 
                 self.dns.modify_domain(
                     values=user_stuff.get("verification", None),  # pyright: ignore[reportArgumentType]

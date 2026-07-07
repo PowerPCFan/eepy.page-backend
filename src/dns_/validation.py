@@ -54,6 +54,7 @@ RESERVED_ROOT_LABELS: set[str] = {
     "help",
     "health",
     "healthcheck",
+    "hostmaster",
     "koti",
     "home",
     "kofi",
@@ -86,6 +87,7 @@ RESERVED_ROOT_LABELS: set[str] = {
     "test",
     "webmail",
     "www",
+    "regexp::www[0-9]+",
     "_acme-challenge",
     "_dmarc",
     "_domainkey",
@@ -97,6 +99,20 @@ class Validation:
     def __init__(self, table: Domains, dns: "DNS") -> None:
         self.dns = dns
         self.table = table
+
+    @staticmethod
+    def is_reserved_label(label: str) -> bool:
+        for reserved_label in RESERVED_ROOT_LABELS:
+            if reserved_label.startswith("regexp::"):
+                pattern = reserved_label.removeprefix("regexp::")
+                if re.fullmatch(pattern, label):
+                    return True
+                continue
+
+            if label == reserved_label:
+                return True
+
+        return False
 
     @staticmethod
     def record_name_valid(name: str, type: str) -> bool:
@@ -174,15 +190,15 @@ class Validation:
 
     @staticmethod
     def is_reserved_domain(name: str) -> bool:
-        clean_name = Domains.unclean_domain_name(name).removesuffix(".").lower()
+        canonical_name = Domains.canonical_domain_name(name)
         for tld in get_args(AVAILABLE_TLDS):
-            if clean_name == tld:
+            if canonical_name == tld:
                 return True
-            if not clean_name.endswith(f".{tld}"):
+            if not canonical_name.endswith(f".{tld}"):
                 continue
 
-            labels = [label for label in (clean_name[: -(len(tld) + 1)]).split(".") if label]
-            return len(labels) == 1 and labels[0] in RESERVED_ROOT_LABELS
+            labels = [label for label in (canonical_name[: -(len(tld) + 1)]).split(".") if label]
+            return len(labels) == 1 and Validation.is_reserved_label(labels[0])
         return False
 
     @staticmethod
@@ -197,14 +213,14 @@ class Validation:
         """
         domain, tld = Domains.separate_domain_into_parts(full_domain)
 
-        domain = Domains.clean_domain_name(domain)
+        domain = Domains.canonical_domain_name(domain)
         logger.info(f"Checking if {domain} is subdomain")
 
-        domain_parts: list[str] = Domains.clean_domain_name(domain).split("[dot]")
+        domain_parts: list[str] = Domains.canonical_domain_name(domain).split(".")
         logger.info(domain_parts)
         is_subdomain: bool = len(domain_parts) > 1
 
-        required_domain: str = domain_parts[-1] + "[dot]" + Domains.clean_domain_name(tld)
+        required_domain: str = domain_parts[-1] + "." + Domains.canonical_domain_name(tld)
 
         return required_domain if is_subdomain else None
 
@@ -213,6 +229,8 @@ class Validation:
         name: str,
         type: str,
         domains: dict[str, DomainFormat],
+        *,
+        user_is_admin: bool = False,
         raise_exceptions: bool = True,
     ) -> bool:
         """
@@ -231,16 +249,15 @@ class Validation:
         """
 
         name = name.removesuffix(".")
+        canonical_domain: str = Domains.canonical_domain_name(name)
 
-        if not Domains.unclean_domain_name(name).endswith(
+        if not canonical_domain.endswith(
             tuple(f".{tld}" for tld in get_args(AVAILABLE_TLDS)),
         ):
             if raise_exceptions:
                 msg = f"Invalid record name '{name}' (does not include TLD)"
                 raise ValueError(msg)
             return False
-
-        cleaned_domain: str = Domains.clean_domain_name(name)
 
         if not Validation.record_name_valid(name, type):
             logger.info(f"{name} Name is not valid")
@@ -249,7 +266,7 @@ class Validation:
                 raise ValueError(msg)
             return False
 
-        if Validation.is_reserved_domain(name):
+        if Validation.is_reserved_domain(name) and not user_is_admin:
             logger.info(f"{name} is reserved")
             if raise_exceptions:
                 msg = f"Domain '{name}' is reserved"
@@ -264,17 +281,16 @@ class Validation:
                 raise DNSException(msg, type_=type)
             return False
 
-        if cleaned_domain in domains:
-            logger.info(f"User already owns domain {cleaned_domain}")
+        if canonical_domain in Domains.domain_map(domains):
+            logger.info(f"User already owns domain {canonical_domain}")
             return False
 
-        domain, _tld = Domains.separate_domain_into_parts(name)
-
-        domain = Domains.clean_domain_name(domain)
+        domain_label, _tld = Domains.separate_domain_into_parts(name)
+        canonical_domain_label = Domains.canonical_domain_name(domain_label)
 
         required_domain: str | None = Validation.find_required_domain(name)
 
-        if required_domain and required_domain not in domains:
+        if required_domain and required_domain not in Domains.domain_map(domains):
             logger.warning(f"User does not own {required_domain}")
             if raise_exceptions:
                 msg = f"User doesn't own '{required_domain}'"
@@ -289,10 +305,9 @@ class Validation:
                 self.table.find_item(
                     {
                         "$or": [
-                            {f"domains.{cleaned_domain}": {"$exists": True}},
-                            {
-                                f"domains.{domain}": {"$exists": True},
-                            },  # for legacy domains
+                            {"domains.name": canonical_domain},
+                            {f"domains.{canonical_domain.replace('.', '[dot]')}": {"$exists": True}},
+                            {f"domains.{canonical_domain_label.replace('.', '[dot]')}": {"$exists": True}},
                         ],
                     },
                 )
@@ -300,7 +315,7 @@ class Validation:
             )
             != 0
         ):
-            logger.warning(f"Domain {cleaned_domain} already exists in database")
+            logger.warning(f"Domain {canonical_domain} already exists in database")
 
             if raise_exceptions:
                 msg = "Domain is already registered"
@@ -337,7 +352,7 @@ class Validation:
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        return user_data["domains"].get(self.table.clean_domain_name(domain)) is not None
+        return Domains.get_domain(user_data["domains"], domain) is not None
 
     @staticmethod
     def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:
@@ -350,15 +365,14 @@ class Validation:
         :return: whether the user can register
         :rtype: UserCanRegisterResult
         """
-        name, _ = Domains.separate_domain_into_parts(domain)
         subdomain_amount: int = 0
         is_subdomain = Validation.find_required_domain(domain) is not None
 
         user_domain_amount = 0
         subdomain_amount = 0
 
-        for _ in [Domains.clean_domain_name(domain) for domain in list(user["domains"].keys())]:
-            if Validation.find_required_domain(name):
+        for user_domain in Domains.domain_names(user["domains"]):
+            if Validation.find_required_domain(user_domain):
                 subdomain_amount += 1
             else:
                 user_domain_amount += 1

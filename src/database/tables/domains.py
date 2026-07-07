@@ -1,4 +1,5 @@
 import logging
+from itertools import starmap
 from typing import NotRequired, TypedDict, get_args
 
 from pymongo import MongoClient
@@ -15,6 +16,10 @@ class DomainFormat(TypedDict):
     registered: int | float
     type: TYPES
     id: str | None
+
+
+class DomainRecord(DomainFormat):
+    name: str
 
 
 RepairFormat = TypedDict(
@@ -37,8 +42,16 @@ class Domains(Users):
         super().__init__(mongo_client)
 
     @staticmethod
-    def clean_domain_name(input: str) -> str:
-        return input.replace(".", "[dot]").lower()
+    def canonical_domain_name(domain: str) -> str:
+        return Domains.legacy_bracket_domain_to_dotted(domain).removesuffix(".").lower()
+
+    @staticmethod
+    def canonical_full_domain_name(domain: str) -> str:
+        canonical_domain = Domains.canonical_domain_name(domain)
+        if canonical_domain.endswith(get_args(AVAILABLE_TLDS)):
+            return canonical_domain
+
+        return f"{canonical_domain}.eepy.page"
 
     @staticmethod
     def separate_domain_into_parts(domain: str) -> tuple[str, str]:
@@ -46,26 +59,67 @@ class Domains(Users):
 
         :param domain: the full domain (e.g a.eepy.page)
         :type domain: str
-        :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks osmething like this: (a, eepy.page)
+        :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks something like this: (a, eepy.page)
         :rtype: Tuple[str, str]
         """  # noqa: E501
         tld: str = "eepy.page"
 
-        beautiful_domain = Domains.unclean_domain_name(domain)
+        dotted_domain = Domains.legacy_bracket_domain_to_dotted(domain)
 
         for available_tld in get_args(AVAILABLE_TLDS):
-            if beautiful_domain.endswith(available_tld):
+            if dotted_domain.endswith(available_tld):
                 tld = available_tld
                 break
 
-        return (beautiful_domain.rsplit(tld, 1)[0].rstrip("."), tld)
+        return (dotted_domain.rsplit(tld, 1)[0].rstrip("."), tld)
 
     @staticmethod
-    def unclean_domain_name(input: str) -> str:
-        return input.replace("[dot]", ".")
+    def legacy_bracket_domain_to_dotted(domain: str) -> str:
+        return domain.replace("[dot]", ".")
 
-    def beautify_domain_name(self, input: str) -> str:
-        return Domains.unclean_domain_name(input)
+    @staticmethod
+    def display_domain_name(domain: str) -> str:
+        return Domains.legacy_bracket_domain_to_dotted(domain)
+
+    @staticmethod
+    def normalize_domain_record(domain: str, domain_data: DomainFormat) -> DomainRecord:
+        return {
+            "name": Domains.canonical_full_domain_name(domain),
+            "id": domain_data.get("id"),
+            "type": domain_data["type"],
+            "ip": domain_data["ip"] if isinstance(domain_data["ip"], list) else [domain_data["ip"]],
+            "registered": domain_data["registered"],
+        }
+
+    @staticmethod
+    def normalize_domains(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> list[DomainRecord]:
+        if not domains:
+            return []
+
+        if isinstance(domains, list):
+            normalized_domains: list[DomainRecord] = []
+            for domain in domains:
+                if not domain.get("name"):
+                    continue
+                normalized_domains.append(Domains.normalize_domain_record(domain["name"], domain))
+            return normalized_domains
+
+        return list(starmap(Domains.normalize_domain_record, domains.items()))
+
+    @staticmethod
+    def domain_map(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> dict[str, DomainRecord]:
+        return {domain["name"]: domain for domain in Domains.normalize_domains(domains)}
+
+    @staticmethod
+    def get_domain(
+        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domain: str,
+    ) -> DomainRecord | None:
+        return Domains.domain_map(domains).get(Domains.canonical_full_domain_name(domain))
+
+    @staticmethod
+    def domain_names(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> list[str]:
+        return [domain["name"] for domain in Domains.normalize_domains(domains)]
 
     def add_domain(
         self,
@@ -73,22 +127,22 @@ class Domains(Users):
         domain: str,
         domain_data: DomainFormat,
     ) -> None:
-        cleaned_domain: str = Domains.clean_domain_name(domain.lower())
-
-        self.modify_document(
-            filter={"_id": target_user},
-            operation="$set",
-            key=f"domains.{cleaned_domain}",
-            value=domain_data,
+        domain_record = Domains.normalize_domain_record(domain, domain_data)
+        result = self.table.update_one(
+            {"_id": target_user, "domains.name": domain_record["name"]},
+            {"$set": {"domains.$": domain_record}},
         )
 
-    def get_domains(self, target_user: str) -> dict[str, DomainFormat]:
+        if result.matched_count == 0:
+            self.table.update_one({"_id": target_user}, {"$push": {"domains": domain_record}})
+
+    def get_domains(self, target_user: str) -> list[DomainRecord]:
         user_data: UserType | None = self.find_user({"_id": target_user})
         if user_data is None:
             msg = "User does not exist"
             raise UserNotExistError(msg)
 
-        return user_data["domains"]
+        return Domains.normalize_domains(user_data["domains"])
 
     def modify_domain(
         self,
@@ -108,32 +162,40 @@ class Domains(Users):
         Raises:
             ValueError: If user does not exist
         """
-        cleaned_domain: str = Domains.clean_domain_name(domain)
-        logger.info(f"Modifying domain {cleaned_domain}...")
+        canonical_domain: str = Domains.canonical_full_domain_name(domain)
+        logger.info(f"Modifying domain {canonical_domain}...")
 
         user_data: UserType | None = self.find_user({"_id": target_user})
         if user_data is None:
             msg = "Failed to find user"
             raise ValueError(msg)
 
-        domain_data: DomainFormat = user_data["domains"][cleaned_domain]
+        domain_data = Domains.get_domain(user_data["domains"], canonical_domain)
+        if domain_data is None:
+            msg = "Domain not found"
+            raise ValueError(msg)
 
-        domain_data = {
+        updated_domain_data: DomainRecord = {
+            "name": canonical_domain,
             "ip": value or domain_data["ip"],
             "registered": domain_data["registered"],
             "type": type or domain_data["type"],
             "id": domain_data["id"],
         }
 
-        self.modify_document(
-            filter={"_id": target_user},
-            operation="$set",
-            key=f"domains.{cleaned_domain}",
-            value=domain_data,
+        self.table.update_one(
+            {"_id": target_user, "domains.name": canonical_domain},
+            {"$set": {"domains.$": updated_domain_data}},
         )
 
     def delete_domain(self, target_user: str, domain: str) -> bool:
-        cleaned_domain = Domains.clean_domain_name(domain)
-        logger.info(f"Deleting domain {cleaned_domain}")
+        canonical_domain = Domains.canonical_full_domain_name(domain)
+        logger.info(f"Deleting domain {canonical_domain}")
 
-        return self.remove_key({"_id": target_user}, key=f"domains.{cleaned_domain}")
+        return (
+            self.table.update_one(
+                {"_id": target_user},
+                {"$pull": {"domains": {"name": canonical_domain}}},
+            ).modified_count
+            != 0
+        )

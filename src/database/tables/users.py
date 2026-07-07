@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, get_args
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 import requests
 from pymongo import MongoClient
@@ -17,13 +17,12 @@ from database.exceptions import (
 )
 from database.table import Table
 from database.tables.referrals import Referrals
-from dns_.types import AVAILABLE_TLDS
 from mail.email import Email
 from security.encryption import Encryption
 from security.session import NewSessionType, OldSessionType
 
 if TYPE_CHECKING:
-    from database.tables.domains import DomainFormat
+    from database.tables.domains import DomainFormat, DomainRecord
     from database.tables.sessions import Sessions as SessionTable
     from security.api import ApiType
 
@@ -102,7 +101,7 @@ UserType = TypedDict(
         "last-login": int,  # Epoch timestamp
         "permissions": dict,
         "verified": bool,
-        "domains": Required[dict[str, "DomainFormat"]],
+        "domains": Required[list["DomainRecord"] | dict[str, "DomainFormat"]],
         "feature-flags": NotRequired[dict[str, bool]],
         "api-keys": NotRequired[dict[str, "ApiType"]],
         "credits": NotRequired[int],
@@ -227,7 +226,7 @@ class Users(Table):
             },
             "feature-flags": {},
             "verified": bool(skip_verification),
-            "domains": {},
+            "domains": [],
             "api-keys": {},
             "credits": 200,
             "owned-tlds": ["eepy.page"],
@@ -374,6 +373,7 @@ class Users(Table):
             "created": user_data["created"],
             "verified": user_data["verified"],
             "permissions": user_data.get("permissions", {}),
+            "domains": user_data["domains"],
             "beta-enroll": user_data.get("beta-enroll", False),
             "sessions": session_data,  # type: ignore[typeddict-item]
             "invites": user_data.get("invites", {}),  # type: ignore[typeddict-item]
@@ -413,31 +413,13 @@ class Users(Table):
     def perform_migrations(self, user: UserType) -> UserType:
         start = time.time()
         logger.debug(f"Running migrations for user {user['_id'][:12]}...")
-        domains: dict[str, DomainFormat] = {}
-        fixed_domains = False
+        from database.tables.domains import Domains  # noqa: PLC0415
 
-        for domain_name, domain in user["domains"].items():
-            new_domain_name: str = domain_name.lower()
+        original_domains = user.get("domains", [])
+        domains = Domains.normalize_domains(original_domains)
+        fixed_domains = domains != original_domains
 
-            if not domain_name.lower().replace("[dot]", ".").endswith(get_args(AVAILABLE_TLDS)):
-                fixed_domains = True
-                logger.info(
-                    f"Updated domain {domain_name.lower()} to have the new syntax",
-                )
-                new_domain_name += "[dot]eepy[dot]page"
-
-            if not isinstance(domain["ip"], list):
-                fixed_domains = True
-                logger.info("Updating domain values to be a list")
-
-                domain["ip"] = [domain["ip"]]  # type: ignore[list-item]
-
-            domains[new_domain_name] = domain
-
-        if len(domains) != len(user["domains"]):
-            logger.warning("Domain amount does not match!")
-
-        elif fixed_domains:
+        if not isinstance(user.get("domains"), list) or fixed_domains:
             logger.info("Found domains which were fixed")
             self.modify_document(
                 filter={"_id": user["_id"]},
@@ -477,6 +459,26 @@ class Users(Table):
                 operation="$set",
                 key="owned-tlds",
                 value=["eepy.page"],
+            )
+
+        api_keys = user.get("api-keys", {})
+        api_keys_fixed = False
+        for api_key in api_keys.values():
+            domains = api_key.get("domains", [])
+            normalized_domains = [
+                domain if domain == "*" else Domains.canonical_full_domain_name(domain) for domain in domains
+            ]
+            if normalized_domains != domains:
+                api_keys_fixed = True
+                api_key["domains"] = normalized_domains
+
+        if api_keys_fixed:
+            logger.info("Updated API key domain scopes")
+            self.modify_document(
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="api-keys",
+                value=api_keys,
             )
 
         logger.debug(f"Migrations took {time.time() - start:.5f}s")

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 
 from database.exceptions import SubdomainError, UserNotExistError
-from database.tables.domains import DomainFormat
+from database.tables.domains import DomainRecord
 from database.tables.domains import Domains as DomainTable
 from database.tables.sessions import Sessions as SessionTable
 from database.tables.users import UserPageType
@@ -164,6 +164,7 @@ class API:
                 body.domain,
                 body.type,
                 api.user_cache_data["domains"],
+                user_is_admin=api.user_cache_data["permissions"]["admin"],
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -209,7 +210,6 @@ class API:
         body: DomainType,
         api: Api = Depends(converter.create),
     ) -> None:
-        clean_domain_name: str = self.domains.clean_domain_name(body.domain)
         if not self.dns_validation.record_name_valid(body.domain, body.type):
             raise HTTPException(
                 status_code=412,
@@ -228,11 +228,15 @@ class API:
                 detail=f"You do not own the domain {body.domain}",
             )
 
+        domain_data = self.domains.get_domain(api.user_cache_data["domains"], body.domain)
+        if domain_data is None:
+            raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
+
         try:
             self.dns.modify_domain(
                 values=body.values,
                 type=body.type,
-                old_type=api.user_cache_data["domains"][clean_domain_name]["type"],
+                old_type=domain_data["type"],
                 domain=body.domain,
                 user_id=api.username,
             )
@@ -263,13 +267,13 @@ class API:
         api: Api = Depends(converter.create),
     ) -> None:
         if type is None:
-            try:
-                type = api.user_cache_data["domains"][self.domains.clean_domain_name(domain)]["type"]
-            except KeyError:
+            domain_data = self.domains.get_domain(api.user_cache_data["domains"], domain)
+            if domain_data is None:
                 raise HTTPException(
                     status_code=404,
                     detail="Domain type could not be fetched. Please specify it manually with the `type` query param",
                 )
+            type = domain_data["type"]
 
         if not self.domains.delete_domain(api.username, domain):
             raise HTTPException(
@@ -287,7 +291,7 @@ class API:
     def get_domains(
         self,
         api: Api = Depends(converter.create),
-    ) -> dict[str, DomainFormat | None]:
+    ) -> list[DomainRecord]:
         return api.user_domains
 
     def is_available(self, name: str) -> None:
