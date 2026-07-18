@@ -248,9 +248,8 @@ class Domain:
 
         old_type: str = domain_data["type"]
 
-        if (
-            body.type != old_type
-            and self.domains.get_domain(session.user_cache_data["domains"], body.domain, body.type)
+        if body.type != old_type and self.domains.get_domain(
+            session.user_cache_data["domains"], body.domain, body.type
         ):
             raise HTTPException(status_code=409, detail="Domain is already registered")
 

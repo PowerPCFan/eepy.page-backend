@@ -251,9 +251,8 @@ class API:
         if domain_data is None:
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
-        if (
-            body.type != domain_data["type"]
-            and self.domains.get_domain(api.user_cache_data["domains"], body.domain, body.type)
+        if body.type != domain_data["type"] and self.domains.get_domain(
+            api.user_cache_data["domains"], body.domain, body.type
         ):
             raise HTTPException(status_code=409, detail="Domain is already registered")
 

@@ -113,8 +113,7 @@ class Domains(Users):
     @staticmethod
     def domain_map(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> dict[str, DomainRecord]:
         return {
-            Domains.record_key(domain["name"], domain["type"]): domain
-            for domain in Domains.normalize_domains(domains)
+            Domains.record_key(domain["name"], domain["type"]): domain for domain in Domains.normalize_domains(domains)
         }
 
     @staticmethod
