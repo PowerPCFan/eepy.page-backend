@@ -6,7 +6,7 @@ from pymongo import MongoClient
 
 from database.exceptions import UserNotExistError
 from database.tables.users import Users, UserType
-from dns_.types import AVAILABLE_TLDS, TYPES
+from dns_.types import AVAILABLE_TLDS, TYPES, get_rec_type
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -54,6 +54,10 @@ class Domains(Users):
         return f"{canonical_domain}.eepy.page"
 
     @staticmethod
+    def record_key(domain: str, type_: str) -> str:
+        return f"{Domains.canonical_full_domain_name(domain)}::{type_.upper()}"
+
+    @staticmethod
     def separate_domain_into_parts(domain: str) -> tuple[str, str]:
         """Returns the name and TLD of the domain
 
@@ -86,7 +90,7 @@ class Domains(Users):
         return {
             "name": Domains.canonical_full_domain_name(domain),
             "id": domain_data.get("id"),
-            "type": domain_data["type"],
+            "type": get_rec_type(domain_data["type"].upper()),
             "ip": domain_data["ip"] if isinstance(domain_data["ip"], list) else [domain_data["ip"]],
             "registered": domain_data["registered"],
         }
@@ -108,18 +112,47 @@ class Domains(Users):
 
     @staticmethod
     def domain_map(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> dict[str, DomainRecord]:
-        return {domain["name"]: domain for domain in Domains.normalize_domains(domains)}
+        return {
+            Domains.record_key(domain["name"], domain["type"]): domain
+            for domain in Domains.normalize_domains(domains)
+        }
 
     @staticmethod
     def get_domain(
         domains: dict[str, DomainFormat] | list[DomainRecord] | None,
         domain: str,
+        type: str | None = None,
     ) -> DomainRecord | None:
-        return Domains.domain_map(domains).get(Domains.canonical_full_domain_name(domain))
+        canonical_domain = Domains.canonical_full_domain_name(domain)
+        normalized_domains = Domains.normalize_domains(domains)
+
+        if type is not None:
+            type_upper = type.upper()
+            for record in normalized_domains:
+                if record["name"] == canonical_domain and record["type"] == type_upper:
+                    return record
+            return None
+
+        matches = [record for record in normalized_domains if record["name"] == canonical_domain]
+        if len(matches) == 1:
+            return matches[0]
+        return None
 
     @staticmethod
     def domain_names(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> list[str]:
-        return [domain["name"] for domain in Domains.normalize_domains(domains)]
+        names: list[str] = []
+        for domain in Domains.normalize_domains(domains):
+            if domain["name"] not in names:
+                names.append(domain["name"])
+        return names
+
+    @staticmethod
+    def has_domain(
+        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domain: str,
+        type: str | None = None,
+    ) -> bool:
+        return Domains.get_domain(domains, domain, type) is not None
 
     def add_domain(
         self,
@@ -129,7 +162,11 @@ class Domains(Users):
     ) -> None:
         domain_record = Domains.normalize_domain_record(domain, domain_data)
         result = self.table.update_one(
-            {"_id": target_user, "domains.name": domain_record["name"]},
+            {
+                "_id": target_user,
+                "domains.name": domain_record["name"],
+                "domains.type": domain_record["type"],
+            },
             {"$set": {"domains.$": domain_record}},
         )
 
@@ -148,8 +185,9 @@ class Domains(Users):
         self,
         target_user: str,
         domain: str,
-        value: str | None = None,
+        value: list[str] | str | None = None,
         type: TYPES | None = None,
+        old_type: TYPES | None = None,
     ) -> None:
         """Modifies domain in database
 
@@ -170,32 +208,50 @@ class Domains(Users):
             msg = "Failed to find user"
             raise ValueError(msg)
 
-        domain_data = Domains.get_domain(user_data["domains"], canonical_domain)
+        domain_data = Domains.get_domain(user_data["domains"], canonical_domain, old_type or None)
         if domain_data is None:
             msg = "Domain not found"
             raise ValueError(msg)
 
+        if type is not None and type.upper() != domain_data["type"]:
+            existing_type = Domains.get_domain(user_data["domains"], canonical_domain, type.upper())
+            if existing_type is not None:
+                msg = "Domain already exists"
+                raise ValueError(msg)
+
         updated_domain_data: DomainRecord = {
             "name": canonical_domain,
-            "ip": value or domain_data["ip"],
+            "ip": value if value is not None else domain_data["ip"],
             "registered": domain_data["registered"],
-            "type": type or domain_data["type"],
+            "type": get_rec_type((type or domain_data["type"]).upper()),
             "id": domain_data["id"],
         }
 
         self.table.update_one(
-            {"_id": target_user, "domains.name": canonical_domain},
+            {
+                "_id": target_user,
+                "domains.name": canonical_domain,
+                "domains.type": domain_data["type"],
+            },
             {"$set": {"domains.$": updated_domain_data}},
         )
 
-    def delete_domain(self, target_user: str, domain: str) -> bool:
+    def delete_domain(self, target_user: str, domain: str, type: str | None = None) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
         logger.info(f"Deleting domain {canonical_domain}")
+
+        user_data: UserType | None = self.find_user({"_id": target_user})
+        if user_data is None:
+            return False
+
+        domain_data = Domains.get_domain(user_data["domains"], canonical_domain, type)
+        if domain_data is None:
+            return False
 
         return (
             self.table.update_one(
                 {"_id": target_user},
-                {"$pull": {"domains": {"name": canonical_domain}}},
+                {"$pull": {"domains": {"name": canonical_domain, "type": domain_data["type"]}}},
             ).modified_count
             != 0
         )

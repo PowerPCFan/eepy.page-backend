@@ -8,6 +8,7 @@ class DomainType(BaseModel):
     domain: str
     values: list[str]
     type: TYPES
+    old_type: TYPES | None = None
 
 
 class DomainRetrieve(BaseModel):

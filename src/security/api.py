@@ -5,7 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from database.tables.domains import DomainRecord, Domains
+from database.tables.domains import Domains
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
@@ -132,9 +132,10 @@ class Api:
                 logger.info("Wildcard in affected domains! Filling with users domains...")
                 self.affected_domains = Domains.domain_names(self.user_cache_data["domains"])
 
-            user_domains = Domains.domain_map(self.user_cache_data["domains"])
-            self.user_domains: list[DomainRecord] = [
-                user_domains[domain] for domain in self.affected_domains if domain in user_domains
+            self.user_domains = [
+                domain
+                for domain in Domains.normalize_domains(self.user_cache_data["domains"])
+                if domain["name"] in self.affected_domains
             ]
 
         else:
@@ -192,7 +193,7 @@ class Api:
             msg = "User not found"
             raise ValueError(msg)
 
-        user_domains = Domains.domain_map(user_data["domains"])
+        user_domains = Domains.domain_names(user_data["domains"])
 
         canonical_domains: list[str] = [Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in domains]
         for domain in canonical_domains:

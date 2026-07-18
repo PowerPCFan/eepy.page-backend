@@ -119,10 +119,7 @@ class Admin:
         canonical_domain = Domains.canonical_domain_name(domain)
         user_data = self.users.find_user(
             {
-                "$or": [
-                    {"domains.name": canonical_domain},
-                    {f"domains.{canonical_domain.replace('.', '[dot]')}": {"$exists": True}},
-                ],
+                "domains.name": canonical_domain,
             },
             find_banned=True,
         )
@@ -200,7 +197,7 @@ class Admin:
             raise ValueError(msg)
 
         account_data: AccountData = user_profile  # type: ignore[assignment]
-        account_data["domains"] = user_data["domains"]
+        account_data["domains"] = user_data["domains"]  # pyright: ignore[reportGeneralTypeIssues]
         account_data["id"] = user_data["_id"]
         account_data["banned"] = user_data.get("banned", False)
         account_data["ban_reasons"] = user_data.get("ban-reasons")

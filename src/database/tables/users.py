@@ -19,7 +19,7 @@ from database.table import Table
 from database.tables.referrals import Referrals
 from mail.email import Email
 from security.encryption import Encryption
-from security.session import NewSessionType, OldSessionType
+from security.session import NewSessionType
 
 if TYPE_CHECKING:
     from database.tables.domains import DomainFormat, DomainRecord
@@ -75,7 +75,7 @@ UserPageType = TypedDict(
         "verified": bool,
         "permissions": dict[str, Any],
         "beta-enroll": bool,
-        "sessions": list[NewSessionType | OldSessionType] | list[dict],
+        "sessions": list[NewSessionType],
         "invites": dict[str, InviteType],
         "mfa_enabled": bool,
         "referral-code": str | None,
@@ -109,8 +109,8 @@ UserType = TypedDict(
         "beta-updated": NotRequired[int],
         "invites": NotRequired[dict[str, InviteType]],
         "invite-code": NotRequired[str],
-        "totp": NotRequired[MFA],
-        "banned": NotRequired[Literal[True]],
+        "totp": NotRequired[MFA | dict],
+        "banned": NotRequired[bool],
         "ban-reasons": NotRequired[list[str]],
         "referral-code": NotRequired[str],
         "referred-by": NotRequired[str],
@@ -223,12 +223,23 @@ class Users(Table):
                 "max-domains": 3,
                 "max-subdomains": 5,
                 "invite": False,
+                "admin": False,
             },
             "feature-flags": {},
             "verified": bool(skip_verification),
             "domains": [],
             "api-keys": {},
             "credits": 200,
+            "beta-enroll": False,
+            "beta-updated": 0,
+            "invites": {},
+            "invite-code": "",
+            "totp": {},
+            "banned": False,
+            "ban-reasons": [],
+            "referral-code": "",
+            "referred-by": "",
+            "referred-count": 0,
             "owned-tlds": ["eepy.page"],
         }
 

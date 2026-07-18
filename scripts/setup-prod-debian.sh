@@ -45,8 +45,7 @@ if [[ ! " ${supported_versions[*]} " =~ " ${python_version} " ]]; then
     echo "Python ${python_version} does not meet the minimum requirement of 3.12. You may experience issues with the backend." >&2
 fi
 
-# enter toplevel repo root
-cd "$(git rev-parse --show-toplevel)"
+cd "$APP_DIR"
 
 if [ ! -f "$ENV_FILE" ]; then
     echo ".env file missing: ${ENV_FILE}" >&2
@@ -132,12 +131,12 @@ chown root:root "$CADDYFILE_DEST"
 chmod 0644 "$CADDYFILE_DEST"
 
 echo "Adding your .env to Caddy's .service file..."
-sudo mkdir -p /etc/systemd/system/caddy.service.d/
-cat << 'EOF' | sudo tee /etc/systemd/system/caddy.service.d/override.conf > /dev/null
+mkdir -p /etc/systemd/system/caddy.service.d/
+cat << 'EOF' | tee /etc/systemd/system/caddy.service.d/override.conf > /dev/null
 [Service]
 EnvironmentFile=/home/eepy/eepy.page-backend/.env
 EOF
-sudo systemctl daemon-reload
+systemctl daemon-reload
 
 echo "Validating and starting Caddy..."
 {

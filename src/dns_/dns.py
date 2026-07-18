@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import Mapping
 
 import requests  # type: ignore[import-untyped]
 
@@ -16,9 +17,10 @@ class ConflictingDomain(Exception):
 
 
 def sanitize(content: str, type: str) -> str:
-    if (type in {"CNAME", "NS"}) and not content.rstrip().endswith("."):
-        content += "."
+    content = content.strip()
 
+    if (type == "CNAME") and not content.endswith("."):
+        content += "."
     if type == "TXT" and not content.startswith('"'):
         content = '"' + content
     if type == "TXT" and not content.endswith('"'):
@@ -72,7 +74,7 @@ class DNS:
         Modifies a DNS record for a given domain.
         Args:
             values (List[str]): A list of record values.
-            type (TYPES): The type of DNS record (e.g., A, CNAME, TXT, NS).
+            type (TYPES): The type of DNS record (e.g., A, CNAME, TXT).
             domain (str): The domain name for the DNS record.
             user_id (str): The ID of the user registering the domain
         Returns:
@@ -190,7 +192,7 @@ class DNS:
 
         return True
 
-    def register_multiple(self, domains: dict[str, DomainFormat], user_id: str) -> bool:
+    def register_multiple(self, domains: Mapping[str, DomainFormat], user_id: str) -> bool:
         """
         Registers a new DNS record for the specified domain.
         Args:

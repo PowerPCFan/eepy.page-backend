@@ -166,8 +166,9 @@ class Domain:
             is_domain_available: bool = self.dns_validation.is_free(
                 domain_name,
                 body.type,
-                session.user_cache_data["domains"],
-                user_is_admin=session.user_cache_data["permissions"]["admin"],
+                session.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
+                user_id=session.username,
+                user_is_admin=session.user_cache_data["permissions"].get("admin", False),
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -229,27 +230,41 @@ class Domain:
         if not self.dns_validation.record_value_valid(body.values, body.type):
             raise HTTPException(status_code=412, detail=f"Invalid value in {body.values}")
 
-        if not self.dns_validation.user_owns_domain(session.username, body.domain, session.user_cache_data):
+        if not self.dns_validation.user_owns_domain(
+            session.username,
+            body.domain,
+            body.old_type or body.type,
+            session.user_cache_data,
+        ):
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
-        domain_data = self.domains.get_domain(session.user_cache_data["domains"], body.domain)
+        domain_data = self.domains.get_domain(
+            session.user_cache_data["domains"],
+            body.domain,
+            body.old_type or body.type,
+        )
         if domain_data is None:
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
         old_type: str = domain_data["type"]
 
+        if (
+            body.type != old_type
+            and self.domains.get_domain(session.user_cache_data["domains"], body.domain, body.type)
+        ):
+            raise HTTPException(status_code=409, detail="Domain is already registered")
+
         db_thread = Thread(
-            target=self.domains.add_domain,
+            target=self.domains.modify_domain,
             args=(
                 session.username,
                 body.domain,
-                {
-                    "id": "None",
-                    "ip": body.values,
-                    "registered": round(time.time()),
-                    "type": body.type,
-                },
             ),
+            kwargs={
+                "value": body.values,
+                "type": body.type,
+                "old_type": old_type,
+            },
         )
         db_thread.start()
 
@@ -264,7 +279,7 @@ class Domain:
 
             if not success:
                 db_thread.join()
-                self.domains.delete_domain(session.user_cache_data["_id"], body.domain)
+                self.domains.delete_domain(session.user_cache_data["_id"], body.domain, body.type)
                 raise DNSException("Not successful", {"success": success})  # noqa: EM101, TRY003
 
         except DNSException:
@@ -285,8 +300,8 @@ class Domain:
         )  # pyright: ignore[reportReturnType]
 
     @Session.requires_auth
-    def delete(self, domain: str, session: Session = Depends(converter.create)) -> None:
-        if not self.domains.delete_domain(session.username, domain):
+    def delete(self, domain: str, type: str | None = None, session: Session = Depends(converter.create)) -> None:
+        if not self.domains.delete_domain(session.username, domain, type):
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",
@@ -295,7 +310,7 @@ class Domain:
         if not session.user_cache_data:
             return
 
-        domain_data = self.domains.get_domain(session.user_cache_data.get("domains"), domain)
+        domain_data = self.domains.get_domain(session.user_cache_data.get("domains"), domain, type)
         domain_type: str | None = domain_data["type"] if domain_data else None
 
         if domain_type is None:

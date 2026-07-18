@@ -1,2 +1,15 @@
 - possibly add back stuff that's in frii.site but I removed, such as Google OAuth
-- better admin tools would be nice like perhaps a web server that runs locally on the VPS / whatevers hosting backend and lets you do stuff like mass email sends, DB operations, manual DNS operations (although i have powerdns-admin for that), etc --- or i could integrate that into the existing admin tools
+- better admin tools would be nice:
+  - DB operations (AI-powered queries?)
+  - mass email sends
+  - DNS operations
+  - Account deletions/suspensions
+  - API key revocation
+  - Domain revocation
+  - User statistics dashboard
+  - Email sends for destructive user actions
+- a "half-admin" where people only have some admin perms
+  - also a "superuser" / "owner" role with the very highest level of permissions
+- abuse detection
+- status codes (they seem quite odd)
+- maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)

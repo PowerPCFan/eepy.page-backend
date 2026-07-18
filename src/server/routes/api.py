@@ -163,8 +163,9 @@ class API:
             is_domain_available: bool = self.dns_validation.is_free(
                 body.domain,
                 body.type,
-                api.user_cache_data["domains"],
-                user_is_admin=api.user_cache_data["permissions"]["admin"],
+                api.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
+                user_id=api.username,
+                user_is_admin=api.user_cache_data["permissions"].get("admin", False),
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -231,15 +232,30 @@ class API:
                 detail=f"Invalid value in {body.values}",
             )
 
-        if not self.dns_validation.user_owns_domain(api.username, body.domain):
+        if not self.dns_validation.user_owns_domain(
+            api.username,
+            body.domain,
+            body.old_type or body.type,
+            api.user_cache_data,
+        ):
             raise HTTPException(
                 status_code=403,
                 detail=f"You do not own the domain {body.domain}",
             )
 
-        domain_data = self.domains.get_domain(api.user_cache_data["domains"], body.domain)
+        domain_data = self.domains.get_domain(
+            api.user_cache_data["domains"],
+            body.domain,
+            body.old_type or body.type,
+        )
         if domain_data is None:
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
+
+        if (
+            body.type != domain_data["type"]
+            and self.domains.get_domain(api.user_cache_data["domains"], body.domain, body.type)
+        ):
+            raise HTTPException(status_code=409, detail="Domain is already registered")
 
         try:
             self.dns.modify_domain(
@@ -256,15 +272,12 @@ class API:
             print(e.json)
             raise HTTPException(status_code=500)
 
-        self.domains.add_domain(
+        self.domains.modify_domain(
             api.username,
             body.domain,
-            {
-                "id": "None",
-                "ip": body.values,
-                "registered": round(time.time()),
-                "type": body.type,
-            },
+            value=body.values,
+            type=body.type,
+            old_type=domain_data["type"],
         )
 
     @Api.requires_auth
@@ -284,7 +297,7 @@ class API:
                 )
             type = domain_data["type"]
 
-        if not self.domains.delete_domain(api.username, domain):
+        if not self.domains.delete_domain(api.username, domain, type):
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",

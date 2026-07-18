@@ -46,6 +46,7 @@ class TestDomainValidation:
 
     def test_invalid_type(self) -> None:
         assert not Validation.record_value_valid(["0.0.0.0"], "C")
+        assert not Validation.record_value_valid(["example.com"], "NS")
 
     def test_invalid_content_for_type(self) -> None:
         assert not Validation.record_value_valid(["test.cname.fi"], "A")
@@ -134,6 +135,29 @@ class TestDomainUser:
         assert Domains.get_domain(updated_user_data.get("domains", []), "test3.eepy.page") is not None
         domains.delete_domain(test_user["_id"], "test3.eepy.page")
 
+    def test_multi_type_record_support(self, domains: Domains, users: Users, test_user: UserType) -> None:
+        domains.add_domain(
+            test_user["_id"],
+            "multi-record.eepy.page",
+            {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
+        )
+        domains.add_domain(
+            test_user["_id"],
+            "multi-record.eepy.page",
+            {"id": None, "ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
+        )
+
+        updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
+        if updated_user_data is None:
+            pytest.fail("Could not retrieve new user data")
+
+        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page", "A") is not None
+        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page", "AAAA") is not None
+        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page") is None
+
+        domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "A")
+        domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "AAAA")
+
     def test_domain_not_free(self, validation: Validation, domains: Domains) -> None:
         assert not validation.is_free("test.eepy.page", "A", {}, raise_exceptions=False)
         assert not validation.is_free("test.unowned.eepy.page", "A", {}, raise_exceptions=False)
@@ -144,6 +168,31 @@ class TestDomainUser:
             validation.is_free("testwithouttld", "A", {})
 
         assert validation.is_free("test20.eepy.page", "A", {}, raise_exceptions=False)
+
+    def test_subtree_and_type_reservation(self, validation: Validation, test_user: UserType) -> None:
+        assert validation.is_free(
+            "testing-domains.eepy.page",
+            "AAAA",
+            test_user["domains"],  # pyright: ignore[reportArgumentType]
+            user_id=test_user["_id"],
+            raise_exceptions=False,
+        )
+
+        assert not validation.is_free(
+            "testing-domains.eepy.page",
+            "A",
+            test_user["domains"],  # pyright: ignore[reportArgumentType]
+            user_id=test_user["_id"],
+            raise_exceptions=False,
+        )
+
+        assert not validation.is_free(
+            "child.testing-domains.eepy.page",
+            "AAAA",
+            {},
+            user_id="different-user",
+            raise_exceptions=False,
+        )
 
     def test_domain_highest_detection(self, validation: Validation, domains: Domains) -> None:
         assert Validation.find_required_domain("a.b.eepy.page") == "b.eepy.page"

@@ -150,7 +150,7 @@ class Validation:
             all_valid = False
 
         for value in values:
-            if type.upper() in {"CNAME", "NS"}:
+            if type.upper() == "CNAME":
                 if not Validation.record_name_valid(value, type):
                     all_valid = False
 
@@ -222,12 +222,24 @@ class Validation:
 
         return required_domain if is_subdomain else None
 
-    def is_free(
+    @staticmethod
+    def domains_overlap(left: str, right: str) -> bool:
+        left_domain = Domains.canonical_full_domain_name(left)
+        right_domain = Domains.canonical_full_domain_name(right)
+
+        return (
+            left_domain == right_domain
+            or left_domain.endswith(f".{right_domain}")
+            or right_domain.endswith(f".{left_domain}")
+        )
+
+    def is_free(  # noqa: PLR0913
         self,
         name: str,
         type: str,
         domains: dict[str, DomainFormat],
         *,
+        user_id: str | None = None,
         user_is_admin: bool = False,
         raise_exceptions: bool = True,
     ) -> bool:
@@ -279,16 +291,13 @@ class Validation:
                 raise DNSException(msg, type_=type)
             return False
 
-        if canonical_domain in Domains.domain_map(domains):
-            logger.info(f"User already owns domain {canonical_domain}")
+        if Domains.get_domain(domains, canonical_domain, type) is not None:
+            logger.info(f"User already owns record {canonical_domain} {type}")
             return False
-
-        domain_label, _tld = Domains.separate_domain_into_parts(name)
-        canonical_domain_label = Domains.canonical_domain_name(domain_label)
 
         required_domain: str | None = Validation.find_required_domain(name)
 
-        if required_domain and required_domain not in Domains.domain_map(domains):
+        if required_domain and not Domains.has_domain(domains, required_domain):
             logger.warning(f"User does not own {required_domain}")
             if raise_exceptions:
                 msg = f"User doesn't own '{required_domain}'"
@@ -298,27 +307,17 @@ class Validation:
                 )
             return False
 
-        if (
-            len(
-                self.table.find_item(
-                    {
-                        "$or": [
-                            {"domains.name": canonical_domain},
-                            {f"domains.{canonical_domain.replace('.', '[dot]')}": {"$exists": True}},
-                            {f"domains.{canonical_domain_label.replace('.', '[dot]')}": {"$exists": True}},
-                        ],
-                    },
-                )
-                or [],
-            )
-            != 0
-        ):
-            logger.warning(f"Domain {canonical_domain} already exists in database")
+        for user in self.table.get_table():
+            if user_id is not None and user.get("_id") == user_id:
+                continue
 
-            if raise_exceptions:
-                msg = "Domain is already registered"
-                raise DomainExistsError(msg)
-            return False
+            for existing_domain in Domains.normalize_domains(user.get("domains", [])):
+                if Validation.domains_overlap(canonical_domain, existing_domain["name"]):
+                    logger.warning(f"Domain {canonical_domain} overlaps with {existing_domain['name']}")
+                    if raise_exceptions:
+                        msg = "Domain is already registered"
+                        raise DomainExistsError(msg)
+                    return False
 
         logger.info("Domain not found in database.")
 
@@ -328,6 +327,7 @@ class Validation:
         self,
         user_id: str,
         domain: str,
+        type: str | None = None,
         user: UserType | None = None,
     ) -> bool:
         """Returns whether user has a specfic domain owned. Can bee passed a user_id or user. If user_id is passed, a database lookup occurs.
@@ -350,7 +350,7 @@ class Validation:
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        return Domains.get_domain(user_data["domains"], domain) is not None
+        return Domains.get_domain(user_data["domains"], domain, type) is not None
 
     @staticmethod
     def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:

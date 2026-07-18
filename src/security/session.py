@@ -75,16 +75,6 @@ class RefreshTokenData(TypedDict):
 REFRESH_AMOUNT = 14 * 60 * 60 * 24
 ACCESS_AMOUNT = 900
 
-OldSessionType = TypedDict(
-    "OldSessionType",
-    {
-        "user-agent": str,
-        "ip": str,
-        "expires": int,
-        "id": str,
-    },
-)
-
 
 class NewSessionType(TypedDict):
     owner: str
