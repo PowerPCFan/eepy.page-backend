@@ -55,31 +55,26 @@ def load_user() -> UserType:
         "verified": True,
         "domains": {
             "testing-domains": {
-                "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
                 "registered": 1744103140,
             },
             "testing-domain2": {
-                "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
                 "registered": 1744103140,
             },
             "testing-domain3": {
-                "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
                 "registered": 1744103140,
             },
             "test1[dot]testing-domains": {
-                "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
                 "registered": 1744103140,
             },
             "test2[dot]testing-domains": {
-                "id": "629dc7ce719cc5b852a86faa9183bbe60",
                 "type": "A",
                 "ip": "192.168.100.1",
                 "registered": 1744103140,

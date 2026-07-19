@@ -54,7 +54,7 @@ class Referrals(Table):
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        if user.get("referral-code") is not None:
+        if user.get("referral-code"):
             msg = "User already has a referral code"
             raise ValueError(msg)
 

@@ -1,5 +1,3 @@
-# ruff: noqa: RUF029
-
 import datetime
 import logging
 import os

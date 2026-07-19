@@ -15,7 +15,6 @@ class DomainFormat(TypedDict):
     ip: list[str] | str
     registered: int | float
     type: TYPES
-    id: str | None
 
 
 class DomainRecord(DomainFormat):
@@ -89,7 +88,6 @@ class Domains(Users):
     def normalize_domain_record(domain: str, domain_data: DomainFormat) -> DomainRecord:
         return {
             "name": Domains.canonical_full_domain_name(domain),
-            "id": domain_data.get("id"),
             "type": get_rec_type(domain_data["type"].upper()),
             "ip": domain_data["ip"] if isinstance(domain_data["ip"], list) else [domain_data["ip"]],
             "registered": domain_data["registered"],
@@ -223,7 +221,6 @@ class Domains(Users):
             "ip": value if value is not None else domain_data["ip"],
             "registered": domain_data["registered"],
             "type": get_rec_type((type or domain_data["type"]).upper()),
-            "id": domain_data["id"],
         }
 
         self.table.update_one(

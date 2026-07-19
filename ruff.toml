@@ -37,15 +37,15 @@ ignore = [
 ]
 
 # enables latest rules (possibly unstable)
-preview = true
-explicit-preview-rules = false
+# preview = true
+# explicit-preview-rules = false
 
-# just using extend-ignore for preview rules so its somewhat separated and easier to read
-extend-ignore = [
-    "CPY001",  # Checks for copyright notice at the top of files
-    "DOC",     # More annoying docstring stuff (#TODO: be more specific with ignore cuz some might be useful)
-    "PLR6301"  # Checks for functions on classes that aren't using `self` and suggests staticmethod/classmethod/normal func - useful but causing fastapi issues
-]
+# # just using extend-ignore for preview rules so its somewhat separated and easier to read
+# extend-ignore = [
+#     "CPY001",  # Checks for copyright notice at the top of files
+#     "DOC",     # More annoying docstring stuff (#TODO: be more specific with ignore cuz some might be useful)
+#     "PLR6301"  # Checks for functions on classes that aren't using `self` and suggests staticmethod/classmethod/normal func - useful but causing fastapi issues
+# ]
 
 fixable = ["ALL"]
 unfixable = []

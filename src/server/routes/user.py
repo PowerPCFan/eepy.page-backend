@@ -417,7 +417,7 @@ class User:
                 logger.info("Account is already verified")
                 return
 
-        try:  # noqa: PLW0717
+        try:
             self.table.modify_document(
                 filter={"_id": code_status.get("account", None)},
                 operation="$set",

@@ -111,7 +111,7 @@ class TestDomainUser:
         domains.add_domain(
             test_user["_id"],
             "TEST.eepy.page",
-            {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
+            {"ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
         )  # type: ignore
         updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
         if updated_user_data is None:
@@ -120,11 +120,10 @@ class TestDomainUser:
         assert Domains.get_domain(updated_user_data.get("domains", []), "TEST.eepy.page") is not None
         assert Domains.get_domain(updated_user_data.get("domains", []), "test.eepy.page") is not None
 
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="domains.TEST3[dot]eepy[dot]page",
-            value={"ip": "0.0.0.0", "type": "A", "registered": time.time()},
+        domains.add_domain(
+            test_user["_id"],
+            "TEST3.eepy.page",
+            {"ip": "0.0.0.0", "type": "A", "registered": time.time()},
         )
 
         updated_user_data = users.find_user({"_id": test_user["_id"]})
@@ -139,12 +138,12 @@ class TestDomainUser:
         domains.add_domain(
             test_user["_id"],
             "multi-record.eepy.page",
-            {"id": None, "ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
+            {"ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
         )
         domains.add_domain(
             test_user["_id"],
             "multi-record.eepy.page",
-            {"id": None, "ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
+            {"ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
         )
 
         updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
@@ -169,11 +168,23 @@ class TestDomainUser:
 
         assert validation.is_free("test20.eepy.page", "A", {}, raise_exceptions=False)
 
-    def test_subtree_and_type_reservation(self, validation: Validation, test_user: UserType) -> None:
+    def test_subtree_and_type_reservation(
+        self,
+        validation: Validation,
+        domains: Domains,
+        test_user: UserType,
+    ) -> None:
+        domains.add_domain(
+            test_user["_id"],
+            "testing-domains.eepy.page",
+            {"ip": "192.168.100.1", "registered": time.time(), "type": "A"},
+        )
+        user_domains = domains.get_domains(test_user["_id"])
+
         assert validation.is_free(
             "testing-domains.eepy.page",
             "AAAA",
-            test_user["domains"],  # pyright: ignore[reportArgumentType]
+            user_domains,  # pyright: ignore[reportArgumentType]
             user_id=test_user["_id"],
             raise_exceptions=False,
         )
@@ -181,7 +192,7 @@ class TestDomainUser:
         assert not validation.is_free(
             "testing-domains.eepy.page",
             "A",
-            test_user["domains"],  # pyright: ignore[reportArgumentType]
+            user_domains,  # pyright: ignore[reportArgumentType]
             user_id=test_user["_id"],
             raise_exceptions=False,
         )

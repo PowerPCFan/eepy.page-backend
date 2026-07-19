@@ -215,7 +215,6 @@ class Domain:
             session.username,
             domain_name,
             {
-                "id": "None",
                 "type": body.type,
                 "ip": body.values,
                 "registered": round(time.time()),
@@ -249,7 +248,9 @@ class Domain:
         old_type: str = domain_data["type"]
 
         if body.type != old_type and self.domains.get_domain(
-            session.user_cache_data["domains"], body.domain, body.type
+            session.user_cache_data["domains"],
+            body.domain,
+            body.type,
         ):
             raise HTTPException(status_code=409, detail="Domain is already registered")
 
