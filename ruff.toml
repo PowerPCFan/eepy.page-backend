@@ -1,43 +1,11 @@
-# enables latest rules (possibly unstable)
-
-# commented out since i think its better under [lint] but
-# leaving it here just in case so i can remmeber what i changed
-
-# preview = true
-
 exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
-    ".pytest_cache",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "build",
-    "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
-    "src/tests/**",  # ignore tests (for now)
-    "scripts/**"
+    ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox",
+    ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode",
+    "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv",
+    "src/tests/**", "scripts/**"
 ]
 
 line-length = 120
-
 target-version = "py312"
 
 [lint]

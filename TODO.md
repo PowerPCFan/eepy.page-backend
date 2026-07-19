@@ -13,3 +13,4 @@
 - abuse detection
 - status codes (they seem quite odd)
 - maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)
+- possibly separate scripts/ stuff from this repo since thats not really related to the backend its just stuff for my vps atp

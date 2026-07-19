@@ -1,6 +1,16 @@
 #!/bin/bash
 
 IP="$1"
+
+# pretty janky, but we'll use the first argument as the update flag
+# if IP = "update", update the symlink and reload fail2ban
+if [ "$IP" = "update" ]; then
+  sudo rm -f /usr/local/bin/fail2ban-discord.sh
+  sudo ln -s /home/eepy/eepy.page-backend/scripts/fail2ban-discord.sh /usr/local/bin/fail2ban-discord.sh
+  sudo fail2ban-client reload
+  exit 0
+fi
+
 JAIL="$2"
 REASON="$3"
 DURATION="$4"
@@ -58,6 +68,11 @@ PAYLOAD=$(cat <<EOF
           "name": "Server",
           "value": "$(hostname)",
           "inline": true
+        },
+        {
+          "name": "AbuseIPDB Page",
+          "value": "https://www.abuseipdb.com/check/$IP",
+          "inline": false
         },
         {
           "name": "IP Info",
