@@ -22,8 +22,9 @@ class UserCanRegisterResult(NamedTuple):
     comment: str
 
 
-# TODO: possibly implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json
-# in the future
+# TODO: implement https://raw.githubusercontent.com/jedireza/reserved-subdomains/refs/heads/master/names.json
+
+REGEX = "regexp::"
 RESERVED_ROOT_LABELS: set[str] = {
     "abuse",
     "account",
@@ -83,13 +84,15 @@ RESERVED_ROOT_LABELS: set[str] = {
     "test",
     "webmail",
     "www",
-    "regexp::www[0-9]+",
+    f"{REGEX}www[0-9]+",
     "ns",
-    "regexp::ns[0-9]+",
-    "_acme-challenge",
-    "_dmarc",
-    "_domainkey",
-    "_smtp",
+    f"{REGEX}ns[0-9]+",
+    # "_acme-challenge",
+    # "_dmarc",
+    # "_domainkey",
+    # "_smtp",
+    # scratch that lets just block all underscore records
+    f"{REGEX}_.*",
 }
 
 
@@ -101,8 +104,8 @@ class Validation:
     @staticmethod
     def is_reserved_label(label: str) -> bool:
         for reserved_label in RESERVED_ROOT_LABELS:
-            if reserved_label.startswith("regexp::"):
-                pattern = reserved_label.removeprefix("regexp::")
+            if reserved_label.startswith(REGEX):
+                pattern = reserved_label.removeprefix(REGEX)
                 if re.fullmatch(pattern, label):
                     return True
                 continue
@@ -294,6 +297,19 @@ class Validation:
         if Domains.get_domain(domains, canonical_domain, type) is not None:
             logger.info(f"User already owns record {canonical_domain} {type}")
             return False
+
+        existing_records = [
+            record
+            for record in Domains.normalize_domains(domains)
+            if record["name"] == Domains.canonical_full_domain_name(canonical_domain)
+        ]
+        if type.upper() == "CNAME" or any(record["type"] == "CNAME" for record in existing_records):  # noqa: SIM102
+            if existing_records:
+                logger.info(f"Record type {type} conflicts at {canonical_domain}")
+                if raise_exceptions:
+                    msg_0 = "Domain record conflicts with an existing CNAME"
+                    raise DomainExistsError(msg_0)
+                return False
 
         required_domain: str | None = Validation.find_required_domain(name)
 

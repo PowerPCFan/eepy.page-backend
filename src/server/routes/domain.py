@@ -254,20 +254,6 @@ class Domain:
         ):
             raise HTTPException(status_code=409, detail="Domain is already registered")
 
-        db_thread = Thread(
-            target=self.domains.modify_domain,
-            args=(
-                session.username,
-                body.domain,
-            ),
-            kwargs={
-                "value": body.values,
-                "type": body.type,
-                "old_type": old_type,
-            },
-        )
-        db_thread.start()
-
         try:
             success = self.dns.modify_domain(
                 values=body.values,
@@ -278,15 +264,33 @@ class Domain:
             )
 
             if not success:
-                db_thread.join()
-                self.domains.delete_domain(session.user_cache_data["_id"], body.domain, body.type)
                 raise DNSException("Not successful", {"success": success})  # noqa: EM101, TRY003
 
         except DNSException:
             logger.exception("DNSException:")
             raise HTTPException(status_code=500)
 
-        db_thread.join()
+        try:
+            self.domains.modify_domain(
+                session.username,
+                body.domain,
+                value=body.values,
+                type=body.type,
+                old_type=old_type,
+            )
+        except ValueError:
+            logger.exception(f"Failed to update MongoDB record for {body.domain}")
+            try:
+                self.dns.modify_domain(
+                    values=domain_data["ip"],  # pyright: ignore[reportArgumentType]
+                    type=old_type,
+                    old_type=body.type,
+                    domain=body.domain,
+                    user_id=session.username,
+                )
+            except DNSException:
+                logger.exception(f"Failed to roll back DNS record for {body.domain}")
+            raise HTTPException(status_code=500, detail="Domain database update failed")
 
     @Session.requires_auth
     def get_domains(self, session: Session = Depends(converter.create)) -> DomainRetrieve:

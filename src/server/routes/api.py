@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 
 from database.exceptions import SubdomainError, UserNotExistError
-from database.tables.domains import DomainRecord
+from database.tables.domains import DomainRecord, Domains
 from database.tables.domains import Domains as DomainTable
 from database.tables.sessions import Sessions as SessionTable
 from database.tables.users import UserPageType
@@ -150,20 +150,22 @@ class API:
 
     @Api.requires_auth
     @Api.requires_permission("register")
-    def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:
-        can_user_register = self.dns_validation.can_user_register(
-            body.domain,
-            api.user_cache_data,
-        )
+    def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901
+        can_user_register = self.dns_validation.can_user_register(body.domain, api.user_cache_data)
+        tld = Domains.separate_domain_into_parts(body.domain)[-1]
+        user_owned_tlds = api.user_cache_data.get("owned-tlds", ["frii.site"])
+
+        if tld not in user_owned_tlds:
+            raise HTTPException(status_code=401, detail=f"User must purchase TLD {tld} before registering this domain")
 
         if not can_user_register.success:
             raise HTTPException(status_code=405, detail=can_user_register.comment)
 
         try:
             is_domain_available: bool = self.dns_validation.is_free(
-                body.domain,
-                body.type,
-                api.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
+                name=body.domain,
+                type=body.type,
+                domains=api.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
                 user_id=api.username,
                 user_is_admin=api.user_cache_data["permissions"].get("admin", False),
             )

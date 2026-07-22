@@ -161,8 +161,12 @@ class Domains(Users):
         result = self.table.update_one(
             {
                 "_id": target_user,
-                "domains.name": domain_record["name"],
-                "domains.type": domain_record["type"],
+                "domains": {
+                    "$elemMatch": {
+                        "name": domain_record["name"],
+                        "type": domain_record["type"],
+                    },
+                },
             },
             {"$set": {"domains.$": domain_record}},
         )
@@ -185,7 +189,7 @@ class Domains(Users):
         value: list[str] | str | None = None,
         type: TYPES | None = None,
         old_type: TYPES | None = None,
-    ) -> None:
+    ) -> bool:
         """Modifies domain in database
 
         Args:
@@ -223,14 +227,25 @@ class Domains(Users):
             "type": get_rec_type((type or domain_data["type"]).upper()),
         }
 
-        self.table.update_one(
+        result = self.table.update_one(
             {
                 "_id": target_user,
-                "domains.name": canonical_domain,
-                "domains.type": domain_data["type"],
+                "domains": {
+                    "$elemMatch": {
+                        "name": canonical_domain,
+                        "type": domain_data["type"],
+                    },
+                },
             },
             {"$set": {"domains.$": updated_domain_data}},
         )
+
+        if result.matched_count == 0:
+            logger.error(f"Failed to replace domain record {canonical_domain} for {target_user}")
+            msg_0 = "Domain record was not updated"
+            raise ValueError(msg_0)
+
+        return True
 
     def delete_domain(self, target_user: str, domain: str, type: str | None = None) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
