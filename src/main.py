@@ -20,7 +20,9 @@ if __name__ == "__main__":
             sys.exit(1)
 
         print("\n")
-        ipt = str(input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> "))
+        # ipt = str(input("Please enter the host and port you'd like to use (e.g. 0.0.0.0:8000) and press enter >>> "))
+        ipt = None
+        print("Bypassing user input...")
         host, port = (ipt or "127.0.0.1:8000").split(":")
         host_c = str(host).strip().lower()
         port_c = int(str(port).strip().lower())

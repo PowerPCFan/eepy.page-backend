@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Any
 
@@ -13,14 +12,15 @@ class Captcha:
 
     def verify(self, code: str, ip: str) -> bool:
         logger.info("Verifying captcha")
-        response = requests.post(
-            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-            data=json.dumps(
-                {"secret": self.turnstile_key, "response": code, "remoteip": ip},
-            ),
-            headers={"Content-Type": "application/json"},
-            timeout=5,
-        )
+        try:
+            response = requests.post(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                json={"secret": self.turnstile_key, "response": code, "remoteip": ip},
+                timeout=5,
+            )
+        except requests.RequestException:
+            logger.exception("Turnstile verification request failed")
+            return False
 
         try:
             data: dict[str, Any] = response.json()
