@@ -102,6 +102,7 @@ UserType = TypedDict(
         "permissions": dict,
         "verified": bool,
         "domains": Required[list["DomainRecord"] | dict[str, "DomainFormat"]],
+        "tunnel": NotRequired[dict[str, Any]],
         "feature-flags": NotRequired[dict[str, bool]],
         "api-keys": NotRequired[dict[str, "ApiType"]],
         "credits": NotRequired[int],

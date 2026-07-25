@@ -12,11 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import MongoClient
 
-from database.tables.cloudflare import Cloudflare
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
+from database.tables.serveo import ServeoTable
 from database.tables.sessions import Sessions
 from database.tables.status import Status
 from database.tables.users import Users
@@ -29,10 +29,10 @@ from security.session import SessionError, SessionPermissonError
 from server.routes.admin import Admin
 from server.routes.api import API
 from server.routes.auth import Auth
-from server.routes.cloudflare import CloudflareRoutes
 from server.routes.domain import Domain
 from server.routes.invite import Invite
 from server.routes.kofi import Kofi
+from server.routes.serveo import ServeoRoutes
 from server.routes.user import User
 
 start = time.time()
@@ -108,8 +108,8 @@ class VariableInitializer:
         self.domains: Domains = Domains(client)
         self.dns: DNS = DNS(self.domains)
 
-    def gather_cloudflare(self) -> None:
-        self.cloudflare: Cloudflare = Cloudflare(client)
+    def gather_serveo(self) -> None:
+        self.tunnels: ServeoTable = ServeoTable(client)
 
     def gather_status(self) -> None:
         self.status = Status(client)
@@ -123,7 +123,7 @@ threads: dict[str, threading.Thread] = {
     "invites": threading.Thread(target=v.gather_invites),
     "codes": threading.Thread(target=v.gather_codes),
     "domains": threading.Thread(target=v.gather_domains),
-    "cloudflare": threading.Thread(target=v.gather_cloudflare),
+    "tunnels": threading.Thread(target=v.gather_serveo),
     "status": threading.Thread(target=v.gather_status),
 }
 
@@ -134,10 +134,10 @@ for thread in threads.values():
 threads["users"].join()
 threads["domains"].join()
 threads["sessions"].join()
-threads["cloudflare"].join()
+threads["tunnels"].join()
 app.include_router(Domain(v.users, v.sessions, v.domains, v.dns).router)
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
-app.include_router(CloudflareRoutes(v.cloudflare, v.users, v.sessions, v.domains, v.dns).router)
+app.include_router(ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router)
 
 threads["invites"].join()
 app.include_router(Invite(v.users, v.sessions, v.invites).router)
