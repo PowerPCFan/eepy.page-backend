@@ -25,6 +25,78 @@ converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
+def register_domain_record(  # noqa: C901, PLR0912
+    domains: DomainTable,
+    dns: DNS,
+    dns_validation: Validation,
+    body: DomainType,
+    session: Session,
+) -> None:
+    domain_name = body.domain
+    if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
+        raise HTTPException(status_code=412, detail="Deprecated usage of register. Please pass the TLD!")
+
+    _, tld = domains.separate_domain_into_parts(domain_name)
+    if tld not in session.user_cache_data.get("owned-tlds", ["eepy.page"]):
+        raise HTTPException(status_code=401, detail=f"User must purchase {tld} before registering this domain")
+
+    can_user_register = dns_validation.can_user_register(domain_name, session.user_cache_data)
+    if not can_user_register.success:
+        raise HTTPException(status_code=405, detail=can_user_register.comment)
+
+    try:
+        is_domain_available: bool = dns_validation.is_free(
+            domain_name,
+            body.type,
+            session.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
+            user_id=session.username,
+            user_is_admin=session.user_cache_data["permissions"].get("admin", False),
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid record name")
+    except DNSException as e:
+        raise HTTPException(status_code=412, detail=f"Invalid type {e.type_}")
+    except SubdomainError as e:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You need to own {e.required_domain} before registering {domain_name}",
+        )
+    except DomainExistsError:
+        raise HTTPException(status_code=409, detail="Domain is already registered")
+    except ReservedDomainError:
+        raise HTTPException(status_code=409, detail="Domain is unavailable")
+
+    if not is_domain_available:
+        raise HTTPException(status_code=409, detail="Domain is not available")
+    try:
+        domain_exists_in_dns = dns.record_exists(domain_name, body.type)
+    except DNSException:
+        logger.exception("DNSException occurred while checking existing DNS records:")
+        raise HTTPException(status_code=500, detail="DNS availability check failed")
+
+    if domain_exists_in_dns:
+        raise HTTPException(status_code=409, detail="Domain is already registered")
+
+    try:
+        success = dns.register_domain(
+            domain_name,
+            body.values[0],
+            body.type,
+            f"Registered through website user: {session.username}",
+        )
+    except ConflictingDomain:
+        raise HTTPException(status_code=409, detail="Domain is already registered")
+    if not success:
+        logger.error("DNS registration failed")
+        raise HTTPException(status_code=500, detail="DNS Registration failed")
+
+    domains.add_domain(
+        session.username,
+        domain_name,
+        {"type": body.type, "ip": body.values, "registered": round(time.time())},
+    )
+
+
 class Domain:
     def __init__(
         self,
@@ -143,83 +215,8 @@ class Domain:
         logger.info("Initialized")
 
     @Session.requires_auth
-    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:  # noqa: C901, PLR0912
-        domain_name = body.domain
-
-        if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
-            raise HTTPException(status_code=412, detail="Deprecated usage of register. Please pass the TLD!")
-
-        _, tld = self.domains.separate_domain_into_parts(domain_name)
-
-        if tld not in session.user_cache_data.get("owned-tlds", ["eepy.page"]):
-            raise HTTPException(
-                status_code=401,
-                detail=f"User must purchase {tld} before registering this domain",
-            )
-
-        can_user_register = self.dns_validation.can_user_register(domain_name, session.user_cache_data)
-
-        if not can_user_register.success:
-            raise HTTPException(status_code=405, detail=can_user_register.comment)
-
-        try:
-            is_domain_available: bool = self.dns_validation.is_free(
-                domain_name,
-                body.type,
-                session.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
-                user_id=session.username,
-                user_is_admin=session.user_cache_data["permissions"].get("admin", False),
-            )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid record name")
-        except DNSException as e:
-            raise HTTPException(status_code=412, detail=f"Invalid type {e.type_}")
-        except SubdomainError as e:
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need to own {e.required_domain} before registering {domain_name}",
-            )
-        except DomainExistsError:
-            raise HTTPException(status_code=409, detail="Domain is already registered")
-        except ReservedDomainError:
-            # use slightly more generic message than saying its reserved
-            raise HTTPException(status_code=409, detail="Domain is unavailable")
-
-        if not is_domain_available:
-            raise HTTPException(status_code=409, detail="Domain is not available")
-
-        try:
-            domain_exists_in_dns = self.dns.record_exists(domain_name, body.type)
-        except DNSException:
-            logger.exception("DNSException occurred while checking existing DNS records:")
-            raise HTTPException(status_code=500, detail="DNS availability check failed")
-
-        if domain_exists_in_dns:
-            raise HTTPException(status_code=409, detail="Domain is already registered")
-
-        try:
-            success = self.dns.register_domain(
-                domain_name,
-                body.values[0],
-                body.type,
-                f"Registered through website user: {session.username}",
-            )
-        except ConflictingDomain:
-            raise HTTPException(status_code=409, detail="Domain is already registered")
-
-        if not success:
-            logger.error("DNS registration failed")
-            raise HTTPException(status_code=500, detail="DNS Registration failed")
-
-        self.domains.add_domain(
-            session.username,
-            domain_name,
-            {
-                "type": body.type,
-                "ip": body.values,
-                "registered": round(time.time()),
-            },
-        )
+    def register(self, body: DomainType, session: Session = Depends(converter.create)) -> None:
+        register_domain_record(self.domains, self.dns, self.dns_validation, body, session)
 
     @Session.requires_auth
     def modify(self, body: DomainType, session: Session = Depends(converter.create)) -> None:
@@ -344,7 +341,6 @@ class Domain:
                     old_type="TXT",
                     domain=f"_vercel{user_stuff.get('tld', '')}",
                     user_id=user_id,
-                    ttl=60,
                 )
                 self.current_queue_user = user_id
 

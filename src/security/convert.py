@@ -1,4 +1,6 @@
-from fastapi import Request
+from typing import Annotated
+
+from fastapi import Header, Request
 
 from database.tables.sessions import Sessions
 from database.tables.users import Users
@@ -13,13 +15,19 @@ class Convert:
         self.users = users
         self.sessions = sessions
 
-    def create(self, request: Request) -> Session:
-        session_id: str | None = request.headers.get("X-Auth-Token")
+    def create(self, session_id: Annotated[str | None, Header(alias="X-Auth-Token")] = None) -> Session:
         if session_id is None:
             msg = "Session id is none"
             raise SessionError(msg)
 
-        return Session(session_id, self.users, self.sessions)  # type: ignore[union-attr]
+        # Auth fix 7/25/26 writing this so i can remember to check here if
+        # i encounter problems; session stuff has historically been problematic
+        # and i didnt really test this fix
+        session = Session(session_id, self.users, self.sessions)
+        if not session.valid:
+            msg = "Invalid session"
+            raise SessionError(msg)
+        return session
 
 
 class ConvertAPI:

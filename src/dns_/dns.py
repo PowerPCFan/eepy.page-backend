@@ -60,7 +60,7 @@ class DNS:
 
         return False
 
-    def modify_domain(  # noqa: PLR0913
+    def modify_domain(
         self,
         *,
         values: list[str],
@@ -68,7 +68,6 @@ class DNS:
         old_type: str,
         domain: str,
         user_id: str,
-        ttl: int = 240,
     ) -> bool:
         """
         Modifies a DNS record for a given domain.
@@ -98,7 +97,7 @@ class DNS:
         rrset: RRSet = {
             "changetype": "REPLACE",
             "name": name + f".{tld}.",
-            "ttl": ttl,
+            "ttl": 300,
             "type": type,
             "records": [],
         }
@@ -164,7 +163,7 @@ class DNS:
                         {
                             "name": name + f".{tld}.",
                             "type": type,
-                            "ttl": 3400,
+                            "ttl": 300,
                             "changetype": "REPLACE",
                             "records": [
                                 {
@@ -215,7 +214,7 @@ class DNS:
             rrset: RRSet = {
                 "name": name + f".{tld}.",
                 "type": values["type"],
-                "ttl": 3400,
+                "ttl": 300,
                 "changetype": "REPLACE",
                 "records": [],
             }
