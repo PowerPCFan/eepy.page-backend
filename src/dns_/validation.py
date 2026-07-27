@@ -10,6 +10,7 @@ from database.tables.domains import DomainFormat, Domains
 from database.tables.users import UserType
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
+from security.admin_permissions import get_account_limits
 
 if TYPE_CHECKING:
     from dns_.dns import DNS
@@ -395,8 +396,9 @@ class Validation:
             f"User has {subdomain_amount} subdomains and {user_domain_amount} domains",
         )
 
-        user_max_domains = user.get("permissions", {}).get("max-domains", 3)
-        user_max_subdomains = user.get("permissions", {}).get("max-subdomains", 5)
+        limits = get_account_limits(user)  # pyright: ignore[reportArgumentType]
+        user_max_domains = limits["max-domains"]
+        user_max_subdomains = limits["max-subdomains"]
 
         if not is_subdomain and user_domain_amount >= user_max_domains:
             return UserCanRegisterResult(success=False, comment="Domain limit exceeded")

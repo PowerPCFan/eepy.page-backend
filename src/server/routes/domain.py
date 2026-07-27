@@ -17,6 +17,7 @@ from dns_.dns import DNS, ConflictingDomain
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import AVAILABLE_TLDS
 from dns_.validation import Validation
+from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.session import Session
 from server.routes.models.domain import DomainRetrieve, DomainType
@@ -50,7 +51,7 @@ def register_domain_record(  # noqa: C901, PLR0912
             body.type,
             session.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
             user_id=session.username,
-            user_is_admin=session.user_cache_data["permissions"].get("admin", False),
+            user_is_admin=admin_is_enabled(session.user_cache_data),  # pyright: ignore[reportArgumentType]
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid record name")

@@ -15,6 +15,7 @@ import pyotp
 from jwt import DecodeError, ExpiredSignatureError, InvalidSignatureError
 
 from database.exceptions import UserNotExistError
+from security.admin_permissions import get_admin_permissions, get_feature_permissions
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
@@ -161,11 +162,7 @@ class Session:
         if not self.valid:
             return []
 
-        return [
-            permission
-            for permission in self.user_cache_data["permissions"]
-            if self.user_cache_data["permissions"].get(permission, True) is not False
-        ]
+        return get_admin_permissions(self.user_cache_data) + get_feature_permissions(self.user_cache_data)  # pyright: ignore[reportArgumentType]
 
     def __get_flags(self) -> list[str]:
         if not self.valid:

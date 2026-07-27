@@ -146,7 +146,7 @@ class TestCreation:
 valid_session = MagicMock(spec=Session)
 valid_session.valid = True
 
-valid_session.permissions = ["admin"]
+valid_session.permissions = ["userdetails"]
 valid_session.flags = ["store"]
 
 invalid_session = MagicMock(spec=Session)
@@ -181,7 +181,7 @@ def test_requires_auth_invalid_session() -> None:
 
 
 def test_requires_perms_valid() -> None:
-    @Session.requires_permission("admin")
+    @Session.requires_permission("userdetails")
     def mock_function(session) -> str:
         return "Executed"
 

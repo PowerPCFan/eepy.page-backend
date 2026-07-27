@@ -51,7 +51,11 @@ def load_user() -> UserType:
         },
         "created": 1715875251,
         "last-login": 1743929055,
-        "permissions": {"max-domains": 3, "max-subdomains": 2},
+        "permissions": {
+            "admin": {"enabled": False, "permissions": {}},
+            "limits": {"max-domains": 3, "max-subdomains": 2},
+            "features": {"invite": False},
+        },
         "verified": True,
         "domains": {
             "testing-domains": {

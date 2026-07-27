@@ -225,10 +225,17 @@ class Admin:
                 f"Account permission changed ({permission}: {new_value})",
             )
 
+            if permission in {"max-domains", "max-subdomains"}:
+                key = f"permissions.limits.{permission}"
+            elif permission == "enabled":
+                key = "permissions.admin.enabled"
+            else:
+                key = f"permissions.admin.permissions.{permission}"
+
             self.users.modify_document(
                 filter={"_id": user_id},
                 operation="$set",
-                key=f"permissions.{permission}",
+                key=key,
                 value=new_value,
             )
 

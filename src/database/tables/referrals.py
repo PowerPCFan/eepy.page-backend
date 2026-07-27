@@ -116,7 +116,7 @@ class Referrals(Table):
         logger.info(f"Updating user {referral['owner']} max domains")
         self.users.table.update_one(
             {"_id": referral["owner"]},
-            {"$inc": {"permissions.max-domains": 1, "referred-count": 1}},
+            {"$inc": {"permissions.limits.max-domains": 1, "referred-count": 1}},
         )
 
         self.modify_document(

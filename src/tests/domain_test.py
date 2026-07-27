@@ -331,7 +331,7 @@ class TestDomainUser:
         users.modify_document(
             filter={"_id": test_user["_id"]},
             operation="$set",
-            key="permissions.max-domains",
+            key="permissions.limits.max-domains",
             value=0,
         )
 
@@ -347,7 +347,7 @@ class TestDomainUser:
         users.modify_document(
             filter={"_id": test_user["_id"]},
             operation="$set",
-            key="permissions.max-subdomains",
+            key="permissions.limits.max-subdomains",
             value=0,
         )
 
@@ -364,13 +364,13 @@ class TestDomainUser:
         users.modify_document(
             filter={"_id": test_user["_id"]},
             operation="$set",
-            key="permissions.max-subdomains",
+            key="permissions.limits.max-subdomains",
             value=50,
         )
 
         users.modify_document(
             filter={"_id": test_user["_id"]},
             operation="$set",
-            key="permissions.max-domains",
+            key="permissions.limits.max-domains",
             value=3,
         )

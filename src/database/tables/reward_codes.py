@@ -33,7 +33,7 @@ class Rewards(Table):
     def create(self, email: str, rewards: dict) -> str:
         """Creates a new reward code
 
-        :param rewards: a mongodb mapping which specifies what properties to change. Eg: `{"$set": {"permissions.wildcards": True}}`
+        :param rewards: a mongodb mapping which specifies what properties to change. Eg: `{"$set": {"admin.permissions.wildcards": True}}`
         :type rewards: dict
         """  # noqa: E501
 

@@ -8,3 +8,7 @@ class BanUser(BaseModel):
 
 class IpFind(BaseModel):
     ips: list[str]
+
+
+class UserAction(BaseModel):
+    user_id: str

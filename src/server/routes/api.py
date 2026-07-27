@@ -13,6 +13,7 @@ from database.tables.users import Users as UsersTable
 from dns_.dns import DNS
 from dns_.exceptions import DNSException, DomainExistsError
 from dns_.validation import Validation
+from security.admin_permissions import admin_is_enabled
 from security.api import Api, ApiPermission
 from security.convert import ConvertAPI
 from server.routes.models.domain import DomainType
@@ -167,7 +168,7 @@ class API:
                 type=body.type,
                 domains=api.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
                 user_id=api.username,
-                user_is_admin=api.user_cache_data["permissions"].get("admin", False),
+                user_is_admin=admin_is_enabled(api.user_cache_data),  # pyright: ignore[reportArgumentType]
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")

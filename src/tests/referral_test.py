@@ -35,7 +35,7 @@ class TestReferrals:
         with pytest.raises(ValueError):
             users.referrals.use(test_user, "nice-code2")
 
-        current_max_domains = test_user["permissions"]["max-domains"]
+        current_max_domains = test_user["permissions"]["limits"]["max-domains"] # pyright: ignore[reportTypedDictNotRequiredAccess]
         modified_user: UserType = users.find_user({"_id": test_user["_id"]})  # type: ignore
 
-        assert modified_user["permissions"]["max-domains"] == current_max_domains + 1
+        assert modified_user["permissions"]["limits"]["max-domains"] == current_max_domains + 1 # pyright: ignore[reportTypedDictNotRequiredAccess]

@@ -99,7 +99,7 @@ UserType = TypedDict(
         "accessed-from": NotRequired[list[str]],
         "created": int,  # Epoch timestamp
         "last-login": int,  # Epoch timestamp
-        "permissions": dict,
+        "permissions": NotRequired[dict[str, Any]],
         "verified": bool,
         "domains": Required[list["DomainRecord"] | dict[str, "DomainFormat"]],
         "tunnels": NotRequired[list[dict[str, Any]]],
@@ -221,10 +221,17 @@ class Users(Table):
             "created": time_signed_up,
             "last-login": round(time.time()),
             "permissions": {
-                "max-domains": 3,
-                "max-subdomains": 5,
-                "invite": False,
-                "admin": False,
+                "admin": {
+                    "enabled": False,
+                    "permissions": {},
+                },
+                "limits": {
+                    "max-domains": 3,
+                    "max-subdomains": 5,
+                },
+                "features": {
+                    "invite": False,
+                },
             },
             "feature-flags": {},
             "verified": bool(skip_verification),
@@ -247,7 +254,7 @@ class Users(Table):
         if refer_code:
             if self.referrals.check(refer_code):
                 logger.info("User was referred, adding extra domain")
-                account_data["permissions"]["max-domains"] += 1
+                account_data["permissions"]["limits"]["max-domains"] += 1
                 account_data["referred-by"] = refer_code
             else:
                 logger.warning("Invalid referral code!")
@@ -334,7 +341,7 @@ class Users(Table):
             "domains": user_data["domains"],
             "lang": user_data["lang"],
             "last_login": user_data["last-login"],
-            "permissions": user_data["permissions"],
+            "permissions": user_data.get("permissions", {}),
             "verified": user_data["verified"],
         }
 
