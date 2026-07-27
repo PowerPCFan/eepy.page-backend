@@ -41,9 +41,17 @@ class Api:
     def find_api_instance(args: tuple, kwargs: dict) -> Api | None:
         """Finds session from args or kwargs."""
 
-        return kwargs.get("api") or next(
-            (arg for arg in args if isinstance(arg, Api)),
-            None,
+        return (
+            kwargs.get("api")
+            or kwargs.get("_api")
+            or next(
+                (val for val in kwargs.values() if isinstance(val, Api)),
+                None,
+            )
+            or next(
+                (arg for arg in args if isinstance(arg, Api)),
+                None,
+            )
         )
 
     @staticmethod

@@ -609,9 +609,17 @@ class Session:
     @staticmethod
     def find_session_instance(args: tuple, kwargs: dict) -> Session | None:
         """Finds session from args or kwargs."""
-        return kwargs.get("session") or next(
-            (arg for arg in args if isinstance(arg, Session)),
-            None,
+        return (
+            kwargs.get("session")
+            or kwargs.get("_session")
+            or next(
+                (val for val in kwargs.values() if isinstance(val, Session)),
+                None,
+            )
+            or next(
+                (arg for arg in args if isinstance(arg, Session)),
+                None,
+            )
         )
 
     @staticmethod

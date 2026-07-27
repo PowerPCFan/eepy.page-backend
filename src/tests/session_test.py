@@ -162,6 +162,15 @@ def test_requires_auth_valid_session() -> None:
     assert result == "Executed"
 
 
+def test_requires_auth_underscore_session() -> None:
+    @Session.requires_auth
+    def mock_function(_session) -> str:
+        return "Executed"
+
+    result = mock_function(_session=valid_session)
+    assert result == "Executed"
+
+
 def test_requires_auth_invalid_session() -> None:
     @Session.requires_auth
     def mock_function(session) -> str:
