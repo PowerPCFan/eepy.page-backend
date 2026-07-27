@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from database.tables.domains import Domains
+from database.tables.domains import DomainRecord, Domains
 from database.tables.users import Users, UserType
 from dns_.dns import sanitize
 from dns_.validation import Validation
@@ -156,6 +156,33 @@ class TestDomainUser:
 
         domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "A")
         domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "AAAA")
+
+    def test_re_registering_record_does_not_create_duplicate(self, domains: Domains, users: Users, test_user: UserType) -> None:
+        domains.add_domain(
+            test_user["_id"],
+            "duplicate-check.eepy.page",
+            {"ip": "sample-value", "registered": round(time.time()), "type": "TXT"},
+        )
+        domains.add_domain(
+            test_user["_id"],
+            "duplicate-check.eepy.page",
+            {"ip": "updated-value", "registered": round(time.time()), "type": "TXT"},
+        )
+
+        updated_user_data = users.find_user({"_id": test_user["_id"]})
+        if updated_user_data is None:
+            pytest.fail("Could not retrieve new user data")
+
+        normalized_domains = Domains.normalize_domains(updated_user_data["domains"])
+        records: list[DomainRecord] = [
+            record
+            for record in normalized_domains
+            if record["name"] == "duplicate-check.eepy.page" and record["type"] == "TXT"
+        ]
+        assert len(records) == 1
+        assert records[0]["ip"] == ["updated-value"]
+
+        domains.delete_domain(test_user["_id"], "duplicate-check.eepy.page", "TXT")
 
     def test_cname_conflicts_with_other_record_types(
         self,

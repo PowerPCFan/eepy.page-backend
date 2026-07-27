@@ -172,7 +172,20 @@ class Domains(Users):
         )
 
         if result.matched_count == 0:
-            self.table.update_one({"_id": target_user}, {"$push": {"domains": domain_record}})
+            self.table.update_one(
+                {
+                    "_id": target_user,
+                    "domains": {
+                        "$not": {
+                            "$elemMatch": {
+                                "name": domain_record["name"],
+                                "type": domain_record["type"],
+                            },
+                        },
+                    },
+                },
+                {"$push": {"domains": domain_record}},
+            )
 
     def get_domains(self, target_user: str) -> list[DomainRecord]:
         user_data: UserType | None = self.find_user({"_id": target_user})
