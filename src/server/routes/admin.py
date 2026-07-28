@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import get_args
 
+import jwt
 import requests
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
@@ -13,6 +14,7 @@ from fastapi.exceptions import HTTPException
 from database.exceptions import UserNotExistError
 from database.tables.sessions import Sessions
 from database.tables.users import Users, UserType
+from dns_.dns import sanitize
 from dns_.exceptions import DNSException
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 from security.admin import AccountData, DomainDeletionError
@@ -21,7 +23,7 @@ from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.encryption import Encryption
 from security.session import Session
-from server.routes.models.admin import BanUser, IpFind, UserAction
+from server.routes.models.admin import AdminDomainEdit, BanUser, IpFind, ManualLoginTermination, UserAction
 
 MAX_SAFE_32BIT_INT = 2**31 - 1
 
@@ -49,6 +51,33 @@ class Admin:
             methods=["DELETE"],
             responses={
                 200: {"description": "Domain deleted"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/domain/detail",
+            self.domain_detail,
+            methods=["GET"],
+            responses={
+                200: {"description": "Domain details returned"},
+                404: {"description": "User or domain not found"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/domain/edit",
+            self.edit_domain,
+            methods=["PATCH"],
+            responses={
+                200: {"description": "Domain updated"},
+                404: {"description": "User or domain not found"},
+                412: {"description": "Invalid domain name or value"},
                 460: {"description": "Invalid session"},
                 461: {"description": "Invalid permissions"},
             },
@@ -246,6 +275,19 @@ class Admin:
         )
 
         self.router.add_api_route(
+            "/user/manual-login/terminate",
+            self.terminate_manual_login,
+            methods=["POST"],
+            responses={
+                200: {"description": "Manual login session terminated"},
+                404: {"description": "Manual login session not found"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
             "/dns/desync",
             self.find_desync,
             methods=["GET"],
@@ -263,7 +305,7 @@ class Admin:
             raise HTTPException(status_code=404, detail="User not found")
 
         try:
-            status = self.admin_tools.ban_user(body.reasons, user_data)
+            status = self.admin_tools.ban_user(body.reasons, user_data, send_email=body.send_email)
         except DomainDeletionError:
             raise HTTPException(status_code=503, detail="Failed to delete domains")
 
@@ -275,10 +317,11 @@ class Admin:
     def reinstate_user(
         self,
         user_id: str,
+        send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
         try:
-            self.admin_tools.reinstate_user(user_id)
+            self.admin_tools.reinstate_user(user_id, send_email=send_email)
         except UserNotExistError:
             raise HTTPException(status_code=404, detail="User not found")
         except ValueError:
@@ -293,6 +336,7 @@ class Admin:
         domain: str,
         userid: str,
         reason: str,
+        send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
         target_user = self.admin_tools.get_user_details_by_id(userid)
@@ -311,17 +355,107 @@ class Admin:
 
         if dns_success:
             if self.admin_tools.domains.delete_domain(userid, domain):
-                self.admin_tools.email.send_domain_termination_email(
-                    email,
-                    self.admin_tools.domains.display_domain_name(domain),
-                    reason,
-                )
+                if send_email:
+                    self.admin_tools.email.send_domain_termination_email(
+                        email,
+                        self.admin_tools.domains.display_domain_name(domain),
+                        reason,
+                    )
                 logger.info(f"Deleted domain {domain}")
             else:
                 logger.warning("Failed to delete domain (DB)")
         else:
             logger.warning("Failed to delete domain (DNS)")
             raise HTTPException(status_code=500, detail="Failed to delete domain")
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="userdetails")
+    def domain_detail(
+        self,
+        user_id: str,
+        domain: str,
+        type: str | None = None,
+        session: Session = Depends(converter.create),
+    ) -> dict[str, object]:
+        user = self.users.find_user({"_id": user_id}, find_banned=True)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        domain_data = self.admin_tools.domains.get_domain(user.get("domains"), domain, type)
+        if domain_data is None:
+            raise HTTPException(status_code=404, detail="Domain not found")
+
+        return {"user_id": user_id, "domain": domain_data}
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="dns")
+    def edit_domain(  # noqa: C901, PLR0912
+        self,
+        body: AdminDomainEdit,
+        session: Session = Depends(converter.create),
+    ) -> dict[str, object]:
+        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        values = [value.strip() for value in body.values]
+        if not values or any(value == "" for value in values):
+            raise HTTPException(status_code=412, detail="At least one non-empty value is required")
+        if not self.admin_tools.dns_validation.record_name_valid(body.domain, body.type):
+            raise HTTPException(status_code=412, detail=f"Invalid domain name {body.domain}")
+        if not self.admin_tools.dns_validation.record_value_valid(values, body.type):
+            raise HTTPException(status_code=412, detail=f"Invalid value in {values}")
+
+        domain_data = self.admin_tools.domains.get_domain(user.get("domains"), body.domain, body.old_type or body.type)
+        if domain_data is None:
+            raise HTTPException(status_code=404, detail="Domain not found")
+        if (
+            body.type != domain_data["type"]
+            and self.admin_tools.domains.get_domain(user.get("domains"), body.domain, body.type) is not None
+        ):
+            raise HTTPException(status_code=409, detail="Domain is already registered with that type")
+
+        if body.mode in {"both", "pdns"}:
+            try:
+                if not self.admin_tools.dns.modify_domain(
+                    values=values,
+                    type=body.type,
+                    old_type=domain_data["type"],
+                    domain=body.domain,
+                    user_id=body.user_id,
+                ):
+                    msg = "Not successful"
+                    raise DNSException(msg, {"success": False})
+            except DNSException as error:
+                logger.exception("Admin DNS domain edit failed")
+                raise HTTPException(status_code=500, detail="PowerDNS domain update failed") from error
+
+        if body.mode in {"both", "mongo"}:
+            try:
+                self.admin_tools.domains.modify_domain(
+                    body.user_id,
+                    body.domain,
+                    value=values,
+                    type=body.type,
+                    old_type=domain_data["type"],
+                )
+            except ValueError as error:
+                logger.exception("Admin MongoDB domain edit failed")
+                if body.mode == "both":
+                    try:
+                        raw: list[str] | str = domain_data["ip"]
+                        self.admin_tools.dns.modify_domain(
+                            values=raw if isinstance(raw, list) else [raw],
+                            type=domain_data["type"],
+                            old_type=body.type,
+                            domain=body.domain,
+                            user_id=body.user_id,
+                        )
+                    except DNSException:
+                        logger.exception("Admin domain edit rollback failed")
+                raise HTTPException(status_code=500, detail="MongoDB domain update failed") from error
+
+        return {"user_id": body.user_id, "domain": body.domain, "type": body.type, "mode": body.mode}
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
@@ -431,9 +565,10 @@ class Admin:
         id: str,
         permission: str,
         value: bool | int | str,
+        send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
-        if not self.admin_tools.change_permission(id, permission, value):
+        if not self.admin_tools.change_permission(id, permission, value, send_email=send_email):
             raise HTTPException(status_code=404, detail="User not found")
 
     @Session.requires_auth
@@ -483,6 +618,8 @@ class Admin:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
+        original_metadata = {field: user.get(field) for field in ("accessed-from", "last-login") if field in user}
+
         status = Session.create(
             username=body.user_id,
             real_username=None,
@@ -496,10 +633,61 @@ class Admin:
         if not status.get("success") or not status.get("access_token") or not status.get("refresh_token"):
             raise HTTPException(status_code=500, detail="Failed to create manual login session")
 
+        refresh_token = status["refresh_token"] or ""
+        refresh_id = jwt.decode(
+            refresh_token,
+            options={"verify_signature": False, "verify_exp": False},
+        )["jti"]
+        self.sessions.table.update_one(
+            {"_id": refresh_id},
+            {"$set": {"manual-login": {"user-id": body.user_id, "metadata": original_metadata}}},
+        )
+
         return {
-            "access_token": status["access_token"],
-            "refresh_token": status["refresh_token"],
+            "access_token": status["access_token"] or "",
+            "refresh_token": refresh_token,
         }  # pyright: ignore[reportReturnType]
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="account")
+    def terminate_manual_login(
+        self,
+        body: ManualLoginTermination,
+        session: Session = Depends(converter.create),
+    ) -> None:
+        try:
+            refresh_id = jwt.decode(
+                body.refresh_token,
+                options={"verify_signature": False, "verify_exp": False},
+            )["jti"]
+        except (jwt.InvalidTokenError, KeyError, TypeError):
+            raise HTTPException(status_code=404, detail="Manual login session not found")
+
+        session_data = self.sessions.get_session(refresh_id)
+        manual_login = session_data.get("manual-login") if session_data else None
+        if not isinstance(manual_login, Mapping) or manual_login.get("user-id") != body.user_id:
+            raise HTTPException(status_code=404, detail="Manual login session not found")
+
+        metadata = manual_login.get("metadata", {})
+        if isinstance(metadata, Mapping):
+            restore: dict[str, object] = {}
+            unset: dict[str, str] = {}
+            for field in ("accessed-from", "last-login"):
+                if field in metadata:
+                    restore[field] = metadata[field]
+                else:
+                    unset[field] = ""
+
+            update: dict[str, dict[str, object] | dict[str, str]] = {}
+            if restore:
+                update["$set"] = restore
+            if unset:
+                update["$unset"] = unset
+            if update:
+                self.users.table.update_one({"_id": body.user_id}, update)
+
+        if not self.sessions.delete_session_pair(refresh_id):
+            raise HTTPException(status_code=404, detail="Manual login session not found")
 
     @Session.requires_auth
     @Session.requires_permission(permission="dns")
@@ -535,7 +723,9 @@ class Admin:
                 values = [raw_values] if isinstance(raw_values, str) else raw_values
                 if not isinstance(values, Iterable) or isinstance(values, (bytes, Mapping)):
                     continue
-                normalized = tuple(sorted(value for value in values if isinstance(value, str)))
+                normalized = tuple(
+                    sorted(sanitize(value, record_type) for value in values if isinstance(value, str)),
+                )
                 key = (self.admin_tools.domains.canonical_full_domain_name(name), record_type)
                 mongo_records[key].append(normalized)
                 owners[key].add(user_id)
@@ -568,7 +758,9 @@ class Admin:
                         if isinstance(record, Mapping) and isinstance(record.get("content"), str):
                             values.append(record["content"])
                     key = (name.rstrip(".").lower(), record_type)
-                    powerdns_records[key].append(tuple(sorted(values)))
+                    powerdns_records[key].append(
+                        tuple(sorted(sanitize(value, record_type) for value in values)),
+                    )
         except requests.RequestException as error:
             raise HTTPException(status_code=503, detail="PowerDNS request failed") from error
 
@@ -604,12 +796,13 @@ class Admin:
         self,
         id: str,
         tld: str,
+        send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.add_domain(id, tld)  # pyright: ignore[reportArgumentType]
+        self.admin_tools.add_domain(id, tld, send_email=send_email)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="manage-permissions")
@@ -617,12 +810,13 @@ class Admin:
         self,
         id: str,
         tld: str,
+        send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
         if tld not in get_args(AVAILABLE_TLDS):
             raise HTTPException(status_code=412, detail=f"Invalid TLD {tld}")
 
-        self.admin_tools.remove_domain(id, tld)  # pyright: ignore[reportArgumentType]
+        self.admin_tools.remove_domain(id, tld, send_email=send_email)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")

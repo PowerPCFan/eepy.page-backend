@@ -9,6 +9,7 @@ from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
 from dns_.types import AVAILABLE_TLDS, TYPES
+from dns_.validation import Validation
 from mail.email import Email
 from security.encryption import Encryption
 
@@ -47,6 +48,7 @@ class Admin:
         self.users = users_table
         self.domains = domains
         self.dns = dns
+        self.dns_validation = Validation(domains, dns)
         self.email = mail
         self.sessions = sessions_table
 
@@ -62,7 +64,7 @@ class Admin:
         thread.start()
         return thread
 
-    def ban_user(self, reasons: list[str], user_data: UserType) -> bool:
+    def ban_user(self, reasons: list[str], user_data: UserType, send_email: bool = False) -> bool:
         if len(reasons) == 0:
             msg = "You need to specify atleast one ban reason"
             raise ValueError(msg)
@@ -81,12 +83,13 @@ class Admin:
 
         self.users.mark_deletion_pending(user_data["_id"], reasons)
 
-        user_email: str = self.users.encryption.decrypt(user_data["email"])
-        self.email.send_ban_email(user_email, reasons)
+        if send_email:
+            user_email: str = self.users.encryption.decrypt(user_data["email"])
+            self.email.send_ban_email(user_email, reasons)
 
         return True
 
-    def reinstate_user(self, user_id: str) -> None:
+    def reinstate_user(self, user_id: str, send_email: bool = False) -> None:
         user_data: UserType | None = self.users.find_user(
             {"_id": user_id},
             find_banned=True,
@@ -110,10 +113,11 @@ class Admin:
         domains = {domain["name"]: domain for domain in Domains.normalize_domains(user_data["domains"])}
 
         self.dns.register_multiple(domains, user_id)
-        self.send_nonblocking_action_email(
-            self.users.encryption.decrypt(user_data["email"]),
-            "Account reinstated",
-        )
+        if send_email:
+            self.send_nonblocking_action_email(
+                self.users.encryption.decrypt(user_data["email"]),
+                "Account reinstated",
+            )
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
         canonical_domain = Domains.canonical_domain_name(domain)
@@ -213,6 +217,7 @@ class Admin:
         user_id: str,
         permission: str,
         new_value: str | bool | int,
+        send_email: bool = False,
     ) -> bool:
         logger.info(f"Changing user permission {permission}->{new_value}")
         try:
@@ -220,10 +225,11 @@ class Admin:
             if user is None:
                 return False
 
-            self.send_nonblocking_action_email(
-                user["email"],
-                f"Account permission changed ({permission}: {new_value})",
-            )
+            if send_email:
+                self.send_nonblocking_action_email(
+                    user["email"],
+                    f"Account permission changed ({permission}: {new_value})",
+                )
 
             if permission in {"max-domains", "max-subdomains"}:
                 key = f"permissions.limits.{permission}"
@@ -244,7 +250,7 @@ class Admin:
         except FilterMatchError:
             return False
 
-    def add_domain(self, user_id: str, tld: AVAILABLE_TLDS) -> None:
+    def add_domain(self, user_id: str, tld: AVAILABLE_TLDS, send_email: bool = False) -> None:
         """Adds domain to TLDs
 
         :param user_id: id of the user
@@ -257,10 +263,11 @@ class Admin:
             logger.warning("Couldn't find user to add domain to")
             return
 
-        self.send_nonblocking_action_email(
-            user["email"],
-            f"New TLD added to your account. (.{tld})",
-        )
+        if send_email:
+            self.send_nonblocking_action_email(
+                user["email"],
+                f"New TLD added to your account. (.{tld})",
+            )
         self.users.modify_document(
             filter={"_id": user_id},
             operation="$push",
@@ -268,7 +275,7 @@ class Admin:
             value=tld,
         )
 
-    def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS) -> None:
+    def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS, send_email: bool = False) -> None:
         """Removes a TLD
 
         :param user_id: id of the user
@@ -281,10 +288,11 @@ class Admin:
             logger.warning("Couldn't find user to add domain to")
             return
 
-        self.send_nonblocking_action_email(
-            user["email"],
-            f"TLD .{tld} has been removed from your account",
-        )
+        if send_email:
+            self.send_nonblocking_action_email(
+                user["email"],
+                f"TLD .{tld} has been removed from your account",
+            )
         self.users.modify_document(
             filter={"_id": user_id},
             operation="$pull",
