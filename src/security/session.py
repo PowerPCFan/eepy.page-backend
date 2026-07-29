@@ -233,17 +233,14 @@ class Session:
             logger.error("Invalid token type")
             return False
 
-        target_session = session_table.get_session(token_data["jti"])
+        target_session = session_table.consume_refresh_session(token_data["jti"])
         if target_session is None:
-            logger.warning(f"Token {token_data['jti']} has been nuked already")
+            logger.warning(f"Refresh token {token_data['jti']} was already consumed or revoked")
             return False
 
-        delete_thread = threading.Thread(
-            target=session_table.delete_session_pair,
-            # do NOT remove the comma this has to be a tuple
-            args=(token_data["jti"],),
-        )
-        delete_thread.start()
+        if target_session.get("owner") != token_data["sub"]:
+            logger.error("Refresh token owner did not match its session record")
+            return False
 
         access_token, refresh_token = Session.create_session_pair(
             token_data["sub"],
@@ -252,7 +249,6 @@ class Session:
             session_table,
         )
 
-        delete_thread.join()
         return access_token, refresh_token
 
     @staticmethod
@@ -366,7 +362,7 @@ class Session:
         access_data = {
             "type": "access",
             "sub": username,
-            "exp": now + 600,
+            "exp": now + ACCESS_AMOUNT,
             "iat": now - 1,
             "jti": secrets.token_hex(16),
             "iss": "https://api.eepy.page",

@@ -76,3 +76,15 @@ class Sessions(Table):
 
         logger.info(f"Deleted {del_count} sessions")
         return True
+
+    def consume_refresh_session(self, refresh_uid: str) -> NewSessionType | dict | None:
+        if len(refresh_uid) < 30:  # noqa: PLR2004
+            logger.error(f"Small refresh token passed {len(refresh_uid)}")
+            return None
+
+        session = self.table.find_one_and_delete({"_id": refresh_uid, "type": "refresh"})
+        if session is None:
+            return None
+
+        self.delete_many({"parent": refresh_uid})
+        return session

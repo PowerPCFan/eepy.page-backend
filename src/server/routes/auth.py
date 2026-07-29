@@ -187,7 +187,7 @@ class Auth:
                 max_age=REFRESH_AMOUNT,
                 path="/refresh",
                 httponly=True,
-                samesite="lax" if is_debug else "none",
+                samesite="lax",
                 secure=not is_debug,
             )
 
@@ -223,7 +223,7 @@ class Auth:
             path="/refresh",
             httponly=True,
             max_age=REFRESH_AMOUNT,
-            samesite="lax" if is_debug else "none",
+            samesite="lax",
             secure=not is_debug,
         )
 

@@ -15,3 +15,8 @@
 - maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)
 - possibly separate scripts/ stuff from this repo since thats not really related to the backend its just stuff for my vps atp
 - issues shutting down on ctrl+c, always requires you to spam it which probably isnt good
+- add some sort of audit log every time an endpoint is called, action is done, etc -- can probably be stored locally on server
+- rate limit email!!
+- make sure email verification is secure
+- *** VALIDATE ALL TYPES GOING IN AND OUT OF THE DB AND CONVERT IF NECESSARY ***
+- __Host-... cookies? or whatever theyre called

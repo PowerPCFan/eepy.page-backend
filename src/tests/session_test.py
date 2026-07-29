@@ -100,6 +100,12 @@ class TestCreation:
 
         assert not Session(old_access_token, users, sessions).valid
         assert Session(access, users, sessions).valid
+        assert not Session.refresh(
+            test_session_refresh,
+            sessions,
+            "BACKEND_TESTING",
+            test_user["country"]["ip"],
+        )
 
     def test_object(self, test_session: Session, test_user: UserType, users: Users) -> None:
         assert test_session.user_id == test_session.user_cache_data["_id"]
