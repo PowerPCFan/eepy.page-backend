@@ -27,3 +27,38 @@
 
 	reverse_proxy 127.0.0.1:8000
 }
+
+# If you are NOT using PowerPCFan/eepy.page-admin-panel: Delete or comment out the following block
+# If you ARE using the admin panel: ensure that CADDY_PANEL_DOMAIN and CADDY_PANEL_PATH are set in your .env file.
+{$CADDY_PANEL_DOMAIN} {
+	encode zstd gzip
+
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
+	log {
+		output file /var/log/caddy/admin_panel_access.log {
+			roll_size 10mb
+			roll_keep 10
+			roll_keep_for 336h
+		}
+		level INFO
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+	}
+
+	root * {$CADDY_PANEL_PATH}/public
+
+	php_fastcgi unix//run/php/php8.4-fpm.sock
+
+	file_server
+}
