@@ -14,7 +14,7 @@ backend_dir = scripts_dir.parent
 sys.path.insert(0, str(backend_dir / "src"))
 sys.path.insert(0, str(scripts_dir))
 
-from database.tables.users import Users  # noqa: E402
+from database.tables.users import Users  # pyright: ignore[reportMissingImports]  # noqa: E402
 from simple_python_dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(backend_dir / ".env")

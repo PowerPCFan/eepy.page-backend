@@ -63,7 +63,7 @@ class AdminPermissionChange(BaseModel):
     send_email: StrictBool = False
 
     @field_validator("permission")
-    def validate_permission(self, permission: str) -> str:
+    def validate_permission(cls, permission: str) -> str:  # noqa: N805
         valid_permissions = {"enabled", "max-domains", "max-subdomains", *ADMIN_PERMISSION_NAMES}
         if permission not in valid_permissions:
             msg = f"Invalid permission '{permission}'"
