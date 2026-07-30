@@ -23,7 +23,14 @@ from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.encryption import Encryption
 from security.session import Session
-from server.routes.models.admin import AdminDomainEdit, BanUser, IpFind, ManualLoginTermination, UserAction
+from server.routes.models.admin import (
+    AdminDomainEdit,
+    AdminPermissionChange,
+    BanUser,
+    IpFind,
+    ManualLoginTermination,
+    UserAction,
+)
 
 MAX_SAFE_32BIT_INT = 2**31 - 1
 
@@ -562,14 +569,19 @@ class Admin:
     @Session.requires_permission(permission="manage-permissions")
     def change_permission(
         self,
-        id: str,
-        permission: str,
-        value: bool | int | str,
-        send_email: bool = False,
+        body: AdminPermissionChange = Depends(),
         session: Session = Depends(converter.create),
     ) -> None:
-        if not self.admin_tools.change_permission(id, permission, value, send_email=send_email):
-            raise HTTPException(status_code=404, detail="User not found")
+        try:
+            if not self.admin_tools.change_permission(
+                body.id,
+                body.permission,
+                body.value,
+                send_email=body.send_email,
+            ):
+                raise HTTPException(status_code=404, detail="User not found")
+        except ValueError as error:
+            raise HTTPException(status_code=412, detail=str(error)) from error
 
     @Session.requires_auth
     @Session.requires_permission(permission="manage-permissions")

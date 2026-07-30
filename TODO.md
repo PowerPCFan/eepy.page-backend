@@ -1,22 +1,10 @@
 - possibly add back stuff that's in frii.site but I removed, such as Google OAuth
-- better admin tools would be nice:
-  - DB operations (AI-powered queries?)
-  - mass email sends
-  - DNS operations
-  - Account deletions/suspensions
-  - API key revocation
-  - Domain revocation
-  - User statistics dashboard
-  - Email sends for destructive user actions
-- a "half-admin" where people only have some admin perms
-  - also a "superuser" / "owner" role with the very highest level of permissions
 - abuse detection
 - status codes (they seem quite odd)
 - maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)
 - possibly separate scripts/ stuff from this repo since thats not really related to the backend its just stuff for my vps atp
-- issues shutting down on ctrl+c, always requires you to spam it which probably isnt good
+  - also improve how im hosting stuff on my vps lol, its a mess
 - add some sort of audit log every time an endpoint is called, action is done, etc -- can probably be stored locally on server
-- rate limit email!!
-- make sure email verification is secure
-- *** VALIDATE ALL TYPES GOING IN AND OUT OF THE DB AND CONVERT IF NECESSARY ***
-- __Host-... cookies? or whatever theyre called
+- rate limit emails!!!!!!!! + make sure email verification is secure, with the codes and stuff i think old ones still work also improve the verification flow, maybe add another db value like if the user has ever tried to log in and if its their first login attempt + unverified then itll show a dedicated Verify your email page and THAT'S when the verification email sends (instead of right at signup) and then they verify from there. also maybe check verification for actions? if i were to set a user's status to unverified they'd still be logged in and stuff
+- switch to postgresql? w/ sqlalchemy orm?
+- use __Host-... cookies for auth? or whatever theyre called
