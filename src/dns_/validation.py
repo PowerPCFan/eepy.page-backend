@@ -70,6 +70,7 @@ RESERVED_ROOT_LABELS: set[str] = {
     "mta-sts",
     "mx",
     "origin",
+    "panel",
     "pop",
     "pop3",
     "postmaster",
@@ -88,11 +89,6 @@ RESERVED_ROOT_LABELS: set[str] = {
     f"{REGEX}www[0-9]+",
     "ns",
     f"{REGEX}ns[0-9]+",
-    # "_acme-challenge",
-    # "_dmarc",
-    # "_domainkey",
-    # "_smtp",
-    # scratch that lets just block all underscore records
     f"{REGEX}_.*",
 }
 
