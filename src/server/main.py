@@ -135,7 +135,11 @@ threads["users"].join()
 threads["domains"].join()
 threads["sessions"].join()
 threads["tunnels"].join()
-app.include_router(Domain(v.users, v.sessions, v.domains, v.dns).router)
+
+domain_instance = Domain(v.users, v.sessions, v.domains, v.dns)
+app.include_router(domain_instance.router)
+app.state.domain_handler = domain_instance
+
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
 app.include_router(ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router)
 
@@ -224,3 +228,23 @@ async def api_permission_except_handler(_request: Request, e: Exception) -> JSON
             "detail": e.args,
         },
     )
+
+
+# TODO: fix deprecated event, also make this less janky
+@app.on_event("shutdown")
+async def _shutdown_event() -> None:
+    logger.info("Application shutdown: closing MongoClient and flushing Sentry")
+    try:
+        client.close()
+    except Exception:
+        logger.exception("Error closing MongoClient")
+
+    try:
+        sentry_sdk.flush(timeout=5)
+    except Exception:
+        logger.exception("Error flushing Sentry")
+    try:
+        if hasattr(app.state, "domain_handler") and app.state.domain_handler is not None:
+            app.state.domain_handler.stop()
+    except Exception:
+        logger.exception("Error stopping domain handler")

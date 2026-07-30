@@ -1,7 +1,7 @@
 import logging
 import time
 from collections import deque
-from threading import Thread
+from threading import Event, Thread
 from typing import get_args
 
 from fastapi import APIRouter, Depends
@@ -117,7 +117,9 @@ class Domain:
         self.verification_dict: dict[str, dict[str, str]] = {}
         self.current_queue_user: str = ""
 
-        Thread(target=self.handle_deque).start()
+        self._stop_event: Event = Event()
+        self._thread: Thread = Thread(target=self.handle_deque)
+        self._thread.start()
 
         self.router = APIRouter(prefix="/domain")
 
@@ -325,8 +327,8 @@ class Domain:
             raise HTTPException(status_code=409, detail=f"Domain {name} is not available")
 
     def handle_deque(self) -> None:
-        while True:
-            while len(self.verification_queue) != 0:
+        while not self._stop_event.is_set():
+            while len(self.verification_queue) != 0 and not self._stop_event.is_set():
                 user_id: str = self.verification_queue[0]
                 user_stuff: dict | None = self.verification_dict.get(user_id)
 
@@ -345,10 +347,20 @@ class Domain:
                 )
                 self.current_queue_user = user_id
 
-                time.sleep(180)
+                if self._stop_event.wait(180):
+                    break
                 self.verification_queue.popleft()
                 self.current_queue_user = ""
-            time.sleep(1)
+            self._stop_event.wait(1)
+
+    # TODO: improve this, maybe switch the whole handle_deque thing to like an async task
+    def stop(self, timeout: float = 5.0) -> None:
+        try:
+            self._stop_event.set()
+            if hasattr(self, "_thread"):
+                self._thread.join(timeout)
+        except Exception:
+            logger.exception("Error stopping verification thread")
 
     @Session.requires_auth
     def vercel_queue_join(self, value: str, tld: str, session: Session = Depends(converter.create)) -> None:
