@@ -111,7 +111,7 @@ def main() -> int:
 paste this snippet into the devtools console on eepy.page:
 
 
-document.cookie = 'auth-token=' + encodeURIComponent(
+document.cookie = '__Host-auth-token=' + encodeURIComponent(
     {json.dumps(access_token)}
 ) + '; Path=/; Secure; SameSite=Strict';
 document.cookie = 'logged-in=yes; Path=/';

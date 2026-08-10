@@ -108,7 +108,7 @@ class Session:
     def __init__(self, access_token: str, users: Users, sessions: Sessions) -> None:
         """Creates a Session object.
         Arguments:
-            session_id: Access token found in X-Auth-Token header
+            session_id: Access token found in Authorization header (Authorization: Bearer <token>)
             users: Instance of the user table
             sessions: Instance of the session table
         """

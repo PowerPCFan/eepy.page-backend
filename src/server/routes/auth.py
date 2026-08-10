@@ -68,8 +68,8 @@ class Auth:
                     "description": "Login successfull",
                     "content": {
                         "application/json": {
-                            "auth-token": "Token you can use for accessing things",
-                            "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
+                            "__Host-auth-token": "Token you can use for accessing things",
+                            "__Host-refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
                         },
                     },
                 },
@@ -91,8 +91,8 @@ class Auth:
                     "description": "Refreshed tokens successfully",
                     "content": {
                         "application/json": {
-                            "auth-token": "Token you can use for accessing things",
-                            "refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
+                            "__Host-auth-token": "Token you can use for accessing things",
+                            "__Host-refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
                         },
                     },
                 },
@@ -182,10 +182,10 @@ class Auth:
             resp = JSONResponse({"auth-token": session_status["access_token"]})
 
             resp.set_cookie(
-                "refresh-token",
+                "__Host-refresh-token",
                 session_status["refresh_token"] or "invalid code",
                 max_age=REFRESH_AMOUNT,
-                path="/refresh",
+                path="/",
                 httponly=True,
                 samesite="lax",
                 secure=not is_debug,
@@ -195,10 +195,10 @@ class Auth:
         raise HTTPException(status_code=500, detail="Failed to create session")
 
     def refresh(self, request: Request) -> JSONResponse:
-        refresh_token: str | None = request.cookies.get("refresh-token")
+        refresh_token: str | None = request.cookies.get("__Host-refresh-token")
 
         if not refresh_token:
-            raise HTTPException(status_code=412, detail="refresh-token cookie missing")
+            raise HTTPException(status_code=412, detail="__Host-refresh-token cookie missing")
 
         client = request.client
         if not client:
@@ -218,9 +218,9 @@ class Auth:
         resp = JSONResponse({"auth-token": access_token})
 
         resp.set_cookie(
-            "refresh-token",
+            "__Host-refresh-token",
             refresh_token,
-            path="/refresh",
+            path="/",
             httponly=True,
             max_age=REFRESH_AMOUNT,
             samesite="lax",

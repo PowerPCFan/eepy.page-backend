@@ -112,7 +112,7 @@ class Api:
     def __init__(self, api_key: str, users: Users) -> None:
         """Creates a Session object.
         Arguements:
-            session_id: id of the session string of length SESSION_TOKEN_LENGTH. Usually found in X-Auth-Token header.
+            session_id: id of the session string of length SESSION_TOKEN_LENGTH.
             ip: The request's ip
             database: Instance of the database class
         """

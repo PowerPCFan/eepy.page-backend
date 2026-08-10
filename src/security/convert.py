@@ -1,3 +1,5 @@
+# ruff: noqa: EM101, TRY003
+
 from typing import Annotated
 
 from fastapi import Header, Request
@@ -8,6 +10,17 @@ from security.api import Api, ApiError
 from security.session import Session, SessionError
 
 
+def parse_authorization_header(header: str | None) -> str:
+    if header is None:
+        raise SessionError("Authorization header is missing")
+
+    scheme, _, token = header.strip().partition(" ")
+    if scheme.title() == "Bearer" and token:
+        return token
+    else:
+        raise ApiError("Authorization header is malformed")
+
+
 class Convert:
     def __init__(self) -> None: ...
 
@@ -15,18 +28,11 @@ class Convert:
         self.users = users
         self.sessions = sessions
 
-    def create(self, session_id: Annotated[str | None, Header(alias="X-Auth-Token")] = None) -> Session:
-        if session_id is None:
-            msg = "Session id is none"
-            raise SessionError(msg)
-
-        # Auth fix 7/25/26 writing this so i can remember to check here if
-        # i encounter problems; session stuff has historically been problematic
-        # and i didnt really test this fix
+    def create(self, authorization: Annotated[str | None, Header(alias="Authorization")] = None) -> Session:
+        session_id = parse_authorization_header(authorization)
         session = Session(session_id, self.users, self.sessions)
         if not session.valid:
-            msg = "Invalid session"
-            raise SessionError(msg)
+            raise SessionError("Invalid session")
         return session
 
 
@@ -36,9 +42,14 @@ class ConvertAPI:
         self.users = users
 
     def create(self, request: Request) -> Api:
-        api_key: str | None = request.headers.get("X-API-Token")
-        if api_key is None:
-            msg = "API Key not specified (X-API-Token header missing)"
-            raise ApiError(msg)
+        authorization: str | None = request.headers.get("Authorization")
+        api_key: str | None = None
+
+        if authorization is not None:
+            api_key = parse_authorization_header(authorization)
+        if not api_key:
+            api_key = request.headers.get("X-Auth-Token")
+        if not api_key:
+            raise ApiError("API key not specified (`Authorization: Bearer <token>` header missing)")
 
         return Api(api_key, self.users)
