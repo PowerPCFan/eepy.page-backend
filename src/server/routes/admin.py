@@ -13,6 +13,7 @@ from fastapi.exceptions import HTTPException
 
 from database.exceptions import UserNotExistError
 from database.tables.sessions import Sessions
+from database.tables.status import Status
 from database.tables.users import Users, UserType
 from dns_.dns import sanitize
 from dns_.exceptions import DNSException
@@ -26,6 +27,7 @@ from security.session import Session
 from server.routes.models.admin import (
     AdminDomainEdit,
     AdminPermissionChange,
+    AdminStatusMessage,
     BanUser,
     IpFind,
     ManualLoginTermination,
@@ -43,6 +45,7 @@ class Admin:
         self,
         user_table: Users,
         session_table: Sessions,
+        status_table: Status,
         admin: AdminTools,
     ) -> None:
         converter.init_vars(user_table, session_table)
@@ -51,6 +54,7 @@ class Admin:
         self.admin_tools = admin
         self.sessions = session_table
         self.users = user_table
+        self.status_table = status_table
 
         self.router.add_api_route(
             "/domain/delete",
@@ -302,6 +306,31 @@ class Admin:
             tags=["admin"],
         )
 
+        self.router.add_api_route(
+            "/status",
+            self.set_status,
+            methods=["POST"],
+            responses={
+                200: {"description": "Status updated"},
+                412: {"description": "Invalid status message"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/status/clear",
+            self.clear_status,
+            methods=["POST"],
+            responses={
+                200: {"description": "Status cleared"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
         logger.info("Initialized")
 
     @Session.requires_auth
@@ -489,6 +518,23 @@ class Admin:
             raise HTTPException(status_code=404, detail="User not found")
 
         return user_profile
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="account")
+    def set_status(
+        self,
+        body: AdminStatusMessage,
+        session: Session = Depends(converter.create),
+    ) -> None:
+        self.status_table.set(body.message)
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="account")
+    def clear_status(
+        self,
+        session: Session = Depends(converter.create),
+    ) -> None:
+        self.status_table.clear()
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")

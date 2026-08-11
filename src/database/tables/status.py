@@ -42,3 +42,13 @@ class Status(Table):
                 "active": True,
             },
         )
+
+    def clear(self) -> None:
+        self.modify_document(
+            filter={"active": True},
+            operation="$set",
+            key="active",
+            value=False,
+            create_if_not_exist=False,
+            ignore_no_matches=True,
+        )

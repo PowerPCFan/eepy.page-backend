@@ -163,7 +163,20 @@ app.include_router(
 app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
 app.include_router(Kofi(email, v.rewards).router)
 
-app.include_router(Admin(v.users, v.sessions, AdminTools(v.users, v.sessions, v.domains, v.dns, email)).router)
+app.include_router(
+    Admin(
+        v.users,
+        v.sessions,
+        v.status,
+        AdminTools(
+            v.users,
+            v.sessions,
+            v.domains,
+            v.dns,
+            email,
+        ),
+    ).router,
+)
 
 
 @app.get("/status")

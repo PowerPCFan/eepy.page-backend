@@ -1,3 +1,5 @@
+# ruff: noqa: N805
+
 from typing import Literal
 
 from pydantic import (
@@ -63,7 +65,7 @@ class AdminPermissionChange(BaseModel):
     send_email: StrictBool = False
 
     @field_validator("permission")
-    def validate_permission(cls, permission: str) -> str:  # noqa: N805
+    def validate_permission(cls, permission: str) -> str:
         valid_permissions = {"enabled", "max-domains", "max-subdomains", *ADMIN_PERMISSION_NAMES}
         if permission not in valid_permissions:
             msg = f"Invalid permission '{permission}'"
@@ -131,6 +133,19 @@ class AdminDomainEdit(BaseModel):
             msg_0 = "Values cannot contain empty strings"
             raise ValueError(msg_0)
         return self
+
+
+class AdminStatusMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: StrictStr
+
+    @field_validator("message")
+    def validate_message(cls, message: str) -> str:
+        msg = message.strip()
+        if not msg:
+            err = "Status message cannot be empty"
+            raise ValueError(err)
+        return msg
 
 
 class ManualLoginTermination(BaseModel):
