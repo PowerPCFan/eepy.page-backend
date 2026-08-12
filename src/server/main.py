@@ -25,6 +25,7 @@ from mail.email import Email
 from security.admin import Admin as AdminTools
 from security.api import ApiError, ApiPermissionError, ApiRangeError
 from security.encryption import Encryption
+from security.rate_limit import RateLimitMiddleware, create_store
 from security.session import SessionError, SessionPermissonError
 from server.routes.admin import Admin
 from server.routes.api import API
@@ -76,6 +77,7 @@ app.state.safe_domains = [
     "https://canary.eepy.page",
     "http://localhost:5173",
 ]
+app.add_middleware(RateLimitMiddleware, store=create_store())
 app.add_middleware(
     CORSMiddleware,
     allow_origins=app.state.safe_domains,

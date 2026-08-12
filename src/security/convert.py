@@ -1,5 +1,6 @@
 # ruff: noqa: EM101, TRY003
 
+from collections.abc import Mapping
 from typing import Annotated
 
 from fastapi import Header, Request
@@ -19,6 +20,24 @@ def parse_authorization_header(header: str | None) -> str:
         return token
     else:
         raise ApiError("Authorization header is malformed")
+
+
+def parse_headers(headers: Mapping[str, str]) -> str:
+    """
+    Raises:
+    - ApiError if the authorization header is missing or malformed
+    - SessionError if the session is invalid (Authorization header and fallback X-Auth-Token are None/missing)
+    """
+    authorization: str | None = headers.get("Authorization")
+    api_key: str | None = None
+
+    if authorization is not None:
+        api_key = parse_authorization_header(authorization)
+    if not api_key:
+        api_key = headers.get("X-Auth-Token")
+    if not api_key:
+        raise ApiError("API key not specified (`Authorization: Bearer <token>` header missing)")
+    return api_key
 
 
 class Convert:
@@ -42,14 +61,4 @@ class ConvertAPI:
         self.users = users
 
     def create(self, request: Request) -> Api:
-        authorization: str | None = request.headers.get("Authorization")
-        api_key: str | None = None
-
-        if authorization is not None:
-            api_key = parse_authorization_header(authorization)
-        if not api_key:
-            api_key = request.headers.get("X-Auth-Token")
-        if not api_key:
-            raise ApiError("API key not specified (`Authorization: Bearer <token>` header missing)")
-
-        return Api(api_key, self.users)
+        return Api(parse_headers(request.headers), self.users)

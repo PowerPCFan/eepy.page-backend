@@ -1,4 +1,3 @@
-- possibly add back stuff that's in frii.site but I removed, such as Google OAuth
 - abuse detection
 - status codes (they seem quite odd)
 - maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)
@@ -7,6 +6,5 @@
 - add some sort of audit log every time an endpoint is called, action is done, etc -- can probably be stored locally on server
 - rate limit emails!!!!!!!! + make sure email verification is secure, with the codes and stuff i think old ones still work also improve the verification flow, maybe add another db value like if the user has ever tried to log in and if its their first login attempt + unverified then itll show a dedicated Verify your email page and THAT'S when the verification email sends (instead of right at signup) and then they verify from there. also maybe check verification for actions? if i were to set a user's status to unverified they'd still be logged in and stuff
 - switch to postgresql? w/ sqlalchemy orm?
-- use __Host-... cookies for auth? or whatever theyre called
 - maybe add tests for api stuff with the user api keys like if i add stricter security around the recovery email endpoint, make sure it can still work somehow with users' keys if it was ever intended to to begin with
   - maybe make a separate api for users? like the main api.eepy.page would be linked to only work with the frontend via captchas or session tokens or something and then there could be a userapi.eepy.page which is what users would use with their api keys and it would be scoped to the account that generated the api key and have limited permissions and stuff and that would also just make it much easier to separate things
