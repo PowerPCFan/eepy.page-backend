@@ -393,8 +393,8 @@ class Validation:
         )
 
         limits = get_account_limits(user)  # pyright: ignore[reportArgumentType]
-        user_max_domains = limits["max-domains"]
-        user_max_subdomains = limits["max-subdomains"]
+        user_max_domains = int(limits["max-domains"])
+        user_max_subdomains = int(limits["max-subdomains"])
 
         if not is_subdomain and user_domain_amount >= user_max_domains:
             return UserCanRegisterResult(success=False, comment="Domain limit exceeded")
