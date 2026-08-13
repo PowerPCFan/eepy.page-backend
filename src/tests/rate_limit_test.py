@@ -136,7 +136,7 @@ def test_recovery_sending_is_limited_by_ip_and_authenticated_account(monkeypatch
     app.add_middleware(RateLimitMiddleware, store=redis_store)
 
     @app.post("/recovery/send")
-    def send_recovery(username: str) -> dict[str, bool]:
+    def send_recovery(username: str | None = None) -> dict[str, bool]:
         return {"ok": True}
 
     with TestClient(app) as client:

@@ -204,11 +204,6 @@ class Api:
             msg = "User not found"
             raise ValueError(msg)
 
-        api_keys = user_data.get("api-keys", {})
-        if len(api_keys) >= 1:
-            msg = "Only one API key is allowed per account"
-            raise ApiKeyLimitError(msg)
-
         user_domains = Domains.domain_names(user_data["domains"])
 
         canonical_domains: list[str] = [Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in domains]
@@ -217,6 +212,11 @@ class Api:
                 logger.warning(f"Domain {domain} not in user_domain")
                 msg_0 = f"User does not own domain {domain}"
                 raise PermissionError(msg_0)
+
+        api_keys = user_data.get("api-keys", {})
+        if len(api_keys) >= 1:
+            msg = "Only one API key is allowed per account"
+            raise ApiKeyLimitError(msg)
 
         key: ApiType = {
             "string": users.encryption.encrypt(api_key),
