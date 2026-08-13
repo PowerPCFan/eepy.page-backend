@@ -45,6 +45,13 @@ class TestUserApi:
                 domains=["domain-that-isnt-owned.eepy.page"],
             )
 
+        users.modify_document(
+            filter={"_id": test_user["_id"]},
+            operation="$set",
+            key="api-keys",
+            value={},
+        )
+
     def test_key_permissions(self, test_user: UserType, users: Users) -> None:
         key = Api.create(
             test_user["_id"],

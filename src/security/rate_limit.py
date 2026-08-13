@@ -386,7 +386,7 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def identity(request: Request, scope: Scope) -> str:
+def identity(request: Request, scope: Scope) -> str | None:
     if scope == Scope.IP:
         return client_ip(request)
 
@@ -394,14 +394,15 @@ def identity(request: Request, scope: Scope) -> str:
         token = parse_headers(request.headers)
         if scope == Scope.ACCOUNT:
             account_id = Session.access_token_subject(token)
-            if account_id:
-                return f"account:{hashlib.sha256(account_id.encode()).hexdigest()}"
+            if not account_id:
+                logger.warning("Unable to determine account for rate limiting; applying IP limit only")
+                return None
+            return f"account:{hashlib.sha256(account_id.encode()).hexdigest()}"
         return f"{scope}:{hashlib.sha256(token.encode()).hexdigest()}"
-    except Exception:
+    except Exception as error:
         if scope == Scope.ACCOUNT:
-            username = request.query_params.get("username")
-            if username:
-                return f"account:{hashlib.sha256(username.strip().casefold().encode()).hexdigest()}"
+            logger.warning("Unable to determine account for rate limiting; applying IP limit only: %s", error)
+            return None
         return client_ip(request)
 
 
@@ -420,6 +421,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         policy = get_policy(request.method, request.url.path)
         for limit in policy.limits if isinstance(policy.limits, tuple) else (policy.limits,):
             subject = identity(request, limit.scope)
+            if subject is None:
+                continue
             key = f"rate-limit:{policy.name}:{limit.scope}:{subject}:{int(time.time() // limit.time_window)}"
             count, retry_after = self.store.consume(key, limit.time_window)
             if count > limit.max_requests:

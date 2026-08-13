@@ -57,7 +57,7 @@ jobs:
           python-version: "3.13"
 
       - name: Ruff - Install
-        run: pip install ruff
+        run: pip install ruff==0.16.3
 
       - name: Ruff - Check linting
         run: ruff check .
@@ -77,7 +77,7 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyright
+          pip install pyright==1.1.411
 
       - name: Run Pyright
         run: pyright --outputjson .

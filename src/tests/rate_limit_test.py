@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from security import rate_limit
-from security.rate_limit import Limit, Policy, RateLimitMiddleware, RedisStore, Scope, client_ip, get_policy
+from security.rate_limit import Limit, Policy, RateLimitMiddleware, RedisStore, Scope, client_ip
 from starlette.requests import Request
 
 
@@ -70,11 +70,15 @@ def registered_routes() -> list[tuple[str, str]]:
 def test_every_registered_endpoint_is_rate_limited(monkeypatch, redis_store: RedisStore) -> None:
     """Blocks a second request to every registered route without invoking production handlers."""
     for name, policy in rate_limit.POLICIES.items():
-        monkeypatch.setitem(
-            rate_limit.POLICIES,
-            name,
-            Policy(name, tuple(Limit(max_requests=1, time_window=60, scope=limit.scope) for limit in policy.limits)),
-        )
+        monkeypatch.setitem(rate_limit.POLICIES, name, Policy(name, tuple(Limit(
+            max_requests=1,
+            time_window=60,
+            scope=limit.scope,
+        ) for limit in (
+            policy.limits
+            if isinstance(policy.limits, tuple)
+            else (policy.limits,)
+        ))))
 
     app = FastAPI()
 
@@ -103,8 +107,12 @@ def test_limit_exhaustion_returns_retry_after(redis_store: RedisStore) -> None:
     def login() -> dict[str, bool]:
         return {"ok": True}
 
+    policy = rate_limit.get_policy("POST", "/login")
+    limits = policy.limits if isinstance(policy.limits, tuple) else (policy.limits,)
+    ip_limit = next(limit for limit in limits if limit.scope == Scope.IP)
+
     with TestClient(app) as client:
-        for _ in range(10):
+        for _ in range(ip_limit.max_requests):
             assert client.post("/login").status_code == 200
         limited = client.post("/login")
 
@@ -113,16 +121,17 @@ def test_limit_exhaustion_returns_retry_after(redis_store: RedisStore) -> None:
     assert int(limited.headers["Retry-After"]) > 0
 
 
-def test_recovery_sending_is_limited_by_ip_and_target_account(monkeypatch, redis_store: RedisStore) -> None:
+def test_recovery_sending_is_limited_by_ip_and_authenticated_account(monkeypatch, redis_store: RedisStore) -> None:
     """Prevents recovery-email spam by source IP and target account over a day."""
     policy = Policy(
         "recovery",
         (
-            Limit(max_requests=3, time_window=3600, scope="ip"),
-            Limit(max_requests=5, time_window=86400, scope="account"),
+            Limit(max_requests=3, time_window=3600, scope=Scope.IP),
+            Limit(max_requests=5, time_window=86400, scope=Scope.ACCOUNT),
         ),
     )
     monkeypatch.setitem(rate_limit.POLICIES, policy.name, policy)
+    monkeypatch.setattr(rate_limit.Session, "access_token_subject", lambda token: token)
     app = FastAPI()
     app.add_middleware(RateLimitMiddleware, store=redis_store)
 
@@ -133,24 +142,27 @@ def test_recovery_sending_is_limited_by_ip_and_target_account(monkeypatch, redis
     with TestClient(app) as client:
         for index in range(5):
             response = client.post(
-                "/recovery/send?username=target-account",
-                headers={"X-Forwarded-For": f"198.51.100.{index}"},
+                "/recovery/send",
+                headers={
+                    "Authorization": "Bearer target-account",
+                    "X-Forwarded-For": f"198.51.100.{index}",
+                },
             )
             assert response.status_code == 200
 
         target_limited = client.post(
-            "/recovery/send?username=target-account",
-            headers={"X-Forwarded-For": "198.51.100.10"},
+            "/recovery/send",
+            headers={"Authorization": "Bearer target-account", "X-Forwarded-For": "198.51.100.10"},
         )
-        for username in ("another-account", "third-account"):
+        for account in ("another-account", "third-account"):
             response = client.post(
-                f"/recovery/send?username={username}",
-                headers={"X-Forwarded-For": "198.51.100.0"},
+                "/recovery/send",
+                headers={"Authorization": f"Bearer {account}", "X-Forwarded-For": "198.51.100.0"},
             )
             assert response.status_code == 200
         ip_limited = client.post(
-            "/recovery/send?username=fourth-account",
-            headers={"X-Forwarded-For": "198.51.100.0"},
+            "/recovery/send",
+            headers={"Authorization": "Bearer fourth-account", "X-Forwarded-For": "198.51.100.0"},
         )
 
     assert target_limited.status_code == 429
@@ -198,7 +210,7 @@ def test_redis_failure_returns_server_error(monkeypatch, redis_store: RedisStore
 
 
 def test_credential_limits_are_partitioned(monkeypatch, redis_store: RedisStore) -> None:
-    policy = Policy("api_mutation", (Limit(max_requests=1, time_window=60, scope="credential"),))
+    policy = Policy("api_mutation", (Limit(max_requests=1, time_window=60, scope=Scope.CREDENTIAL),))
     monkeypatch.setitem(__import__("security.rate_limit", fromlist=["ROUTE_POLICIES"]).ROUTE_POLICIES, ("POST", "/api/domain"), policy.name)
     monkeypatch.setitem(__import__("security.rate_limit", fromlist=["POLICIES"]).POLICIES, policy.name, policy)
     app = FastAPI()
@@ -216,7 +228,7 @@ def test_credential_limits_are_partitioned(monkeypatch, redis_store: RedisStore)
 
 def test_malformed_authorization_uses_the_ip_limit(monkeypatch, redis_store: RedisStore) -> None:
     """Leaves malformed credentials for the auth layer while applying an IP backstop."""
-    policy = Policy("malformed", (Limit(max_requests=1, time_window=60, scope="credential"),))
+    policy = Policy("malformed", (Limit(max_requests=1, time_window=60, scope=Scope.CREDENTIAL),))
     monkeypatch.setitem(rate_limit.POLICIES, policy.name, policy)
     monkeypatch.setitem(rate_limit.ROUTE_POLICIES, ("POST", "/malformed"), policy.name)
     app = FastAPI()
@@ -234,7 +246,7 @@ def test_malformed_authorization_uses_the_ip_limit(monkeypatch, redis_store: Red
 
 def test_multiple_limits_must_all_allow_the_request(monkeypatch, redis_store: RedisStore) -> None:
     """Enforces a short burst limit even when the longer limit still permits requests."""
-    policy = Policy("stacked", (Limit(max_requests=10, time_window=3600, scope="ip"), Limit(max_requests=1, time_window=3, scope="ip")))
+    policy = Policy("stacked", (Limit(max_requests=10, time_window=3600, scope=Scope.IP), Limit(max_requests=1, time_window=3, scope=Scope.IP)))
     monkeypatch.setitem(rate_limit.POLICIES, policy.name, policy)
     monkeypatch.setitem(rate_limit.ROUTE_POLICIES, ("POST", "/stacked"), policy.name)
     app = FastAPI()

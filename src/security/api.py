@@ -5,7 +5,6 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from database.exceptions import FilterMatchError
 from database.tables.domains import Domains
 from security.encryption import Encryption
 
@@ -205,6 +204,11 @@ class Api:
             msg = "User not found"
             raise ValueError(msg)
 
+        api_keys = user_data.get("api-keys", {})
+        if len(api_keys) >= 1:
+            msg = "Only one API key is allowed per account"
+            raise ApiKeyLimitError(msg)
+
         user_domains = Domains.domain_names(user_data["domains"])
 
         canonical_domains: list[str] = [Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in domains]
@@ -222,20 +226,10 @@ class Api:
         }
 
         encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
-        try:
-            users.modify_document(
-                filter={
-                    "_id": username,
-                    "$or": [
-                        {"api-keys": {}},
-                        {"api-keys": {"$exists": False}},
-                    ],
-                },
-                operation="$set",
-                key=f"api-keys.{encrypted_api_key}",
-                value=key,
-            )
-        except FilterMatchError:
-            msg_1 = "Only one API key is allowed per account"
-            raise ApiKeyLimitError(msg_1) from None
+        users.modify_document(
+            filter={"_id": username},
+            operation="$set",
+            key=f"api-keys.{encrypted_api_key}",
+            value=key,
+        )
         return api_key
