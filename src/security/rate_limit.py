@@ -6,13 +6,14 @@ import os
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import redis
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from security.convert import parse_headers
+from security.session import Session
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -20,29 +21,45 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("eepy.page")
 
-Scope = Literal["ip", "account", "credential"]
+
+class Scope(StrEnum):
+    IP = "ip"
+    ACCOUNT = "account"
+    CREDENTIAL = "credential"
 
 
 @dataclass(frozen=True)
 class Limit:
-    max: int
-    secs: int
+    """
+    Represents a rate limit for a specific scope.
+
+    :param max: The maximum number of requests allowed within the specified time window.
+    :type max: int
+
+    :param secs: The time window in seconds for which the limit applies.
+    :type secs: int
+
+    :param scope: The scope of the limit, which can be one of the following:
+
+        - Scope.IP: The limit applies to the client's IP address.
+        - Scope.ACCOUNT: The limit applies to the user's account (if authenticated).
+        - Scope.CREDENTIAL: The limit applies to the user's API credentials (if authenticated).
+
+    :type scope: Scope
+    """
+
+    max_requests: int
+    time_window: int
     scope: Scope
 
 
 @dataclass(frozen=True)
 class Policy:
     name: str
-    limits: tuple[Limit, ...]
+    limits: Limit | tuple[Limit, ...]
 
 
-class ScopeEnum(StrEnum):
-    IP = "ip"
-    ACCOUNT = "account"
-    CREDENTIAL = "credential"
-
-
-class MethodEnum(StrEnum):
+class Method(StrEnum):
     GET = "GET"
     POST = "POST"
     PATCH = "PATCH"
@@ -50,15 +67,15 @@ class MethodEnum(StrEnum):
     PUT = "PUT"
 
     @staticmethod
-    def from_str(value: str) -> MethodEnum:
+    def from_str(value: str) -> Method:
         try:
-            return MethodEnum(value.upper())
+            return Method(value.upper())
         except ValueError:
             msg = f"Invalid HTTP method: {value}"
             raise ValueError(msg)
 
 
-class PolicyEnum(StrEnum):
+class PE(StrEnum):
     PUBLIC = "public"
     STATUS = "status"
     AVAILABILITY = "availability"
@@ -77,119 +94,251 @@ class PolicyEnum(StrEnum):
     WEBHOOK = "webhook"
 
 
-POLICIES: dict[PolicyEnum, Policy] = {
-    PolicyEnum.PUBLIC: Policy(
-        name=PolicyEnum.PUBLIC.value,
-        limits=(Limit(max=120, secs=60, scope="ip"),),
-    ),
-    PolicyEnum.STATUS: Policy(
-        name=PolicyEnum.STATUS.value,
-        limits=(Limit(max=120, secs=60, scope="ip"),),
-    ),
-    PolicyEnum.AVAILABILITY: Policy(
-        name=PolicyEnum.AVAILABILITY.value,
-        limits=(Limit(max=60, secs=60, scope="ip"),),
-    ),
-    PolicyEnum.LOGIN: Policy(
-        name=PolicyEnum.LOGIN.value,
-        limits=(Limit(max=10, secs=60, scope="ip"),),
-    ),
-    PolicyEnum.SIGNUP: Policy(
-        name=PolicyEnum.SIGNUP.value,
-        limits=(Limit(max=3, secs=3600, scope="ip"),),
-    ),
-    PolicyEnum.RECOVERY: Policy(
-        name=PolicyEnum.RECOVERY.value,
-        limits=(Limit(max=3, secs=3600, scope="ip"),),
-    ),
-    PolicyEnum.CODE_CHECK: Policy(
-        name=PolicyEnum.CODE_CHECK.value,
-        limits=(Limit(max=10, secs=60, scope="ip"),),
-    ),
-    PolicyEnum.EMAIL: Policy(
-        name=PolicyEnum.EMAIL.value,
+ONE_DAY = 86400
+ONE_MINUTE = 60
+ONE_HOUR = 3600
+
+
+POLICIES: dict[PE, Policy] = {
+    PE.PUBLIC: Policy(
+        name=PE.PUBLIC.value,
         limits=(
-            Limit(max=3, secs=3600, scope="ip"),
-            Limit(max=3, secs=3600, scope="account"),
+            Limit(
+                max_requests=120,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.READ: Policy(
-        name=PolicyEnum.READ.value,
+    PE.STATUS: Policy(
+        name=PE.STATUS.value,
         limits=(
-            Limit(max=240, secs=60, scope="ip"),
-            Limit(max=120, secs=60, scope="account"),
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.MUTATION: Policy(
-        name=PolicyEnum.MUTATION.value,
+    PE.AVAILABILITY: Policy(
+        name=PE.AVAILABILITY.value,
         limits=(
-            Limit(max=120, secs=60, scope="ip"),
-            Limit(max=30, secs=60, scope="account"),
+            Limit(
+                max_requests=30,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.DNS_MUTATION: Policy(
-        name=PolicyEnum.DNS_MUTATION.value,
+    PE.LOGIN: Policy(
+        name=PE.LOGIN.value,
         limits=(
-            Limit(max=120, secs=60, scope="ip"),
-            Limit(max=20, secs=60, scope="credential"),
+            Limit(
+                max_requests=5,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.API_READ: Policy(
-        name=PolicyEnum.API_READ.value,
+    PE.SIGNUP: Policy(
+        name=PE.SIGNUP.value,
         limits=(
-            Limit(max=240, secs=60, scope="ip"),
-            Limit(max=120, secs=60, scope="credential"),
+            Limit(
+                max_requests=3,
+                time_window=ONE_HOUR,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.API_MUTATION: Policy(
-        name=PolicyEnum.API_MUTATION.value,
+    PE.RECOVERY: Policy(
+        name=PE.RECOVERY.value,
         limits=(
-            Limit(max=120, secs=60, scope="ip"),
-            Limit(max=30, secs=60, scope="credential"),
+            Limit(
+                max_requests=3,
+                time_window=ONE_HOUR,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=1,
+                time_window=ONE_HOUR,
+                scope=Scope.ACCOUNT,
+            ),
+            Limit(
+                max_requests=5,
+                time_window=ONE_DAY,
+                scope=Scope.ACCOUNT,
+            ),
         ),
     ),
-    PolicyEnum.ADMIN_READ: Policy(
-        name=PolicyEnum.ADMIN_READ.value,
+    PE.CODE_CHECK: Policy(
+        name=PE.CODE_CHECK.value,
         limits=(
-            Limit(max=240, secs=60, scope="ip"),
-            Limit(max=120, secs=60, scope="account"),
+            Limit(
+                max_requests=5,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
         ),
     ),
-    PolicyEnum.ADMIN_MUTATION: Policy(
-        name=PolicyEnum.ADMIN_MUTATION.value,
+    PE.EMAIL: Policy(
+        name=PE.EMAIL.value,
         limits=(
-            Limit(max=120, secs=60, scope="ip"),
-            Limit(max=30, secs=60, scope="account"),
+            Limit(
+                max_requests=3,
+                time_window=ONE_HOUR,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=3,
+                time_window=ONE_HOUR,
+                scope=Scope.ACCOUNT,
+            ),
         ),
     ),
-    PolicyEnum.WEBHOOK: Policy(
-        name=PolicyEnum.WEBHOOK.value,
-        limits=(Limit(max=60, secs=60, scope="ip"),),
+    PE.READ: Policy(
+        name=PE.READ.value,
+        limits=(
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=30,
+                time_window=ONE_MINUTE,
+                scope=Scope.ACCOUNT,
+            ),
+        ),
+    ),
+    PE.MUTATION: Policy(
+        name=PE.MUTATION.value,
+        limits=(
+            Limit(
+                max_requests=45,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=15,
+                time_window=ONE_MINUTE,
+                scope=Scope.ACCOUNT,
+            ),
+        ),
+    ),
+    PE.DNS_MUTATION: Policy(
+        name=PE.DNS_MUTATION.value,
+        limits=(
+            Limit(
+                max_requests=30,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=10,
+                time_window=ONE_MINUTE,
+                scope=Scope.CREDENTIAL,
+            ),
+            Limit(
+                max_requests=10,
+                time_window=ONE_MINUTE,
+                scope=Scope.ACCOUNT,
+            ),
+        ),
+    ),
+    PE.API_READ: Policy(
+        name=PE.API_READ.value,
+        limits=(
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=30,
+                time_window=ONE_MINUTE,
+                scope=Scope.CREDENTIAL,
+            ),
+        ),
+    ),
+    PE.API_MUTATION: Policy(
+        name=PE.API_MUTATION.value,
+        limits=(
+            Limit(
+                max_requests=30,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=15,
+                time_window=ONE_MINUTE,
+                scope=Scope.CREDENTIAL,
+            ),
+        ),
+    ),
+    PE.ADMIN_READ: Policy(
+        name=PE.ADMIN_READ.value,
+        limits=(
+            Limit(
+                max_requests=120,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.ACCOUNT,
+            ),
+        ),
+    ),
+    PE.ADMIN_MUTATION: Policy(
+        name=PE.ADMIN_MUTATION.value,
+        limits=(
+            Limit(
+                max_requests=120,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            ),
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.ACCOUNT,
+            ),
+        ),
+    ),
+    PE.WEBHOOK: Policy(
+        name=PE.WEBHOOK.value,
+        limits=(
+            Limit(
+                max_requests=60,
+                time_window=ONE_MINUTE,
+                scope=Scope.IP,
+            )
+        ),
     ),
 }
 
-ROUTE_POLICIES: dict[tuple[MethodEnum, str], PolicyEnum] = {
-    (MethodEnum.GET, "/status"): PolicyEnum.STATUS,
-    (MethodEnum.POST, "/login"): PolicyEnum.LOGIN,
-    (MethodEnum.POST, "/sign-up"): PolicyEnum.SIGNUP,
-    (MethodEnum.POST, "/refresh"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.PATCH, "/logout"): PolicyEnum.MUTATION,
-    (MethodEnum.GET, "/domain/available"): PolicyEnum.AVAILABILITY,
-    (MethodEnum.GET, "/api/domain/available"): PolicyEnum.AVAILABILITY,
-    (MethodEnum.POST, "/recovery/send"): PolicyEnum.RECOVERY,
-    (MethodEnum.POST, "/recovery/verify"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.POST, "/email/send"): PolicyEnum.EMAIL,
-    (MethodEnum.POST, "/email/verify"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.DELETE, "/deletion/send"): PolicyEnum.EMAIL,
-    (MethodEnum.DELETE, "/deletion/verify"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.POST, "/mfa/verify"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.DELETE, "/mfa/recovery"): PolicyEnum.CODE_CHECK,
-    (MethodEnum.POST, "/kofi/webhook"): PolicyEnum.WEBHOOK,
+ROUTE_POLICIES: dict[tuple[Method, str], PE] = {
+    (Method.GET, "/status"): PE.STATUS,
+    (Method.POST, "/login"): PE.LOGIN,
+    (Method.POST, "/sign-up"): PE.SIGNUP,
+    (Method.POST, "/refresh"): PE.CODE_CHECK,
+    (Method.PATCH, "/logout"): PE.MUTATION,
+    (Method.GET, "/domain/available"): PE.AVAILABILITY,
+    (Method.GET, "/api/domain/available"): PE.AVAILABILITY,
+    (Method.POST, "/recovery/send"): PE.RECOVERY,
+    (Method.POST, "/recovery/verify"): PE.CODE_CHECK,
+    (Method.POST, "/email/send"): PE.EMAIL,
+    (Method.POST, "/email/verify"): PE.CODE_CHECK,
+    (Method.DELETE, "/deletion/send"): PE.EMAIL,
+    (Method.DELETE, "/deletion/verify"): PE.CODE_CHECK,
+    (Method.POST, "/mfa/verify"): PE.CODE_CHECK,
+    (Method.DELETE, "/mfa/recovery"): PE.CODE_CHECK,
+    (Method.POST, "/kofi/webhook"): PE.WEBHOOK,
 }
 
 
 def get_policy(method: str, path: str) -> Policy:
-    method = MethodEnum.from_str(method.upper())
+    method = Method.from_str(method.upper())
     named_path = "/serveo/tunnels/{tunnel_id}" if path.startswith("/serveo/tunnels/") else path
     policy_name = ROUTE_POLICIES.get((method, named_path))
 
@@ -198,12 +347,12 @@ def get_policy(method: str, path: str) -> Policy:
 
     # Set policies based on group and HTTP method
     if path.startswith("/api/"):
-        return POLICIES[PolicyEnum.API_READ if method == MethodEnum.GET else PolicyEnum.API_MUTATION]
+        return POLICIES[PE.API_READ if method == Method.GET else PE.API_MUTATION]
     if path.startswith("/admin/"):
-        return POLICIES[PolicyEnum.ADMIN_READ if method == MethodEnum.GET else PolicyEnum.ADMIN_MUTATION]
+        return POLICIES[PE.ADMIN_READ if method == Method.GET else PE.ADMIN_MUTATION]
     if path.startswith(("/domain/", "/serveo/")):
-        return POLICIES[PolicyEnum.READ if method == MethodEnum.GET else PolicyEnum.DNS_MUTATION]
-    return POLICIES[PolicyEnum.READ if method == MethodEnum.GET else PolicyEnum.MUTATION]
+        return POLICIES[PE.READ if method == Method.GET else PE.DNS_MUTATION]
+    return POLICIES[PE.READ if method == Method.GET else PE.MUTATION]
 
 
 class RedisStore:
@@ -238,13 +387,21 @@ def client_ip(request: Request) -> str:
 
 
 def identity(request: Request, scope: Scope) -> str:
-    if scope == "ip":
+    if scope == Scope.IP:
         return client_ip(request)
 
     try:
         token = parse_headers(request.headers)
+        if scope == Scope.ACCOUNT:
+            account_id = Session.access_token_subject(token)
+            if account_id:
+                return f"account:{hashlib.sha256(account_id.encode()).hexdigest()}"
         return f"{scope}:{hashlib.sha256(token.encode()).hexdigest()}"
     except Exception:
+        if scope == Scope.ACCOUNT:
+            username = request.query_params.get("username")
+            if username:
+                return f"account:{hashlib.sha256(username.strip().casefold().encode()).hexdigest()}"
         return client_ip(request)
 
 
@@ -261,11 +418,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
         policy = get_policy(request.method, request.url.path)
-        for limit in policy.limits:
+        for limit in policy.limits if isinstance(policy.limits, tuple) else (policy.limits,):
             subject = identity(request, limit.scope)
-            key = f"rate-limit:{policy.name}:{limit.scope}:{subject}:{int(time.time() // limit.secs)}"
-            count, retry_after = self.store.consume(key, limit.secs)
-            if count > limit.max:
+            key = f"rate-limit:{policy.name}:{limit.scope}:{subject}:{int(time.time() // limit.time_window)}"
+            count, retry_after = self.store.consume(key, limit.time_window)
+            if count > limit.max_requests:
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "Rate limit exceeded", "retry_after": retry_after},

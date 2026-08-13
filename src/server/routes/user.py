@@ -22,7 +22,7 @@ from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
 from mail.email import Email
-from security.api import Api, ApiType
+from security.api import Api, ApiKeyLimitError, ApiType
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
@@ -217,6 +217,7 @@ class User:
             methods=["POST"],
             responses={
                 403: {"description": "User does not own requested domains"},
+                409: {"description": "Account already has an API key"},
                 460: {"description": "Invalid session"},
             },
             status_code=200,
@@ -514,6 +515,8 @@ class User:
             )
         except PermissionError:
             raise HTTPException(403, detail="You need to own domains specified")
+        except ApiKeyLimitError:
+            raise HTTPException(409, detail="Only one API key is allowed per account")
 
         return api_key
 
@@ -648,7 +651,10 @@ class User:
         self.table.delete_document({"_id": user_id})
 
     def send_recovery_link(self, username: str) -> None:  # username being a plaintext string
-        self.email.send_password_code(username)
+        try:
+            self.email.send_password_code(username)
+        except Exception:
+            logger.exception("Failed to send password recovery email")
 
     def reset_password(self, body: PasswordReset) -> None:
         code_status: CodeStatus = self.codes.is_valid(body.code, "recovery")

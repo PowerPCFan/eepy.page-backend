@@ -33,6 +33,17 @@ converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 is_debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
+ERROR_RESPONSE = {
+    "content": {
+        "application/json": {
+            "schema": {
+                "type": "object",
+                "required": ["detail"],
+                "properties": {"detail": {"type": "string"}},
+            },
+        },
+    },
+}
 
 
 class Auth:
@@ -65,7 +76,7 @@ class Auth:
             methods=["POST"],
             responses={
                 200: {
-                    "description": "Login successfull",
+                    "description": "Login successful",
                     "content": {
                         "application/json": {
                             "__Host-auth-token": "Token you can use for accessing things",
@@ -77,7 +88,7 @@ class Auth:
                 404: {"description": "User not found"},
                 401: {"description": "Invalid password"},
                 412: {"description": "2FA code required to be passed in X-MFA-Code"},
-                429: {"description": "Invalid captcha"},
+                422: {"description": "Invalid request data", **ERROR_RESPONSE},
             },
             tags=["account", "session"],
         )
@@ -106,10 +117,9 @@ class Auth:
             self.sign_up,
             methods=["POST"],
             responses={
-                200: {"description": "Sign up successfull"},
-                422: {"description": "Email is already in use"},
+                200: {"description": "Sign up successful"},
+                422: {"description": "Invalid request data", **ERROR_RESPONSE},
                 409: {"description": "Username is already in use"},
-                429: {"description": "Invalid captcha"},
             },
             status_code=200,
             tags=["account"],
@@ -140,7 +150,7 @@ class Auth:
         # plain_username can backfill display-name/username for older rows that only stored hashes.
 
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
-            raise HTTPException(429, detail="Invalid captcha")
+            raise HTTPException(422, detail="Invalid captcha")
 
         plain_username = body.plain_username
         if Encryption.sha256(plain_username or "") != body.username_hash:
@@ -236,7 +246,7 @@ class Auth:
         x_captcha_code: Annotated[str, Header()],
     ) -> None:
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
-            raise HTTPException(429, detail="Invalid captcha")
+            raise HTTPException(422, detail="Invalid captcha")
 
         country = self.handler.getDetails(request.client.host).all  # type: ignore[union-attr]
         from_url: str = request.headers.get("Origin", "https://www.eepy.page")

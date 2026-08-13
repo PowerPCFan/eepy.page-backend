@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from database.tables.users import Users, UserType
-from security.api import Api, ApiError, ApiPermissionError, ApiRangeError
+from security.api import Api, ApiError, ApiKeyLimitError, ApiPermissionError, ApiRangeError
 from security.session import Session
 
 valid_key: Api = MagicMock(spec=Api)
@@ -26,6 +26,15 @@ class TestUserApi:
             ["register", "modify"],
             domains=["test.eepy.page"],
         )
+
+        with pytest.raises(ApiKeyLimitError):
+            Api.create(
+                test_user["_id"],
+                users,
+                "second key",
+                ["register"],
+                domains=["test.eepy.page"],
+            )
 
         with pytest.raises(PermissionError):
             Api.create(

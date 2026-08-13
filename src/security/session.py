@@ -185,7 +185,17 @@ class Session:
         type: Literal["any", "refresh", "access"] = "any",
     ) -> AccessTokenData | RefreshTokenData | InvalidToken:
         """
-        Gets the payload insided the JWT token. Returns InvalidToken enum if toke nis inalid in some way
+        Gets the payload insided the JWT token.
+
+        :param token: The JWT token to decode.
+        :type token: str
+
+        :param type: The expected type of the token. Can be "any", "refresh", or "access".
+        :type type: str
+
+        :returns AccessTokenData | RefreshTokenData: Returned if the token is valid and of the expected type.
+
+        :returns InvalidToken: Returned if any part of the token is invalid.
         """
         try:
             data = jwt.decode(
@@ -210,6 +220,13 @@ class Session:
         except (DecodeError, ValueError):
             logger.warning("Invalid token payload")
             return InvalidToken.invalid
+
+    @staticmethod
+    def access_token_subject(token: str) -> str | None:
+        data = Session.__get_payload(token, "access")
+        if isinstance(data, InvalidToken):
+            return None
+        return data["sub"]
 
     @staticmethod
     def refresh(

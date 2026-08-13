@@ -5,6 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
+from database.exceptions import FilterMatchError
 from database.tables.domains import Domains
 from security.encryption import Encryption
 
@@ -19,6 +20,9 @@ class ApiPermissionError(Exception): ...
 
 
 class ApiRangeError(Exception): ...
+
+
+class ApiKeyLimitError(Exception): ...
 
 
 type ApiPermission = Literal["register", "modify", "delete", "list", "userdetails"]
@@ -218,10 +222,20 @@ class Api:
         }
 
         encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
-        users.modify_document(
-            filter={"_id": username},
-            operation="$set",
-            key=f"api-keys.{encrypted_api_key}",
-            value=key,
-        )
+        try:
+            users.modify_document(
+                filter={
+                    "_id": username,
+                    "$or": [
+                        {"api-keys": {}},
+                        {"api-keys": {"$exists": False}},
+                    ],
+                },
+                operation="$set",
+                key=f"api-keys.{encrypted_api_key}",
+                value=key,
+            )
+        except FilterMatchError:
+            msg_1 = "Only one API key is allowed per account"
+            raise ApiKeyLimitError(msg_1) from None
         return api_key
