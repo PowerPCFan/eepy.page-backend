@@ -63,7 +63,7 @@ class Domains(Users):
         :param domain: the full domain (e.g a.eepy.page)
         :type domain: str
         :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks something like this: (a, eepy.page)
-        :rtype: Tuple[str, str]
+        :rtype: tuple[str, str]
         """  # noqa: E501
         tld: str = "eepy.page"
 

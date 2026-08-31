@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from database.tables.domains import DomainRecord, Domains
+from database.tables.domains import DomainFormat, DomainRecord, Domains
 from database.tables.users import Users, UserType
 from dns_.dns import sanitize
 from dns_.validation import Validation
@@ -95,6 +95,34 @@ class TestDomainValidation:
         assert not validation.is_free("api.eepy.page", "A", {}, raise_exceptions=False)
         assert not validation.is_free("www.worksonmymachine.top", "A", {}, raise_exceptions=False)
         assert not validation.is_free("_acme-challenge.eepy.page", "TXT", {}, raise_exceptions=False)
+        assert not validation.is_free("_acme-challenge.eepy.page", "A", {}, raise_exceptions=False)
+
+    def test_underscore_sub_subdomain(self, validation: Validation) -> None:
+        user_domains: dict[str, DomainFormat] = {
+            "b.eepy.page": {"type": "A", "ip": "1.2.3.4", "registered": 0},
+            "c.eepy.page": {"type": "A", "ip": "1.2.3.4", "registered": 0},
+        }
+
+        # --- Direct subdomain of eepy.page (_a.eepy.page) ---
+        # ALWAYS BLOCKED for all record types
+        for rec_type in ["TXT", "CNAME", "A", "AAAA"]:
+            assert not validation.is_free("_a.eepy.page", rec_type, {}, raise_exceptions=False)
+
+        # --- Sub-subdomain (_a.b.eepy.page) ---
+        # TXT & CNAME allowed if user owns parent domain 'b.eepy.page'
+        assert validation.is_free("_a.b.eepy.page", "TXT", user_domains, raise_exceptions=False)
+        assert validation.is_free("_a.b.eepy.page", "CNAME", user_domains, raise_exceptions=False)
+        # A & AAAA disallowed (LDH hostnames cannot contain underscores)
+        assert not validation.is_free("_a.b.eepy.page", "A", user_domains, raise_exceptions=False)
+        assert not validation.is_free("_a.b.eepy.page", "AAAA", user_domains, raise_exceptions=False)
+
+        # --- Sub-sub-subdomain (_a.b.c.eepy.page) ---
+        # TXT & CNAME allowed if user owns root parent domain 'c.eepy.page'
+        assert validation.is_free("_a.b.c.eepy.page", "TXT", user_domains, raise_exceptions=False)
+        assert validation.is_free("_a.b.c.eepy.page", "CNAME", user_domains, raise_exceptions=False)
+        # A & AAAA disallowed (LDH hostnames cannot contain underscores)
+        assert not validation.is_free("_a.b.c.eepy.page", "A", user_domains, raise_exceptions=False)
+        assert not validation.is_free("_a.b.c.eepy.page", "AAAA", user_domains, raise_exceptions=False)
 
     def test_admin_can_register_reserved_domain(self, validation: Validation) -> None:
         assert validation.is_free(

@@ -114,27 +114,30 @@ class Validation:
 
     @staticmethod
     def record_name_valid(name: str, type: str) -> bool:
-        always_allowed: list[str] = list(string.ascii_letters)
+        if not name or len(name.removesuffix(".")) > 253:
+            return False
 
-        always_allowed.extend(list(string.digits))
+        always_allowed: list[str] = list(string.ascii_letters + string.digits)
+
+        if type.upper() in {"TXT", "CNAME"}:
+            always_allowed.append("_")
+
         allowed_end = always_allowed.copy()
         allowed = always_allowed.copy()
         allowed.extend([".", "-"])
 
-        for part in name.removesuffix(".").split("."):
-            if len(part) == 0:
-                return False
-
-        if type.upper() in {"TXT", "CNAME"}:
-            allowed.append("_")
-            always_allowed.append("_")
-
         if type.upper() == "CNAME":
             allowed_end.append(".")
 
+        for part in name.removesuffix(".").split("."):
+            if len(part) == 0 or len(part) > 63:
+                return False
+            if part.startswith("-") or part.endswith("-"):
+                return False
+
         valid: bool = all(char in allowed for char in name)
 
-        if not name or (type.upper() != "TXT" and (name[0] not in always_allowed or name[-1] not in allowed_end)):
+        if type.upper() != "TXT" and (name[0] not in always_allowed or name[-1] not in allowed_end):
             valid = False
         return valid
 
@@ -189,15 +192,13 @@ class Validation:
     @staticmethod
     def is_reserved_domain(name: str) -> bool:
         canonical_name = Domains.canonical_domain_name(name)
-        for tld in get_args(AVAILABLE_TLDS):
-            if canonical_name == tld:
-                return True
-            if not canonical_name.endswith(f".{tld}"):
-                continue
+        subdomain = Domains.separate_domain_into_parts(canonical_name)[0]
 
-            labels = [label for label in (canonical_name[: -(len(tld) + 1)]).split(".") if label]
-            return len(labels) == 1 and Validation.is_reserved_label(labels[0])
-        return False
+        if not subdomain:
+            return True
+
+        labels = [label for label in subdomain.split(".") if label]
+        return len(labels) == 1 and Validation.is_reserved_label(labels[0])
 
     @staticmethod
     def find_required_domain(full_domain: str) -> str | None:

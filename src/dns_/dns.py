@@ -72,7 +72,7 @@ class DNS:
         """
         Modifies a DNS record for a given domain.
         Args:
-            values (List[str]): A list of record values.
+            values (list[str]): A list of record values.
             type (TYPES): The type of DNS record (e.g., A, CNAME, TXT).
             domain (str): The domain name for the DNS record.
             user_id (str): The ID of the user registering the domain
@@ -297,7 +297,7 @@ class DNS:
         """Deleted multiple records at once
 
         Args:
-            domains (Dict[str, TYPES]): A set of keys {domain: type}
+            domains (dict[str, TYPES]): A set of keys {domain: type}
         """
 
         logger.info(f"mass deleting records {list(domains.keys())}")

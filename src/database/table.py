@@ -26,7 +26,7 @@ class Table:
         """Finds and item from the database
 
         :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
-        :type filter: Dict[str, Any]
+        :type filter: dict[str, Any]
         :return: the item found, None if the item isnt found
         :rtype: dict | None
         """
@@ -39,9 +39,9 @@ class Table:
         """Finds multiple items from the database
 
         :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
-        :type filter: Dict[str, Any]
+        :type filter: dict[str, Any]
         :return: list of items found. returns an empty list if None is found
-        :rtype: List[dict]
+        :rtype: list[dict]
         """
         cursor: Cursor = self.table.find(filter)
         return list(cursor)
@@ -50,7 +50,7 @@ class Table:
         """Gets every item inside a specific table.
 
         :return: a list of every document inside the collection
-        :rtype: List[dict]
+        :rtype: list[dict]
         """
         cursor: Cursor = self.table.find()
         return list(cursor)
@@ -76,7 +76,7 @@ class Table:
         """Modifies an item in the database
 
         :param filter: a filter for the document that will be modified
-        :type filter: Dict[str, Any]
+        :type filter: dict[str, Any]
         :param operation: what operation to do. Uses MongoDB query operators (e.g $set)
         :type operation: str
         :param key: what key to change
