@@ -72,7 +72,10 @@ sentry_sdk.init(
 
 app = FastAPI()
 app.state.safe_domains = [
+    "https://eepy.page",
     "https://www.eepy.page",
+    "https://beta.eepy.page",
+    "https://alpha.eepy.page",
     "https://development.eepy.page",
     "https://canary.eepy.page",
     "http://localhost:5173",

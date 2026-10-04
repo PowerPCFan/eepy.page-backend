@@ -190,14 +190,15 @@ class Auth:
 
         if session_status["success"]:
             resp = JSONResponse({"auth-token": session_status["access_token"]})
+            cookie_name = "refresh-token" if is_debug else "__Host-refresh-token"
 
             resp.set_cookie(
-                "__Host-refresh-token",
+                cookie_name,
                 session_status["refresh_token"] or "invalid code",
                 max_age=REFRESH_AMOUNT,
                 path="/",
                 httponly=True,
-                samesite="lax",
+                samesite="lax" if is_debug else "none",
                 secure=not is_debug,
             )
 
@@ -205,10 +206,21 @@ class Auth:
         raise HTTPException(status_code=500, detail="Failed to create session")
 
     def refresh(self, request: Request) -> JSONResponse:
-        refresh_token: str | None = request.cookies.get("__Host-refresh-token")
+        origin = request.headers.get("origin")
+        if origin and not is_debug:
+            safe_domains = getattr(request.app.state, "safe_domains", [])
+            if origin not in safe_domains:
+                logger.warning(f"Refresh rejected from unauthorized origin: {origin}")
+                raise HTTPException(status_code=403, detail="Unauthorized origin")
+
+        refresh_token: str | None = (
+            request.cookies.get("__Host-refresh-token")
+            if not is_debug
+            else (request.cookies.get("refresh-token") or request.cookies.get("__Host-refresh-token"))
+        )
 
         if not refresh_token:
-            raise HTTPException(status_code=412, detail="__Host-refresh-token cookie missing")
+            raise HTTPException(status_code=412, detail="Refresh token cookie missing")
 
         client = request.client
         if not client:
@@ -226,14 +238,15 @@ class Auth:
 
         access_token, refresh_token = session_data
         resp = JSONResponse({"auth-token": access_token})
+        cookie_name = "refresh-token" if is_debug else "__Host-refresh-token"
 
         resp.set_cookie(
-            "__Host-refresh-token",
+            cookie_name,
             refresh_token,
             path="/",
             httponly=True,
             max_age=REFRESH_AMOUNT,
-            samesite="lax",
+            samesite="lax" if is_debug else "none",
             secure=not is_debug,
         )
 
