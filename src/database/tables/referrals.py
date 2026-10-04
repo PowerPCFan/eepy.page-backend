@@ -113,10 +113,27 @@ class Referrals(Table):
             msg = "Referral does not exist!"
             raise ValueError(msg)
 
-        logger.info(f"Updating user {referral['owner']} max domains")
+        owner: UserType | None = self.users.find_user({"_id": referral["owner"]})
+        if owner is None:
+            logger.warning("Referral owner does not exist!")
+            msg = "Referral owner does not exist!"
+            raise ValueError(msg)
+
+        current_referred_count: int = owner.get("referred-count", 0)
+        new_referred_count: int = current_referred_count + 1
+
+        update_ops: dict = {"$inc": {"referred-count": 1}}
+
+        # Grant 1 extra domain for every 2 verified referrals, capped at 5 bonus domains (10 referrals)
+        if new_referred_count <= 10 and new_referred_count % 2 == 0:
+            logger.info(
+                f"Granting extra domain to referral owner {referral['owner']} (referred count: {new_referred_count})"
+            )
+            update_ops["$inc"]["permissions.limits.max-domains"] = 1
+
         self.users.table.update_one(
             {"_id": referral["owner"]},
-            {"$inc": {"permissions.limits.max-domains": 1, "referred-count": 1}},
+            update_ops,
         )
 
         self.modify_document(

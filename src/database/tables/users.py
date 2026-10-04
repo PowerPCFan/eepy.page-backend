@@ -253,8 +253,7 @@ class Users(Table):
 
         if refer_code:
             if self.referrals.check(refer_code):
-                logger.info("User was referred, adding extra domain")
-                account_data["permissions"]["limits"]["max-domains"] += 1
+                logger.info("User was referred")
                 account_data["referred-by"] = refer_code
             else:
                 logger.warning("Invalid referral code!")
