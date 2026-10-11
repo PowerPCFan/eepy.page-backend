@@ -332,7 +332,9 @@ ROUTE_POLICIES: dict[tuple[Method, str], PE] = {
     (Method.DELETE, "/deletion/send"): PE.EMAIL,
     (Method.DELETE, "/deletion/verify"): PE.CODE_CHECK,
     (Method.POST, "/mfa/verify"): PE.CODE_CHECK,
+    (Method.DELETE, "/mfa/delete"): PE.CODE_CHECK,
     (Method.DELETE, "/mfa/recovery"): PE.CODE_CHECK,
+    (Method.POST, "/redeem"): PE.CODE_CHECK,
     (Method.POST, "/kofi/webhook"): PE.WEBHOOK,
 }
 

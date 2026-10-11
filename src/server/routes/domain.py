@@ -118,8 +118,6 @@ class Domain:
         self.current_queue_user: str = ""
 
         self._stop_event: Event = Event()
-        self._thread: Thread = Thread(target=self.handle_deque)
-        self._thread.start()
 
         self.router = APIRouter(prefix="/domain")
 
@@ -190,29 +188,6 @@ class Domain:
                 460: {"description": "Invalid session"},
             },
             tags=["domain"],
-        )
-
-        self.router.add_api_route(
-            "/vercel/join",
-            self.vercel_queue_join,
-            methods=["POST"],
-            responses={
-                200: {"description": "Joined queue"},
-                460: {"description": "Invalid session"},
-            },
-            tags=["domain", "vercel"],
-        )
-
-        self.router.add_api_route(
-            "/vercel/get",
-            self.vercel_queue_get,
-            methods=["GET"],
-            responses={
-                200: {"description": "Position in queue"},
-                404: {"description": "User not in queue"},
-                460: {"description": "Invalid session"},
-            },
-            tags=["domain", "vercel"],
         )
 
         logger.info("Initialized")
@@ -325,62 +300,3 @@ class Domain:
     def is_available(self, name: str) -> None:
         if not self.dns_validation.is_free(name, "A", {}, raise_exceptions=False):
             raise HTTPException(status_code=409, detail=f"Domain {name} is not available")
-
-    def handle_deque(self) -> None:
-        while not self._stop_event.is_set():
-            while len(self.verification_queue) != 0 and not self._stop_event.is_set():
-                user_id: str = self.verification_queue[0]
-                user_stuff: dict | None = self.verification_dict.get(user_id)
-
-                if user_stuff is None:
-                    logger.error("Verification value not found")
-                    continue
-
-                logger.info("Updating Vercel verification...")
-
-                self.dns.modify_domain(
-                    values=user_stuff.get("verification", None),  # pyright: ignore[reportArgumentType]
-                    type="TXT",
-                    old_type="TXT",
-                    domain=f"_vercel{user_stuff.get('tld', '')}",
-                    user_id=user_id,
-                )
-                self.current_queue_user = user_id
-
-                if self._stop_event.wait(180):
-                    break
-                self.verification_queue.popleft()
-                self.current_queue_user = ""
-            self._stop_event.wait(1)
-
-    # TODO: improve this, maybe switch the whole handle_deque thing to like an async task
-    def stop(self, timeout: float = 5.0) -> None:
-        try:
-            self._stop_event.set()
-            if hasattr(self, "_thread"):
-                self._thread.join(timeout)
-        except Exception:
-            logger.exception("Error stopping verification thread")
-
-    @Session.requires_auth
-    def vercel_queue_join(self, value: str, tld: str, session: Session = Depends(converter.create)) -> None:
-        if session.user_id not in self.verification_queue:
-            self.verification_queue.append(session.user_id)
-        else:
-            logger.info("User already in queue")
-
-        logger.info(f"Joining with {value} and tld {tld}")
-        self.verification_dict[session.user_id] = {"verification": value, "tld": tld}
-
-    @Session.requires_auth
-    def vercel_queue_get(self, session: Session = Depends(converter.create)) -> int:
-        if session.user_id not in self.verification_queue:
-            raise HTTPException(
-                status_code=404,
-                detail="User not in the queue. (see /domain/vercel/join)",
-            )
-
-        if session.user_id == self.current_queue_user:
-            raise HTTPException(status_code=408, detail="Domain is currently on")
-
-        return self.verification_queue.index(session.user_id)
