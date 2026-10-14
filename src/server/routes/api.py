@@ -111,6 +111,7 @@ class API:
             status_code=200,
             responses={
                 200: {"description": "Domain deleted successfully"},
+                400: {"description": "Cannot delete domain while subdomains exist"},
                 403: {"description": "Domain does not exist, or user does not own it."},
                 404: {
                     "description": "Domain type couldn't be fetched, specify the type using the query parameter `type`",
@@ -299,6 +300,16 @@ class API:
                     detail="Domain type could not be fetched. Please specify it manually with the `type` query param",
                 )
             type = domain_data["type"]
+
+        user_domains = api.user_cache_data.get("domains") if api.user_cache_data else None
+        if user_domains and self.domains.will_domain_be_removed(user_domains, domain, type):
+            subdomains = self.domains.get_child_subdomains(user_domains, domain)
+            if subdomains:
+                subdomains_str = ", ".join(subdomains)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot delete domain while subdomains exist ({subdomains_str}). Please delete subdomains first.",  # noqa: E501
+                )
 
         if not self.domains.delete_domain(api.username, domain, type):
             raise HTTPException(

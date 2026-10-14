@@ -1,7 +1,7 @@
 import logging
 import time
 from collections import deque
-from threading import Event, Thread
+from threading import Event
 from typing import get_args
 
 from fastapi import APIRouter, Depends
@@ -172,6 +172,7 @@ class Domain:
             status_code=200,
             responses={
                 200: {"description": "Domain deleted successfully"},
+                400: {"description": "Cannot delete domain while subdomains exist"},
                 403: {"description": "Domain does not exist, or user does not own it."},
                 460: {"description": "Invalid session"},
             },
@@ -280,6 +281,16 @@ class Domain:
 
     @Session.requires_auth
     def delete(self, domain: str, type: str | None = None, session: Session = Depends(converter.create)) -> None:
+        user_domains = session.user_cache_data.get("domains") if session.user_cache_data else None
+        if user_domains and self.domains.will_domain_be_removed(user_domains, domain, type):
+            subdomains = self.domains.get_child_subdomains(user_domains, domain)
+            if subdomains:
+                subdomains_str = ", ".join(subdomains)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot delete domain while subdomains exist ({subdomains_str}). Please delete subdomains first.",  # noqa: E501
+                )
+
         if not self.domains.delete_domain(session.username, domain, type):
             raise HTTPException(
                 status_code=403,

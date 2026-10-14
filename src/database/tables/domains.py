@@ -151,6 +151,38 @@ class Domains(Users):
     ) -> bool:
         return Domains.get_domain(domains, domain, type) is not None
 
+    @staticmethod
+    def get_child_subdomains(
+        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        parent_domain: str,
+    ) -> list[str]:
+        parent_canonical = Domains.canonical_full_domain_name(parent_domain)
+        subdomains: list[str] = []
+        for record in Domains.normalize_domains(domains):
+            name = record["name"]
+            if name != parent_canonical and name.endswith(f".{parent_canonical}") and name not in subdomains:
+                subdomains.append(name)
+        return subdomains
+
+    @staticmethod
+    def will_domain_be_removed(
+        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domain: str,
+        type: str | None = None,
+    ) -> bool:
+        canonical_domain = Domains.canonical_full_domain_name(domain)
+        matching = [
+            record
+            for record in Domains.normalize_domains(domains)
+            if record["name"] == canonical_domain
+        ]
+        if not matching:
+            return False
+        if type is None:
+            return len(matching) == 1
+        remaining = [record for record in matching if record["type"] != type.upper()]
+        return len(remaining) == 0
+
     def add_domain(
         self,
         target_user: str,
