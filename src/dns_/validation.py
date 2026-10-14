@@ -154,6 +154,9 @@ class Validation:
 
         for value in values:
             if type.upper() == "CNAME":
+                if len(values) != 1:
+                    logger.info("CNAME record can only have a single value")
+                    all_valid = False
                 if not Validation.record_name_valid(value, type):
                     all_valid = False
 

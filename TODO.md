@@ -1,3 +1,20 @@
+- fix the fact that a user can register domain.eepy.page, sub.domain.eepy.page, and then delete domain.eepy.page and sub.domain will (i think) still work
+- backend password requirements
+- remove old items from this todo list
+- add back internationalization? likely a backend-frontend hybrid system where the frontend sends a locale code to the backend on requests, so then the backend returns responses in that language, but frontend text is also localized through shared json files across frontend/backend
+  - if i do this make sure on the frontend to make sure things are fit for i18n so remove button/text fixed widths etc and switch to tricks like this to avoid buttons from jumping around, and similar stuff for other text issues:
+  -
+  ```html
+  <Button>
+    <span class="inline-grid">
+      <!-- conditionally set invisible class on the <span>s below, based on which text you want to show -->
+      <span class="col-start-1 row-start-1">Save Changes</span>
+      <span class="col-start-1 row-start-1">All Changes Saved</span>
+    </span>
+  </Button>
+  ```
+- make usernames case-insensitive, case-preserving - so let's say a user's username is AwesomeUser, they can log in with awesomeuser or awesomeUser and it'll work, but then everywhere where username is displayed it'll still show AwesomeUser
+- possibly switch to an existing auth system of some sort??
 - abuse detection
 - status codes (they seem quite odd)
 - maybe set up some sort of api docs system (theres api.eepy.page/docs for the openapi thing but those arent too good, like a mkdocs type thing)
