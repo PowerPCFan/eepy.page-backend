@@ -11,9 +11,8 @@ class SignUp(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username_hash: str
+    username: str
     password: str
-    plain_username: str | None = None
 
 
 class PasswordReset(BaseModel):
@@ -22,7 +21,7 @@ class PasswordReset(BaseModel):
 
 
 class MfaRecovery(BaseModel):
-    username_hash: str
+    username: str
     password: str
 
 

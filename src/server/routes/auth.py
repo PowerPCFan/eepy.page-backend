@@ -152,12 +152,8 @@ class Auth:
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
             raise HTTPException(422, detail="Invalid captcha")
 
-        plain_username = body.plain_username
-        if Encryption.sha256(plain_username or "") != body.username_hash:
-            logger.warning("Plain username doesnt match login... Setting as none")
-            plain_username = None
-
-        user_data: UserType | None = self.table.find_user({"_id": body.username_hash})
+        search_hash = Encryption.sha256(body.username.lower())
+        user_data: UserType | None = self.table.find_user({"username": search_hash})
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
@@ -172,11 +168,11 @@ class Auth:
         if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        logger.info(f"Login attempt from {body.username_hash}")
+        logger.info(f"Login attempt from {user_data['_id']}")
 
         session_status: SessionCreateStatus = Session.create(
-            username=body.username_hash,
-            real_username=plain_username,
+            username=user_data["_id"],
+            real_username=body.username,
             mfa_code=x_mfa_code,
             ip=ip,
             user_agent=request.headers.get("User-Agent", "Unknown"),

@@ -355,7 +355,8 @@ class User:
         body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
     ) -> None:
-        user_data: UserType | None = self.table.find_user({"_id": body.username_hash})
+        search_hash = Encryption.sha256(body.username.lower())
+        user_data: UserType | None = self.table.find_user({"username": search_hash})
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
@@ -371,7 +372,7 @@ class User:
 
         try:
             Session.remove_mfa_static(
-                body.username_hash,
+                user_data["_id"],
                 self.table,
                 user_data,
                 x_backup_code,

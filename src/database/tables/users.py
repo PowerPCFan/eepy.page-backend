@@ -92,7 +92,7 @@ UserType = TypedDict(
         # Password is an Argon2 hash for email/password accounts.
         "password": str | None,
         "display-name": str,
-        "username": NotRequired[str],
+        "username": str,
         "lang": str,
         "country": CountryType | dict,
         "email-hash": NotRequired[str],

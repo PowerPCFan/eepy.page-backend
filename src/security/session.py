@@ -342,7 +342,7 @@ class Session:
         user_manager.start()  # updates `last-login` and `accessed-from` fields of user
 
         if real_username and (
-            not user_data.get("display-name") or user_data.get("display-name").startswith("gAAAAA")  # type: ignore[union-attr]
+            not user_data.get("display-name") or not user_data.get("username")
         ):
             logger.info("Updating display-name and username")
             users.table.update_one(

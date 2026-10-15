@@ -132,15 +132,15 @@ class Email:
         return True
 
     def send_password_code(self, username: str) -> bool:
-        hash_username: str = Encryption.sha256(username)
-        user_data: UserType | None = self.users.find_user({"_id": hash_username})
+        lowercase_hash: str = Encryption.sha256(username.lower())
+        user_data: UserType | None = self.users.find_user({"username": lowercase_hash})
 
         if user_data is None:
             logger.debug(f"User {username} does not exist")
             return False
 
         user_email = self.encryption.decrypt(user_data["email"])
-        code = self.codes.create_code("recovery", hash_username)
+        code = self.codes.create_code("recovery", user_data["_id"])
 
         try:
             resend.Emails.send(
