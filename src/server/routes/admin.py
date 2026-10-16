@@ -210,6 +210,7 @@ class Admin:
             methods=["GET"],
             responses={
                 200: {"description": "User found"},
+                400: {"description": "Invalid regex pattern"},
                 404: {"description": "User not found"},
                 460: {"description": "Invalid session"},
                 461: {"description": "Invalid permissions"},
@@ -591,9 +592,16 @@ class Admin:
     def find_user_by_username(
         self,
         username: str,
+        regex: bool = False,
         session: Session = Depends(converter.create),
-    ) -> AccountData:
-        user_data: AccountData | None = self.admin_tools.find_by_username(username)
+    ) -> AccountData | list[AccountData]:
+        try:
+            user_data: AccountData | list[AccountData] | None = self.admin_tools.find_by_username(
+                username,
+                regex=regex,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         if not user_data:
             raise HTTPException(status_code=404, detail="User not found")

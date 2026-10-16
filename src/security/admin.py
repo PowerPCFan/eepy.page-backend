@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -134,29 +135,57 @@ class Admin:
 
         return self.get_user_details_by_id(user_data["_id"])
 
-    def find_by_username(self, username: str) -> AccountData | None:
+    def find_by_username(self, username: str, regex: bool = False) -> AccountData | list[AccountData] | None:
         """
-        ALmost the same as get_user_details_by_id, but usernames are not case sensitive
+        ALmost the same as get_user_details_by_id, but usernames are not case sensitive.
+        When regex is true, searches across decrypted usernames with regex
         """
+        if not regex:
+            user: UserType | None = self.users.find_user(
+                {
+                    "$or": [
+                        {"_id": Encryption.sha256(username)},
+                        {"username": Encryption.sha256(username.lower())},
+                    ],
+                },
+            )
 
-        user: UserType | None = self.users.find_user(
-            {
-                "$or": [
-                    {"_id": Encryption.sha256(username)},
-                    {"username": Encryption.sha256(username.lower())},
-                ],
-            },
-        )
+            if not user:
+                return None
 
-        if not user:
-            return None
+            return self.get_user_details_by_id(user["_id"], user)
 
-        return self.get_user_details_by_id(user["_id"])
+        try:
+            pattern = re.compile(username, re.IGNORECASE)
+        except re.error as e:
+            msg = f"Invalid regex pattern: {e}"
+            raise ValueError(msg) from e
+
+        matching_users: list[AccountData] = []
+        cursor = self.users.table.find()
+        for raw_user in cursor:
+            migrated_user = self.users.perform_migrations(raw_user)
+
+            display_name_enc = migrated_user.get("display-name")
+            if not display_name_enc:
+                continue
+
+            try:
+                decrypted_username = self.users.encryption.decrypt(display_name_enc)
+            except Exception:  # noqa: S112
+                continue
+
+            if pattern.search(decrypted_username):
+                user_details = self.get_user_details_by_id(migrated_user["_id"], migrated_user)
+                if user_details:
+                    matching_users.append(user_details)
+
+        return matching_users
 
     def find_by_referral(self, referral_code: str) -> AccountData | None:
         referral: ReferralType | None = self.users.referrals.find_item(
             {"_id": self.users.encryption.sha256(referral_code)},
-        )  # type: ignore[assignment]
+        )  # pyright: ignore[reportAssignmentType]
 
         if referral is None:
             return None

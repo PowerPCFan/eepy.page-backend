@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 from typing import Annotated
 
@@ -31,6 +32,8 @@ from server.routes.models.user import (
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
+
+username_regex: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_-]{3,32}$")
 
 is_debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
 ERROR_RESPONSE = {
@@ -254,6 +257,12 @@ class Auth:
         body: SignUp,
         x_captcha_code: Annotated[str, Header()],
     ) -> None:
+        if not username_regex.match(body.username):
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be between 3 and 32 characters and only contain letters, numbers, underscores, and hyphens.",  # noqa: E501
+            )
+
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
             raise HTTPException(422, detail="Invalid captcha")
 
