@@ -171,11 +171,7 @@ class Domains(Users):
         type: str | None = None,
     ) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
-        matching = [
-            record
-            for record in Domains.normalize_domains(domains)
-            if record["name"] == canonical_domain
-        ]
+        matching = [record for record in Domains.normalize_domains(domains) if record["name"] == canonical_domain]
         if not matching:
             return False
         if type is None:

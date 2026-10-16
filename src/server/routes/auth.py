@@ -155,8 +155,7 @@ class Auth:
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
             raise HTTPException(422, detail="Invalid captcha")
 
-        search_hash = Encryption.sha256(body.username.lower())
-        user_data: UserType | None = self.table.find_user({"username": search_hash})
+        user_data: UserType | None = self.table.find_user_by_identifier(body.username)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
@@ -173,9 +172,15 @@ class Auth:
 
         logger.info(f"Login attempt from {user_data['_id']}")
 
+        real_username: str = (
+            self.encryption.decrypt(user_data["display-name"])
+            if user_data.get("display-name")
+            else (body.username if "@" not in body.username else "")
+        )
+
         session_status: SessionCreateStatus = Session.create(
             username=user_data["_id"],
-            real_username=body.username,
+            real_username=real_username,
             mfa_code=x_mfa_code,
             ip=ip,
             user_agent=request.headers.get("User-Agent", "Unknown"),

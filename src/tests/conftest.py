@@ -104,7 +104,7 @@ def load_user() -> UserType:
             "zc8qcUcMLNqE3Dbj": {"used": False},
         },
         "owned-tlds": [],
-    }
+    }  # pyright: ignore[reportAssignmentType]
 
     return mock_data
 

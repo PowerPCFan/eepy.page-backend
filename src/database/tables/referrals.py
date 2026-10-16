@@ -125,9 +125,9 @@ class Referrals(Table):
         update_ops: dict = {"$inc": {"referred-count": 1}}
 
         # Grant 1 extra domain for every 2 verified referrals, capped at 5 bonus domains (10 referrals)
-        if new_referred_count <= 10 and new_referred_count % 2 == 0:
+        if new_referred_count <= 10 and new_referred_count % 2 == 0:  # noqa: PLR2004
             logger.info(
-                f"Granting extra domain to referral owner {referral['owner']} (referred count: {new_referred_count})"
+                f"Granting extra domain to referral owner {referral['owner']} (referred count: {new_referred_count})",
             )
             update_ops["$inc"]["permissions.limits.max-domains"] = 1
 

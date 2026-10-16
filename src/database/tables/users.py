@@ -137,6 +137,28 @@ class Users(Table):
 
         return data
 
+    def find_user_by_identifier(self, identifier: str, find_banned: bool = False) -> UserType | None:
+        clean_id = identifier.strip()
+        lowercase_id = clean_id.lower()
+
+        search_conditions: list[dict] = [
+            {"username": Encryption.sha256(lowercase_id)},
+            {"_id": Encryption.sha256(clean_id)},
+        ]
+
+        if "@" in clean_id:
+            search_conditions.extend(
+                [
+                    {"email-hash": Encryption.sha256(lowercase_id + "supahcool")},
+                    {"email-hash": Encryption.sha256(clean_id + "supahcool")},
+                ],
+            )
+
+        return self.find_user(
+            {"$or": search_conditions} if len(search_conditions) > 1 else search_conditions[0],
+            find_banned=find_banned,
+        )
+
     def find_users(self, filter: dict) -> list[UserType] | None:
         return self.find_items(filter)  # type: ignore[return-value]
 
