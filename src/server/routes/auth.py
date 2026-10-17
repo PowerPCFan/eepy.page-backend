@@ -149,6 +149,7 @@ class Auth:
         body: LoginRequest,
         x_captcha_code: Annotated[str, Header()],
         x_mfa_code: Annotated[str | None, Header()] = None,
+        x_device_id: Annotated[str | None, Header()] = None,
     ) -> JSONResponse:
         # plain_username can backfill display-name/username for older rows that only stored hashes.
 
@@ -160,6 +161,9 @@ class Auth:
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
+        if user_data.get("risk", {}).get("disabled"):
+            raise HTTPException(status_code=403, detail="Account is disabled. Please contact support.")
+
         if not user_data["verified"]:
             raise HTTPException(status_code=403, detail="Verification required")
 
@@ -169,6 +173,15 @@ class Auth:
         ip: str = request.client.host  # type: ignore[union-attr]
         if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=401, detail="Invalid password")
+
+        updated_risk = self.table.risk_manager.evaluate_and_update_risk(
+            user_id=user_data["_id"],
+            ip=ip,
+            device_id=x_device_id,
+            users_table=self.table,
+        )
+        if updated_risk.get("disabled"):
+            raise HTTPException(status_code=403, detail="Account is disabled. Please contact support.")
 
         logger.info(f"Login attempt from {user_data['_id']}")
 
@@ -261,6 +274,7 @@ class Auth:
         request: Request,
         body: SignUp,
         x_captcha_code: Annotated[str, Header()],
+        x_device_id: Annotated[str | None, Header()] = None,
     ) -> None:
         if not username_regex.match(body.username):
             raise HTTPException(
@@ -288,6 +302,7 @@ class Auth:
                 email_instance=self.email,
                 target_url=from_url,
                 refer_code=refer,
+                device_id=x_device_id,
             )
         except EmailException:
             raise HTTPException(status_code=422, detail="Email already in use")
@@ -299,6 +314,7 @@ class Auth:
         self,
         request: Request,
         session: Session = Depends(converter.create),
+        x_device_id: Annotated[str | None, Header()] = None,
     ) -> None:
         session_id: str
         if request.headers.get("specific") == "true":
@@ -306,6 +322,11 @@ class Auth:
             session_id = request.headers.get("id")  # type: ignore[assignment]
         else:
             session_id = session.data.get("jti", "")
+
+        client_ip = request.client.host if request.client else ""
+        user_id = session.data.get("sub", "")
+        if user_id:
+            self.table.risk_manager.record_logout(user_id=user_id, ip=client_ip, device_id=x_device_id)
 
         try:
             session.delete(session_id)

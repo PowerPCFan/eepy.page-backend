@@ -151,7 +151,9 @@ class Session:
             return {}  # type: ignore[typeddict-item]
         data: UserType | None = self.users_table.find_user({"_id": self.data["sub"]})
 
-        if data is None:
+        if data is None or data.get("risk", {}).get("disabled"):
+            if data and data.get("risk", {}).get("disabled"):
+                logger.info(f"Session invalidated: user {data['_id']} is disabled")
             self.valid = False
             return {}  # type: ignore[typeddict-item]
 

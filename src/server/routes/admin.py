@@ -31,7 +31,9 @@ from server.routes.models.admin import (
     BanUser,
     IpFind,
     ManualLoginTermination,
+    RiskUpdateBody,
     UserAction,
+    UserDisabledBody,
 )
 
 MAX_SAFE_32BIT_INT = 2**31 - 1
@@ -326,6 +328,44 @@ class Admin:
             methods=["POST"],
             responses={
                 200: {"description": "Status cleared"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/user/risk/update",
+            self.update_user_risk,
+            methods=["POST"],
+            responses={
+                200: {"description": "User risk updated"},
+                404: {"description": "User not found"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/user/disabled",
+            self.toggle_user_disabled,
+            methods=["POST"],
+            responses={
+                200: {"description": "User disabled state toggled"},
+                404: {"description": "User not found"},
+                460: {"description": "Invalid session"},
+                461: {"description": "Invalid permissions"},
+            },
+            tags=["admin"],
+        )
+
+        self.router.add_api_route(
+            "/users/flagged",
+            self.get_flagged_users,
+            methods=["GET"],
+            responses={
+                200: {"description": "List of flagged and disabled users"},
                 460: {"description": "Invalid session"},
                 461: {"description": "Invalid permissions"},
             },
@@ -897,3 +937,86 @@ class Admin:
     def can_access(self, session: Session = Depends(converter.create)) -> None:
         if not admin_is_enabled(session.user_cache_data):  # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=403, detail="Invalid permission")
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="userdetails")
+    def get_flagged_users(
+        self,
+        session: Session = Depends(converter.create),
+    ) -> list[AccountData]:
+        query = {
+            "$or": [
+                {"risk.score": {"$gte": 40}},
+                {"risk.disabled": True},
+            ],
+        }
+        cursor = self.users.table.find(query).limit(100)
+        results: list[AccountData] = []
+        for raw_user in cursor:
+            try:
+                user_details = self.admin_tools.get_user_details_by_id(raw_user["_id"])
+                if user_details:
+                    results.append(user_details)
+            except Exception:
+                logger.exception(f"Failed to load flagged user {raw_user.get('_id')}")
+        return results
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="changeuserdetails")
+    def update_user_risk(
+        self,
+        body: RiskUpdateBody,
+        session: Session = Depends(converter.create),
+    ) -> AccountData:
+        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        risk = user.get("risk", {})
+        if body.score is not None:
+            risk["score"] = min(100, max(0, body.score))
+        if body.locked is not None:
+            risk["locked"] = body.locked
+        if body.clear_flags:
+            risk["flags"] = {}
+
+        self.users.modify_document(
+            filter={"_id": body.user_id},
+            operation="$set",
+            key="risk",
+            value=risk,
+        )
+        updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
+        if not updated_profile:
+            raise HTTPException(status_code=404, detail="User not found after update")
+        return updated_profile
+
+    @Session.requires_auth
+    @Session.requires_permission(permission="changeuserdetails")
+    def toggle_user_disabled(
+        self,
+        body: UserDisabledBody,
+        session: Session = Depends(converter.create),
+    ) -> AccountData:
+        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        risk = user.get("risk", {})
+        risk["disabled"] = body.disabled
+        reasons = risk.setdefault("disable_reasons", [])
+        if body.disabled and body.reason and body.reason not in reasons:
+            reasons.append(body.reason)
+        elif not body.disabled:
+            reasons.clear()
+
+        self.users.modify_document(
+            filter={"_id": body.user_id},
+            operation="$set",
+            key="risk",
+            value=risk,
+        )
+        updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
+        if not updated_profile:
+            raise HTTPException(status_code=404, detail="User not found after update")
+        return updated_profile

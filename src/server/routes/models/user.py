@@ -1,3 +1,4 @@
+from disposable_email_domains import blocklist
 from email_validator import EmailNotValidError, validate_email
 from pydantic import BaseModel, field_validator
 
@@ -14,9 +15,16 @@ class SignUp(BaseModel):
     @classmethod
     def validate_email_address(cls, v: str) -> str:
         try:
-            return validate_email(v.strip(), check_deliverability=False).normalized
+            normalized = validate_email(v.strip(), check_deliverability=False).normalized
         except EmailNotValidError as e:
             raise ValueError(str(e)) from e
+
+        domain = normalized.split("@")[-1].lower()
+        if domain in blocklist:
+            msg = "Disposable email addresses are not allowed"
+            raise ValueError(msg)
+
+        return normalized
 
 
 class LoginRequest(BaseModel):

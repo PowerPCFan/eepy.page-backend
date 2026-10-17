@@ -1,10 +1,8 @@
 import pytest
-from fastapi.exceptions import HTTPException
 
 from database.tables.users import Users, UserType
 from security.encryption import Encryption
 from server.routes.auth import username_regex
-from server.routes.models.user import SignUp
 
 
 class TestUsernameValidation:

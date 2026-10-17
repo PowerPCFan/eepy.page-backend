@@ -161,6 +161,25 @@ class TestEmailValidation:
                 language="en",
             )
 
+    @pytest.mark.parametrize(
+        "disposable_email",
+        [
+            "test@ensproxy.com",  # temp-mail.org
+            "test@olipii.com",  # temp-mail.io
+            "test@tozya.com",  # tempmail.net
+            "test@sharklasers.com",  # guerrillamail.com
+        ],
+    )
+    def test_disposable_emails_fail_validation(self, disposable_email: str) -> None:
+        with pytest.raises((ValidationError, ValueError)) as excinfo:
+            SignUp(
+                username="validuser",
+                password="securepassword123",
+                email=disposable_email,
+                language="en",
+            )
+        assert "Disposable email addresses are not allowed" in str(excinfo.value)
+
 
 class TestEmailNormalization:
     @pytest.mark.parametrize(

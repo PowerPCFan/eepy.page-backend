@@ -2,7 +2,7 @@ import logging
 import re
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from database.exceptions import FilterMatchError, UserNotExistError
 from database.tables.domains import DomainRecord, Domains
@@ -13,6 +13,7 @@ from dns_.types import AVAILABLE_TLDS, TYPES
 from dns_.validation import Validation
 from mail.email import Email
 from security.encryption import Encryption
+from security.risk import UserRisk
 
 if TYPE_CHECKING:
     from database.tables.referrals import ReferralType
@@ -32,6 +33,8 @@ class AccountData(UserPageType):
     last_login: int
     api_key_amount: int
     accessed_from: list[str]
+    risk: UserRisk | dict[str, Any]
+    disabled: bool
 
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -238,6 +241,8 @@ class Admin:
         account_data["created"] = round(user_data.get("created", 0))
         account_data["api_key_amount"] = len(user_data.get("api-keys", []))
         account_data["accessed_from"] = list(set(user_data.get("accessed-from", [])))[:100]
+        account_data["risk"] = user_data.get("risk", {})
+        account_data["disabled"] = bool(user_data.get("risk", {}).get("disabled", False))
 
         return account_data
 

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -153,3 +154,20 @@ class ManualLoginTermination(BaseModel):
 
     user_id: StrictStr
     refresh_token: StrictStr
+
+
+class RiskUpdateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: StrictStr
+    score: StrictInt | None = Field(default=None, ge=0, le=100)
+    locked: StrictBool | None = None
+    clear_flags: StrictBool = False
+
+
+class UserDisabledBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: StrictStr
+    disabled: StrictBool
+    reason: StrictStr | None = None

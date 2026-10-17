@@ -17,9 +17,11 @@ from database.exceptions import (
     UserNotExistError,
 )
 from database.table import Table
+from database.tables.ip_activity import IPActivity, RecentLogouts
 from database.tables.referrals import Referrals
 from mail.email import Email
 from security.encryption import Encryption
+from security.risk import RiskManager, UserRisk, create_default_risk
 from security.session import NewSessionType
 
 if TYPE_CHECKING:
@@ -119,6 +121,7 @@ UserType = TypedDict(
         "referred-by": NotRequired[str],
         "referred-count": NotRequired[int],
         "owned-tlds": list[str],
+        "risk": NotRequired[UserRisk],
     },
 )
 
@@ -128,6 +131,12 @@ class Users(Table):
         super().__init__(mongo_client, "eepy.page")
         self.encryption: Encryption = Encryption(os.getenv("ENC_KEY") or "none")
         self.referrals: Referrals = Referrals(mongo_client, self)
+        self.ip_activity: IPActivity = IPActivity(mongo_client)
+        self.recent_logouts: RecentLogouts = RecentLogouts(mongo_client)
+        self.risk_manager: RiskManager = RiskManager(
+            ip_activity=self.ip_activity,
+            recent_logouts=self.recent_logouts,
+        )
 
     def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:
         data: UserType = self.find_item(filter)  # type: ignore[return-value,assignment]
@@ -206,6 +215,7 @@ class Users(Table):
         dont_send_email: bool = False,
         refer_code: str | None = None,
         skip_verification: bool = False,
+        device_id: str | None = None,
     ) -> str:
         logger.info(f"Creating user with username {username}")
         original_username: str = username
@@ -283,6 +293,7 @@ class Users(Table):
             "referred-by": "",
             "referred-count": 0,
             "owned-tlds": ["eepy.page"],
+            "risk": create_default_risk(device_id=device_id),
         }
 
         if refer_code:
@@ -298,6 +309,20 @@ class Users(Table):
         self.create_index("username")
         self.create_index("normalized-email-hash")
         self.create_index("email-hash")
+        self.create_index("risk.score")
+        self.create_index("risk.disabled")
+        self.create_index("risk.device_id")
+
+        ip = country.get("ip", "") if isinstance(country, dict) else ""
+        try:
+            self.risk_manager.evaluate_and_update_risk(
+                user_id=hashed_username,
+                ip=ip,
+                device_id=device_id,
+                users_table=self,
+            )
+        except Exception:
+            logger.exception("Failed to evaluate risk on signup")
 
         if dont_send_email:
             logger.warning(
@@ -530,6 +555,17 @@ class Users(Table):
                 value=["eepy.page"],
             )
 
+        if not user.get("risk"):
+            logger.info("Initializing risk object for user")
+            is_admin = bool(user.get("permissions", {}).get("admin", {}).get("enabled", False))
+            user["risk"] = create_default_risk(device_id=None, is_admin=is_admin)
+            self.modify_document(
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="risk",
+                value=user["risk"],
+            )
+
         api_keys = user.get("api-keys", {})
         api_keys_fixed = False
         for api_key in api_keys.values():
@@ -564,4 +600,3 @@ class Users(Table):
             except Exception:
                 logger.exception(f"Failed to migrate user {user.get('_id', 'unknown')}")
         logger.info(f"Finished user migrations for {count} users.")
-
