@@ -99,6 +99,7 @@ class VariableInitializer:
     def gather_users(self) -> None:
         self.users: Users = Users(client)
         self.rewards = Rewards(client, self.users)
+        threading.Thread(target=self.users.migrate_all_users, daemon=True).start()
 
     def gather_sessions(self) -> None:
         self.sessions: Sessions = Sessions(client)

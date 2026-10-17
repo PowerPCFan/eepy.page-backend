@@ -36,6 +36,8 @@ RESERVED_ROOT_LABELS: set[str] = {
     "auth",
     "autoconfig",
     "autodiscover",
+    "alpha",
+    "beta",
     "billing",
     "blog",
     "bounce",

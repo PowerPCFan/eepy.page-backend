@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import email_normalize
 import resend
 import resend.exceptions
 
@@ -55,16 +56,14 @@ class Email:
         resend.api_key = os.getenv("RESEND_KEY")
 
     def is_taken(self, email: str) -> bool:
-        replaced_email: str = email.replace(
-            "+",
-            "@",
-        )  # removes ability to make alt accounts using the same email (ex. a@gmail.com, a+hi@gmail.com)
-        email_parts: list[str] = replaced_email.split("@")
-        processed_email = f"{email_parts[0]}@{email_parts[-1]}"
+        clean_email: str = email.strip()
+        try:
+            normalized: str = email_normalize.normalize(clean_email, skip_dns=True).normalized_address.lower()
+        except Exception:
+            normalized = clean_email.lower()
+        norm_hash: str = Encryption.sha256(normalized + "supahcool")
 
-        email_hash: str = Encryption.sha256(processed_email + "supahcool")
-
-        return self.users.find_item({"email-hash": email_hash}) is not None
+        return self.users.find_item({"normalized-email-hash": norm_hash}) is not None
 
     def send_verification_code(self, base_url: str, username: str, email: str) -> bool:
         code: str = self.codes.create_code("verification", username)

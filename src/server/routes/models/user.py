@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from email_validator import EmailNotValidError, validate_email
+from pydantic import BaseModel, field_validator
 
 from security.api import ApiPermission
 
@@ -8,6 +9,14 @@ class SignUp(BaseModel):
     password: str
     email: str
     language: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_address(cls, v: str) -> str:
+        try:
+            return validate_email(v.strip(), check_deliverability=False).normalized
+        except EmailNotValidError as e:
+            raise ValueError(str(e)) from e
 
 
 class LoginRequest(BaseModel):

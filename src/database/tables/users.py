@@ -5,6 +5,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
+import email_normalize
 import requests
 from pymongo import MongoClient
 
@@ -96,6 +97,7 @@ UserType = TypedDict(
         "lang": str,
         "country": CountryType | dict,
         "email-hash": NotRequired[str],
+        "normalized-email-hash": NotRequired[str],
         "accessed-from": NotRequired[list[str]],
         "created": int,  # Epoch timestamp
         "last-login": int,  # Epoch timestamp
@@ -230,15 +232,25 @@ class Users(Table):
             msg_0 = "Username already taken!"
             raise UsernameException(msg_0)
 
+        clean_email: str = email.strip()
+        try:
+            normalized_email: str = email_normalize.normalize(clean_email, skip_dns=True).normalized_address.lower()
+        except Exception:
+            normalized_email = clean_email.lower()
+
+        normalized_email_hash: str = Encryption.sha256(normalized_email + "supahcool")
+        email_hash: str = Encryption.sha256(clean_email.lower() + "supahcool")
+
         account_data: UserType = {
             "_id": hashed_username,
-            "email": self.encryption.encrypt(email),
+            "email": self.encryption.encrypt(clean_email),
             "password": (None if password is None else self.encryption.create_password(password)),
             "display-name": self.encryption.encrypt(original_username),
             "username": lowercase_hashed_username,
             "lang": language,
             "country": country,
-            "email-hash": Encryption.sha256(email + "supahcool"),
+            "email-hash": email_hash,
+            "normalized-email-hash": normalized_email_hash,
             "accessed-from": [],
             "created": time_signed_up,
             "last-login": round(time.time()),
@@ -284,6 +296,8 @@ class Users(Table):
 
         self.insert_document(account_data)
         self.create_index("username")
+        self.create_index("normalized-email-hash")
+        self.create_index("email-hash")
 
         if dont_send_email:
             logger.warning(
@@ -450,7 +464,7 @@ class Users(Table):
         )
         self.delete_in_time("deleted-in")
 
-    def perform_migrations(self, user: UserType) -> UserType:
+    def perform_migrations(self, user: UserType) -> UserType:  # noqa: C901
         start = time.time()
         logger.debug(f"Running migrations for user {user['_id'][:12]}...")
         from database.tables.domains import Domains  # noqa: PLC0415
@@ -469,17 +483,32 @@ class Users(Table):
             )
             user["domains"] = domains
 
-        if not user.get("email-hash"):
-            logger.info("Fixing user email hash")
-            user["email-hash"] = self.encryption.sha256(
-                self.encryption.decrypt(user.get("email", "")) + "supahcool",
-            )
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="email-hash",
-                value=user["email-hash"],
-            )
+        try:
+            raw_email = self.encryption.decrypt(user.get("email", "")).strip()
+            if not user.get("normalized-email-hash") and raw_email:
+                logger.info("Migrating user normalized email hash")
+                normalized = email_normalize.normalize(raw_email, skip_dns=True).normalized_address.lower()
+                user["normalized-email-hash"] = self.encryption.sha256(normalized + "supahcool")
+                self.modify_document(
+                    filter={"_id": user["_id"]},
+                    operation="$set",
+                    key="normalized-email-hash",
+                    value=user["normalized-email-hash"],
+                )
+
+            if raw_email:
+                expected_hash = self.encryption.sha256(raw_email.lower() + "supahcool")
+                if user.get("email-hash") != expected_hash:
+                    logger.info("Fixing/standardizing user email hash")
+                    user["email-hash"] = expected_hash
+                    self.modify_document(
+                        filter={"_id": user["_id"]},
+                        operation="$set",
+                        key="email-hash",
+                        value=user["email-hash"],
+                    )
+        except Exception:
+            logger.exception("Failed to migrate email hashes for user")
 
         if len(set(user.get("accessed-from", []))) != len(
             user.get("accessed-from", []),
@@ -524,3 +553,15 @@ class Users(Table):
         logger.debug(f"Migrations took {time.time() - start:.5f}s")
 
         return user
+
+    def migrate_all_users(self) -> None:
+        logger.info("Starting background user migrations...")
+        count = 0
+        for user in self.table.find():
+            try:
+                self.perform_migrations(user)
+                count += 1
+            except Exception:
+                logger.exception(f"Failed to migrate user {user.get('_id', 'unknown')}")
+        logger.info(f"Finished user migrations for {count} users.")
+
