@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import email_normalize
 import resend
 import resend.exceptions
+from disposable_email_domains import blocklist
 
 from security.encryption import Encryption
 
@@ -48,12 +49,22 @@ with (template_path / "admin_action.html").open() as f:
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
+def is_disposable(email_or_domain: str) -> bool:
+    cleaned = email_or_domain.strip().lower()
+    domain = cleaned.split("@")[-1] if "@" in cleaned else cleaned
+    return domain in blocklist
+
+
 class Email:
     def __init__(self, codes: "Codes", users: "Users", encryption: Encryption) -> None:
         self.codes: Codes = codes
         self.users: Users = users
         self.encryption: Encryption = encryption  # type: ignore[arg-type]
         resend.api_key = os.getenv("RESEND_KEY")
+
+    @staticmethod
+    def is_disposable(email_or_domain: str) -> bool:
+        return is_disposable(email_or_domain)
 
     def is_taken(self, email: str) -> bool:
         clean_email: str = email.strip()

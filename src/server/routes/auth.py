@@ -14,7 +14,7 @@ from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
 from database.tables.users import Users, UserType
 from dns_.dns import DNS
-from mail.email import Email
+from mail.email import Email, is_disposable
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
@@ -280,6 +280,12 @@ class Auth:
             raise HTTPException(
                 status_code=400,
                 detail="Username must be between 3 and 32 characters and only contain letters, numbers, underscores, and hyphens.",  # noqa: E501
+            )
+
+        if is_disposable(body.email):
+            raise HTTPException(
+                status_code=464,
+                detail="Disposable email addresses are not allowed",
             )
 
         if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]

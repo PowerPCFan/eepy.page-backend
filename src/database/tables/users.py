@@ -491,7 +491,7 @@ class Users(Table):
 
     def perform_migrations(self, user: UserType) -> UserType:  # noqa: C901
         start = time.time()
-        logger.debug(f"Running migrations for user {user['_id'][:12]}...")
+        logger.debug(f"Running migrations for user {user['_id']}")
         from database.tables.domains import Domains  # noqa: PLC0415
 
         original_domains = user.get("domains", [])

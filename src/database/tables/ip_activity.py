@@ -85,10 +85,33 @@ class RecentLogouts(Table):
         except Exception:
             logger.exception("Failed to record logout in recent_logouts table")
 
-    def find_recent_switch(self, user_id: str, ip: str, device_id: str | None) -> dict | None:
+    def find_recent_switches(
+        self,
+        user_id: str,
+        ip: str,
+        device_id: str | None,
+        since_timestamp: int,
+        limit: int = 5,
+    ) -> list[dict]:
         query: list[dict] = [{"ip": ip}]
         if device_id:
             query.append({"device_id": device_id.strip()})
-        return self.table.find_one(
-            {"$or": query, "user_id": {"$ne": user_id}},
-        )
+        cursor = self.table.find(
+            {
+                "$or": query,
+                "user_id": {"$ne": user_id},
+                "time": {"$gte": since_timestamp},
+            },
+        ).sort("time", -1).limit(limit)
+        return list(cursor)
+
+    def find_recent_switch(
+        self,
+        user_id: str,
+        ip: str,
+        device_id: str | None,
+        since_timestamp: int | None = None,
+    ) -> dict | None:
+        since = since_timestamp if since_timestamp is not None else 0
+        switches = self.find_recent_switches(user_id, ip, device_id, since, limit=1)
+        return switches[0] if switches else None

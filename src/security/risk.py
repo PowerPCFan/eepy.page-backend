@@ -110,7 +110,7 @@ class RiskManager:
         if other_device_user:
             ctx.flags["shared_device"] = {
                 "score": 50,
-                "reason": f"Shared persistent device token with user {other_device_user['_id'][:10]}...",
+                "reason": f"Shared persistent device token with user {other_device_user['_id']}",
                 "detected_at": ctx.now,
                 "permanent": True,
             }
@@ -128,30 +128,36 @@ class RiskManager:
         )
         if other_user:
             ctx.flags["shared_recent_ip"] = {
-                "score": 20,
-                "reason": f"Shared active IP {ctx.ip} with user {other_user['_id'][:10]}... within 7 days",
+                "score": 25,
+                "reason": f"Shared active IP {ctx.ip} with user {other_user['_id']} within 7 days",
                 "detected_at": ctx.now,
                 "expires_at": ctx.now + SHARED_IP_EXPIRY_SECONDS,
                 "permanent": False,
             }
 
     def _check_rapid_switch_signal(self, ctx: RiskCheckContext) -> None:
-        recent_switch = self.recent_logouts.find_recent_switch(ctx.user_id, ctx.ip, ctx.device_id)
-        if not recent_switch:
-            return
-        other_user = ctx.users_table.find_item(
-            {
-                "_id": recent_switch["user_id"],
-                "permissions.admin.enabled": {"$ne": True},
-            },
+        since_timestamp = ctx.now - LOGOUT_VELOCITY_WINDOW_SECONDS
+        recent_switches = self.recent_logouts.find_recent_switches(
+            ctx.user_id,
+            ctx.ip,
+            ctx.device_id,
+            since_timestamp,
         )
-        if other_user:
-            ctx.flags["rapid_switch"] = {
-                "score": 25,
-                "reason": f"Rapid account switch within 120s of logout from user {other_user['_id'][:10]}...",
-                "detected_at": ctx.now,
-                "permanent": True,
-            }
+        for recent_switch in recent_switches:
+            other_user = ctx.users_table.find_item(
+                {
+                    "_id": recent_switch["user_id"],
+                    "permissions.admin.enabled": {"$ne": True},
+                },
+            )
+            if other_user:
+                ctx.flags["rapid_switch"] = {
+                    "score": 25,
+                    "reason": f"Rapid account switch within {LOGOUT_VELOCITY_WINDOW_SECONDS}s of logout from user {other_user['_id']}",  # noqa: E501
+                    "detected_at": ctx.now,
+                    "permanent": True,
+                }
+                break
 
     def evaluate_and_update_risk(
         self,

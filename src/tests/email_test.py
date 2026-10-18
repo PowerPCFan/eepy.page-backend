@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from database.tables.users import Users, UserType
-from mail.email import Email
+from mail.email import Email, is_disposable
 from security.encryption import Encryption
 from server.routes.models.user import SignUp
 
@@ -171,14 +171,16 @@ class TestEmailValidation:
         ],
     )
     def test_disposable_emails_fail_validation(self, disposable_email: str) -> None:
-        with pytest.raises((ValidationError, ValueError)) as excinfo:
-            SignUp(
-                username="validuser",
-                password="securepassword123",
-                email=disposable_email,
-                language="en",
-            )
-        assert "Disposable email addresses are not allowed" in str(excinfo.value)
+        assert is_disposable(disposable_email)
+        assert Email.is_disposable(disposable_email)
+
+    def test_valid_emails_not_disposable(self) -> None:
+        assert not is_disposable("user@gmail.com")
+        assert not is_disposable("hello@googlemail.com")
+        assert not is_disposable("imagine.still.using@aol.com")
+        assert not is_disposable("test.ing@hotmail.com")
+        assert not is_disposable("test@proton.me")
+        assert not is_disposable("noreply@mail.eepy.page")
 
 
 class TestEmailNormalization:
