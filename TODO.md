@@ -27,3 +27,4 @@
 - secrets + ssh key maintenance on vps
 - add a full audit log for all actions
 - remove some old migrations for example im pretty sure theres a no username -> username migration but that's so old, all users should have a username anyways
+- FUTURE PLANS: off the top of my head, custom status page, zensical (or other?) docs (API docs based on OpenAPI, and how-to guides for users -- separate them but same site), modernize and streamline all infrastructure, migrate from mongodb to pgsql and use SQLModel, improve OpenAPI documentation for use in docs site (that way i can update api docs from the api code itself)
