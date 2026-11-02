@@ -49,9 +49,35 @@ with (template_path / "admin_action.html").open() as f:
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
+def normalize_email_address(email: str) -> str:
+    clean_email = email.strip().lower()
+    if "@" not in clean_email:
+        return clean_email
+    try:
+        coro = email_normalize.Normalizer(skip_dns=True).normalize(clean_email)
+        try:
+            coro.send(None)
+        except StopIteration as exc:
+            if hasattr(exc.value, "normalized_address"):
+                return str(exc.value.normalized_address).lower()
+    except Exception:  # noqa: S110
+        pass
+    try:
+        return email_normalize.normalize(clean_email, skip_dns=True).normalized_address.lower()
+    except Exception:
+        return clean_email
+
+
 def is_disposable(email_or_domain: str) -> bool:
-    cleaned = email_or_domain.strip().lower()
+    cleaned = email_or_domain.strip().lower().rstrip(".")
     domain = cleaned.split("@")[-1] if "@" in cleaned else cleaned
+    if not domain:
+        return False
+    parts = domain.split(".")
+    for i in range(len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        if candidate in blocklist:
+            return True
     return domain in blocklist
 
 
@@ -67,11 +93,7 @@ class Email:
         return is_disposable(email_or_domain)
 
     def is_taken(self, email: str) -> bool:
-        clean_email: str = email.strip()
-        try:
-            normalized: str = email_normalize.normalize(clean_email, skip_dns=True).normalized_address.lower()
-        except Exception:
-            normalized = clean_email.lower()
+        normalized = normalize_email_address(email)
         norm_hash: str = Encryption.sha256(normalized + "supahcool")
 
         return self.users.find_item({"normalized-email-hash": norm_hash}) is not None
@@ -142,8 +164,7 @@ class Email:
         return True
 
     def send_password_code(self, username: str) -> bool:
-        lowercase_hash: str = Encryption.sha256(username.lower())
-        user_data: UserType | None = self.users.find_user({"username": lowercase_hash})
+        user_data: UserType | None = self.users.find_user_by_identifier(username)
 
         if user_data is None:
             logger.debug(f"User {username} does not exist")

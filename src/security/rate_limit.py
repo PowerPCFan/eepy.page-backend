@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import json
 import logging
 import os
 import time
@@ -12,6 +14,7 @@ import redis
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from mail.email import normalize_email_address
 from security.convert import parse_headers
 from security.session import Session
 
@@ -21,11 +24,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("eepy.page")
 
+DEFAULT_TRUSTED_PROXIES = "127.0.0.1,::1,testclient"
+MAX_RATE_LIMIT_BODY_BYTES = 16384
+
 
 class Scope(StrEnum):
     IP = "ip"
     ACCOUNT = "account"
     CREDENTIAL = "credential"
+    TARGET = "target"
 
 
 @dataclass(frozen=True)
@@ -137,7 +144,17 @@ POLICIES: dict[PE, Policy] = {
                 max_requests=5,
                 time_window=ONE_MINUTE,
                 scope=Scope.IP,
-            )
+            ),
+            Limit(
+                max_requests=5,
+                time_window=ONE_MINUTE,
+                scope=Scope.TARGET,
+            ),
+            Limit(
+                max_requests=20,
+                time_window=ONE_HOUR,
+                scope=Scope.TARGET,
+            ),
         ),
     ),
     PE.SIGNUP: Policy(
@@ -161,6 +178,16 @@ POLICIES: dict[PE, Policy] = {
             Limit(
                 max_requests=1,
                 time_window=ONE_HOUR,
+                scope=Scope.TARGET,
+            ),
+            Limit(
+                max_requests=5,
+                time_window=ONE_DAY,
+                scope=Scope.TARGET,
+            ),
+            Limit(
+                max_requests=1,
+                time_window=ONE_HOUR,
                 scope=Scope.ACCOUNT,
             ),
             Limit(
@@ -177,7 +204,12 @@ POLICIES: dict[PE, Policy] = {
                 max_requests=5,
                 time_window=ONE_MINUTE,
                 scope=Scope.IP,
-            )
+            ),
+            Limit(
+                max_requests=5,
+                time_window=ONE_MINUTE,
+                scope=Scope.TARGET,
+            ),
         ),
     ),
     PE.EMAIL: Policy(
@@ -381,16 +413,103 @@ def create_store() -> RedisStore:
         raise RuntimeError(msg) from error
 
 
-def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
+def _is_trusted_proxy(host: str) -> bool:
+    if not host:
+        return False
+    raw_proxies = os.getenv("TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES)
+    entries = [item.strip() for item in raw_proxies.split(",") if item.strip()]
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return host in entries
+
+    for entry in entries:
+        try:
+            if "/" in entry:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif addr == ipaddress.ip_address(entry):
+                return True
+        except ValueError:
+            if host == entry:
+                return True
+    return False
+
+
+def client_ip(request: Request, default: str = "unknown") -> str:
+    direct_host = request.client.host.strip() if request.client and request.client.host else ""
+    if not direct_host:
+        return default
+
+    if not _is_trusted_proxy(direct_host):
+        return direct_host
+
+    forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
-        return forwarded.split(",", 1)[0].strip()
-    return request.client.host if request.client else "unknown"
+        hops: list[str] = []
+        for raw_hop in forwarded.split(","):
+            hop = raw_hop.strip()
+            if not hop:
+                continue
+            try:
+                ipaddress.ip_address(hop)
+                hops.append(hop)
+            except ValueError:
+                continue
+        if hops:
+            for hop in reversed(hops):
+                if not _is_trusted_proxy(hop):
+                    return hop
+            return hops[0]
+
+    return direct_host
 
 
-def identity(request: Request, scope: Scope) -> str | None:
-    if scope == Scope.IP:
-        return client_ip(request)
+def normalize_target_identifier(identifier: str) -> str:
+    cleaned = identifier.strip()
+    if not cleaned:
+        return ""
+    if "@" in cleaned:
+        return normalize_email_address(cleaned)
+    return cleaned.lower()
+
+
+def hash_target_identifier(identifier: str) -> str | None:
+    normalized = normalize_target_identifier(identifier)
+    if not normalized:
+        return None
+    return f"target:{hashlib.sha256(normalized.encode()).hexdigest()}"
+
+
+async def extract_target_identifier(request: Request) -> str | None:
+    for param in ("username", "email", "user_id"):
+        val = request.query_params.get(param)
+        if isinstance(val, str) and val.strip():
+            return hash_target_identifier(val)
+
+    if request.method in {"POST", "DELETE", "PATCH", "PUT"}:
+        try:
+            body_bytes = await request.body()
+            if body_bytes and len(body_bytes) <= MAX_RATE_LIMIT_BODY_BYTES:
+                payload = json.loads(body_bytes)
+                if isinstance(payload, dict):
+                    for key in ("username", "email", "user_id"):
+                        raw_val = payload.get(key)
+                        if isinstance(raw_val, str) and raw_val.strip():
+                            return hash_target_identifier(raw_val)
+        except Exception:  # noqa: S110
+            pass
+
+    return None
+
+
+def identity(
+    request: Request,
+    scope: Scope,
+    target_subject: str | None = None,
+) -> str | None:
+    if scope in {Scope.IP, Scope.TARGET}:
+        return client_ip(request) if scope == Scope.IP else target_subject
 
     try:
         token = parse_headers(request.headers)
@@ -421,8 +540,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
         policy = get_policy(request.method, request.url.path)
-        for limit in policy.limits if isinstance(policy.limits, tuple) else (policy.limits,):
-            subject = identity(request, limit.scope)
+        limits = policy.limits if isinstance(policy.limits, tuple) else (policy.limits,)
+        target_subject: str | None = None
+        if any(lim.scope == Scope.TARGET for lim in limits):
+            target_subject = await extract_target_identifier(request)
+
+        for limit in limits:
+            subject = identity(request, limit.scope, target_subject=target_subject)
             if subject is None:
                 continue
             key = f"rate-limit:{policy.name}:{limit.scope}:{subject}:{int(time.time() // limit.time_window)}"

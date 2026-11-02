@@ -5,7 +5,6 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
-import email_normalize
 import requests
 from pymongo import MongoClient
 
@@ -19,7 +18,7 @@ from database.exceptions import (
 from database.table import Table
 from database.tables.ip_activity import IPActivity, RecentLogouts
 from database.tables.referrals import Referrals
-from mail.email import Email
+from mail.email import Email, normalize_email_address
 from security.encryption import Encryption
 from security.risk import RiskManager, UserRisk, create_default_risk
 from security.session import NewSessionType
@@ -31,6 +30,8 @@ if TYPE_CHECKING:
 
 
 logger: logging.Logger = logging.getLogger("eepy.page")
+
+USER_MIGRATION_VERSION = 2
 
 
 class CountryType(TypedDict):
@@ -95,7 +96,7 @@ UserType = TypedDict(
         # Password is an Argon2 hash for email/password accounts.
         "password": str | None,
         "display-name": str,
-        "username": str,
+        "username": NotRequired[str],
         "lang": str,
         "country": CountryType | dict,
         "email-hash": NotRequired[str],
@@ -122,6 +123,7 @@ UserType = TypedDict(
         "referred-count": NotRequired[int],
         "owned-tlds": list[str],
         "risk": NotRequired[UserRisk],
+        "migration-version": NotRequired[int],
     },
 )
 
@@ -137,6 +139,19 @@ class Users(Table):
             ip_activity=self.ip_activity,
             recent_logouts=self.recent_logouts,
         )
+        self._ensure_indexes()
+
+    def _ensure_indexes(self) -> None:
+        try:
+            self.create_index("username")
+            self.create_index("email-hash")
+            self.create_index("normalized-email-hash")
+            self.create_index("risk.score")
+            self.create_index("risk.disabled")
+            self.create_index("risk.device_id")
+            self.create_index("migration-version")
+        except Exception:
+            logger.exception("Failed to initialize indexes on users table; continuing startup")
 
     def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:
         data: UserType = self.find_item(filter)  # type: ignore[return-value,assignment]
@@ -150,11 +165,16 @@ class Users(Table):
 
     def find_user_by_identifier(self, identifier: str, find_banned: bool = False) -> UserType | None:
         clean_id = identifier.strip()
+        if not clean_id:
+            return None
         lowercase_id = clean_id.lower()
+
+        exact_match = self.find_user({"_id": Encryption.sha256(clean_id)}, find_banned=find_banned)
+        if exact_match is not None:
+            return exact_match
 
         search_conditions: list[dict] = [
             {"username": Encryption.sha256(lowercase_id)},
-            {"_id": Encryption.sha256(clean_id)},
         ]
 
         if "@" in clean_id:
@@ -243,10 +263,7 @@ class Users(Table):
             raise UsernameException(msg_0)
 
         clean_email: str = email.strip()
-        try:
-            normalized_email: str = email_normalize.normalize(clean_email, skip_dns=True).normalized_address.lower()
-        except Exception:
-            normalized_email = clean_email.lower()
+        normalized_email: str = normalize_email_address(clean_email)
 
         normalized_email_hash: str = Encryption.sha256(normalized_email + "supahcool")
         email_hash: str = Encryption.sha256(clean_email.lower() + "supahcool")
@@ -294,6 +311,7 @@ class Users(Table):
             "referred-count": 0,
             "owned-tlds": ["eepy.page"],
             "risk": create_default_risk(device_id=device_id),
+            "migration-version": USER_MIGRATION_VERSION,
         }
 
         if refer_code:
@@ -306,12 +324,6 @@ class Users(Table):
                 raise ReferralError(msg_1)
 
         self.insert_document(account_data)
-        self.create_index("username")
-        self.create_index("normalized-email-hash")
-        self.create_index("email-hash")
-        self.create_index("risk.score")
-        self.create_index("risk.disabled")
-        self.create_index("risk.device_id")
 
         ip = country.get("ip", "") if isinstance(country, dict) else ""
         try:
@@ -489,7 +501,7 @@ class Users(Table):
         )
         self.delete_in_time("deleted-in")
 
-    def perform_migrations(self, user: UserType) -> UserType:  # noqa: C901
+    def perform_migrations(self, user: UserType) -> UserType:  # noqa: C901, PLR0912, PLR0915
         start = time.time()
         logger.debug(f"Running migrations for user {user['_id']}")
         from database.tables.domains import Domains  # noqa: PLC0415
@@ -510,18 +522,19 @@ class Users(Table):
 
         try:
             raw_email = self.encryption.decrypt(user.get("email", "")).strip()
-            if not user.get("normalized-email-hash") and raw_email:
-                logger.info("Migrating user normalized email hash")
-                normalized = email_normalize.normalize(raw_email, skip_dns=True).normalized_address.lower()
-                user["normalized-email-hash"] = self.encryption.sha256(normalized + "supahcool")
-                self.modify_document(
-                    filter={"_id": user["_id"]},
-                    operation="$set",
-                    key="normalized-email-hash",
-                    value=user["normalized-email-hash"],
-                )
-
             if raw_email:
+                normalized = normalize_email_address(raw_email)
+                expected_norm_hash = self.encryption.sha256(normalized + "supahcool")
+                if user.get("normalized-email-hash") != expected_norm_hash:
+                    logger.info("Migrating user normalized email hash")
+                    user["normalized-email-hash"] = expected_norm_hash
+                    self.modify_document(
+                        filter={"_id": user["_id"]},
+                        operation="$set",
+                        key="normalized-email-hash",
+                        value=user["normalized-email-hash"],
+                    )
+
                 expected_hash = self.encryption.sha256(raw_email.lower() + "supahcool")
                 if user.get("email-hash") != expected_hash:
                     logger.info("Fixing/standardizing user email hash")
@@ -555,6 +568,35 @@ class Users(Table):
                 value=["eepy.page"],
             )
 
+        has_username_collision = False
+        if not user.get("username") and user.get("display-name"):
+            try:
+                decrypted_name = self.encryption.decrypt(user["display-name"]).strip()
+                if decrypted_name:
+                    lowercase_hash = Encryption.sha256(decrypted_name.lower())
+                    collision = self.find_item(
+                        {
+                            "_id": {"$ne": user["_id"]},
+                            "username": lowercase_hash,
+                        },
+                    )
+                    if collision:
+                        has_username_collision = True
+                        logger.warning(
+                            f"Username case collision detected while backfilling user {user['_id']} "
+                            f"(collides with {collision.get('_id')}); skipping username write",
+                        )
+                    else:
+                        self.modify_document(
+                            filter={"_id": user["_id"]},
+                            operation="$set",
+                            key="username",
+                            value=lowercase_hash,
+                        )
+                        user["username"] = lowercase_hash
+            except Exception:
+                logger.exception(f"Failed to backfill username hash for user {user.get('_id')}")
+
         if not user.get("risk"):
             logger.info("Initializing risk object for user")
             is_admin = bool(user.get("permissions", {}).get("admin", {}).get("enabled", False))
@@ -586,17 +628,47 @@ class Users(Table):
                 value=api_keys,
             )
 
+        if not has_username_collision and user.get("migration-version") != USER_MIGRATION_VERSION:
+            user["migration-version"] = USER_MIGRATION_VERSION
+            self.modify_document(
+                filter={"_id": user["_id"]},
+                operation="$set",
+                key="migration-version",
+                value=USER_MIGRATION_VERSION,
+                ignore_no_matches=True,
+            )
+
         logger.debug(f"Migrations took {time.time() - start:.5f}s")
 
         return user
 
+    def find_username_case_collisions(self) -> dict[str, list[str]]:
+        by_lower_hash: dict[str, list[str]] = {}
+        for user in self.table.find({}, {"_id": 1, "username": 1, "display-name": 1}):
+            lower_hash = user.get("username")
+            if not lower_hash and user.get("display-name"):
+                try:
+                    decrypted = self.encryption.decrypt(user["display-name"]).strip()
+                    if decrypted:
+                        lower_hash = Encryption.sha256(decrypted.lower())
+                except Exception:  # noqa: S112
+                    continue
+            if lower_hash:
+                by_lower_hash.setdefault(lower_hash, []).append(user["_id"])
+
+        return {h: ids for h, ids in by_lower_hash.items() if len(ids) > 1}
+
     def migrate_all_users(self) -> None:
         logger.info("Starting background user migrations...")
         count = 0
-        for user in self.table.find():
+        for user in self.table.find({"migration-version": {"$ne": USER_MIGRATION_VERSION}}):
             try:
                 self.perform_migrations(user)
                 count += 1
             except Exception:
                 logger.exception(f"Failed to migrate user {user.get('_id', 'unknown')}")
+        if count > 0:
+            collisions = self.find_username_case_collisions()
+            if collisions:
+                logger.warning(f"Found {len(collisions)} pre-existing username case collision group(s): {collisions}")
         logger.info(f"Finished user migrations for {count} users.")

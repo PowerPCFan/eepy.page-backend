@@ -25,3 +25,5 @@
   - maybe make a separate api for users? like the main api.eepy.page would be linked to only work with the frontend via captchas or session tokens or something and then there could be a userapi.eepy.page which is what users would use with their api keys and it would be scoped to the account that generated the api key and have limited permissions and stuff and that would also just make it much easier to separate things
 - migrate to snake_case or camelCase for api keys? kebab-case works badly in both python and js/ts so i have no clue why it was chosen lol
 - secrets + ssh key maintenance on vps
+- add a full audit log for all actions
+- remove some old migrations for example im pretty sure theres a no username -> username migration but that's so old, all users should have a username anyways

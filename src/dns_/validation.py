@@ -1084,7 +1084,8 @@ RESERVED_ROOT_LABELS: set[str] = {
 RESERVED = {*RESERVED_ROOT_LABELS, *GITHUB_LIST}
 
 REGEX_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(ptn) for ptn in [
+    re.compile(ptn)
+    for ptn in [
         r"ns[0-9]+",
         r"_.*",
         r"xn--.*",

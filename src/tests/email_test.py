@@ -168,6 +168,9 @@ class TestEmailValidation:
             "test@olipii.com",  # temp-mail.io
             "test@tozya.com",  # tempmail.net
             "test@sharklasers.com",  # guerrillamail.com
+            "mailinator.com",
+            "user@sub.mailinator.com",
+            "user@a.b.mailinator.com",
         ],
     )
     def test_disposable_emails_fail_validation(self, disposable_email: str) -> None:

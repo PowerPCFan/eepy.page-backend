@@ -87,6 +87,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Auth-Error"],
 )
 
 client: MongoClient = MongoClient(os.getenv("MONGODB_URL"))

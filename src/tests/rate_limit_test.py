@@ -33,6 +33,24 @@ def test_socket_client_ip_is_used_without_caddy_header() -> None:
     })) == "198.51.100.10"
 
 
+def test_client_ip_ignores_spoofed_forwarded_for_from_untrusted_peer() -> None:
+    req = Request({
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"203.0.113.1, 203.0.113.2")],
+        "client": ("198.51.100.10", 50000),
+    })
+    assert client_ip(req) == "198.51.100.10"
+
+
+def test_client_ip_trusts_forwarded_for_from_trusted_proxy() -> None:
+    req = Request({
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"1.1.1.1, 203.0.113.50, 127.0.0.1")],
+        "client": ("127.0.0.1", 50000),
+    })
+    assert client_ip(req) == "203.0.113.50"
+
+
 ROUTE_PREFIXES = {
     "admin.py": "/admin",
     "api.py": "/api",
@@ -259,3 +277,74 @@ def test_multiple_limits_must_all_allow_the_request(monkeypatch, redis_store: Re
     with TestClient(app) as client:
         assert client.post("/stacked").status_code == 200
         assert client.post("/stacked").status_code == 429
+
+
+def test_unauthenticated_recovery_and_login_per_target_rate_limits(redis_store: RedisStore) -> None:
+    app = FastAPI()
+    app.add_middleware(RateLimitMiddleware, store=redis_store)
+
+    @app.post("/recovery/send")
+    def send_recovery(username: str | None = None) -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.post("/login")
+    def login_route() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.delete("/mfa/recovery")
+    def mfa_recovery_route() -> dict[str, bool]:
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        r1 = client.post(
+            "/recovery/send",
+            params={"username": "Victim.User+tag@gmail.com"},
+            headers={"X-Forwarded-For": "203.0.113.10"},
+        )
+        assert r1.status_code == 200
+
+        r2 = client.post(
+            "/recovery/send",
+            params={"username": "victimuser@googlemail.com"},
+            headers={"X-Forwarded-For": "203.0.113.11"},
+        )
+        assert r2.status_code == 429
+
+        r3 = client.post(
+            "/recovery/send",
+            params={"username": "otheruser"},
+            headers={"X-Forwarded-For": "203.0.113.11"},
+        )
+        assert r3.status_code == 200
+
+        for i in range(5):
+            resp = client.post(
+                "/login",
+                json={"username": f"TargetUser" if i % 2 == 0 else "targetuser", "password": "pw"},
+                headers={"X-Forwarded-For": f"198.51.100.{20 + i}"},
+            )
+            assert resp.status_code == 200
+
+        blocked_login = client.post(
+            "/login",
+            json={"username": "TARGETUSER", "password": "pw"},
+            headers={"X-Forwarded-For": "198.51.100.99"},
+        )
+        assert blocked_login.status_code == 429
+
+        for i in range(5):
+            resp = client.request(
+                "DELETE",
+                "/mfa/recovery",
+                json={"username": "mfa_victim", "password": "pw"},
+                headers={"X-Forwarded-For": f"192.0.2.{10 + i}"},
+            )
+            assert resp.status_code == 200
+
+        blocked_mfa = client.request(
+            "DELETE",
+            "/mfa/recovery",
+            json={"username": "MFA_VICTIM", "password": "pw"},
+            headers={"X-Forwarded-For": "192.0.2.99"},
+        )
+        assert blocked_mfa.status_code == 429

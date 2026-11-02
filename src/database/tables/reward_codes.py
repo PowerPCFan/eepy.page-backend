@@ -37,12 +37,13 @@ class Rewards(Table):
         :type rewards: dict
         """  # noqa: E501
 
+        clean_email = email.strip()
         document: RewardType = {
             "_id": Encryption.generate_random_string(16),
             "created": round(time.time()),
             "mappings": rewards,
-            "associated-email": self.encryption.encrypt(email),
-            "email-hash": self.encryption.sha256(email + "supahcool"),
+            "associated-email": self.encryption.encrypt(clean_email),
+            "email-hash": self.encryption.sha256(clean_email.lower() + "supahcool"),
             "used": False,
             "used-by": None,
         }

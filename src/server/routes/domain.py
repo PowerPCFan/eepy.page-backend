@@ -285,10 +285,12 @@ class Domain:
         if user_domains and self.domains.will_domain_be_removed(user_domains, domain, type):
             subdomains = self.domains.get_child_subdomains(user_domains, domain)
             if subdomains:
-                subdomains_str = ", ".join(subdomains)
+                preview = ", ".join(subdomains[:3])
+                if len(subdomains) > 3:  # noqa: PLR2004
+                    preview = f"{preview}, and {len(subdomains) - 3} more"
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Cannot delete domain while subdomains exist ({subdomains_str}). Please delete subdomains first.",  # noqa: E501
+                    detail=f"Cannot delete domain while subdomains exist ({preview}). Please delete subdomains first.",
                 )
 
         if not self.domains.delete_domain(session.username, domain, type):

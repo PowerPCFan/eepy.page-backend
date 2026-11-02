@@ -13,10 +13,15 @@ from dns_.types import AVAILABLE_TLDS, TYPES
 from dns_.validation import Validation
 from mail.email import Email
 from security.encryption import Encryption
-from security.risk import UserRisk
+from security.risk import RISK_THRESHOLDS, UserRisk
 
 if TYPE_CHECKING:
     from database.tables.referrals import ReferralType
+
+
+MAX_USERNAME_REGEX_LENGTH = 64
+MAX_USERNAME_REGEX_RESULTS = 50
+_UNSAFE_REGEX_META = re.compile(r"\([^)]*[+*][^)]*\)[+*?{]")
 
 
 class DomainDeletionError(Exception): ...
@@ -34,6 +39,7 @@ class AccountData(UserPageType):
     api_key_amount: int
     accessed_from: list[str]
     risk: UserRisk | dict[str, Any]
+    risk_thresholds: dict[str, int]
     disabled: bool
 
 
@@ -138,7 +144,7 @@ class Admin:
 
         return self.get_user_details_by_id(user_data["_id"])
 
-    def find_by_username(self, username: str, regex: bool = False) -> AccountData | list[AccountData] | None:
+    def find_by_username(self, username: str, regex: bool = False) -> AccountData | list[AccountData] | None:  # noqa: C901
         """
         ALmost the same as get_user_details_by_id, but usernames are not case sensitive.
         When regex is true, searches across decrypted usernames with regex
@@ -158,6 +164,13 @@ class Admin:
 
             return self.get_user_details_by_id(user["_id"], user)
 
+        if len(username) > MAX_USERNAME_REGEX_LENGTH:
+            msg = f"Regex pattern too long (max {MAX_USERNAME_REGEX_LENGTH} characters)"
+            raise ValueError(msg)
+        if _UNSAFE_REGEX_META.search(username):
+            msg = "Regex pattern contains nested quantifiers"
+            raise ValueError(msg)
+
         try:
             pattern = re.compile(username, re.IGNORECASE)
         except re.error as e:
@@ -165,11 +178,9 @@ class Admin:
             raise ValueError(msg) from e
 
         matching_users: list[AccountData] = []
-        cursor = self.users.table.find()
+        cursor = self.users.table.find({}, {"_id": 1, "display-name": 1})
         for raw_user in cursor:
-            migrated_user = self.users.perform_migrations(raw_user)
-
-            display_name_enc = migrated_user.get("display-name")
+            display_name_enc = raw_user.get("display-name")
             if not display_name_enc:
                 continue
 
@@ -179,9 +190,11 @@ class Admin:
                 continue
 
             if pattern.search(decrypted_username):
-                user_details = self.get_user_details_by_id(migrated_user["_id"], migrated_user)
+                user_details = self.get_user_details_by_id(raw_user["_id"])
                 if user_details:
                     matching_users.append(user_details)
+                    if len(matching_users) >= MAX_USERNAME_REGEX_RESULTS:
+                        break
 
         return matching_users
 
@@ -242,6 +255,7 @@ class Admin:
         account_data["api_key_amount"] = len(user_data.get("api-keys", []))
         account_data["accessed_from"] = list(set(user_data.get("accessed-from", [])))[:100]
         account_data["risk"] = user_data.get("risk", {})
+        account_data["risk_thresholds"] = dict(RISK_THRESHOLDS)
         account_data["disabled"] = bool(user_data.get("risk", {}).get("disabled", False))
 
         return account_data

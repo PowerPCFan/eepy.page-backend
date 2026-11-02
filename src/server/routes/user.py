@@ -355,20 +355,20 @@ class User:
         body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
     ) -> None:
-        search_hash = Encryption.sha256(body.username.lower())
-        user_data: UserType | None = self.table.find_user({"username": search_hash})
+        user_data: UserType | None = self.table.find_user_by_identifier(body.username)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
-        if not user_data.get("totp", {}).get("verified"):
-            raise HTTPException(412, detail="User does not have MFA")
-
-        if not Encryption().check_password(
+        stored_password = user_data.get("password")
+        if not stored_password or not Encryption().check_password(
             body.password,
-            user_data["password"],  # pyright: ignore[reportArgumentType]
+            stored_password,
         ):
             raise HTTPException(status_code=401, detail="Invalid password")
+
+        if not user_data.get("totp", {}).get("verified"):
+            raise HTTPException(412, detail="User does not have MFA")
 
         try:
             Session.remove_mfa_static(

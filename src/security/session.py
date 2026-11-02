@@ -236,6 +236,7 @@ class Session:
         session_table: Sessions,
         user_agent: str,
         ip: str,
+        users: Users | None = None,
     ) -> tuple[str, str] | Literal[False]:
         """
         Deletes the old refresh + access token, and replaces them with new ones.
@@ -251,6 +252,13 @@ class Session:
         if token_data.get("type") != "refresh":
             logger.error("Invalid token type")
             return False
+
+        if users is not None:
+            user_data = users.find_user({"_id": token_data["sub"]}, find_banned=True)
+            if user_data is None or user_data.get("banned") or user_data.get("risk", {}).get("disabled"):
+                logger.info(f"Refresh rejected: user {token_data['sub']} is missing, banned, or disabled")
+                session_table.consume_refresh_session(token_data["jti"])
+                return False
 
         target_session = session_table.consume_refresh_session(token_data["jti"])
         if target_session is None:
@@ -448,13 +456,22 @@ class Session:
             msg = "Session not found!"
             raise ValueError(msg)
 
+        owner = session_data.get("owner")
+        if owner and owner != self.user_id:
+            msg = "User does not own target session"
+            raise SessionPermissonError(msg)
+        owner_hash = session_data.get("owner-hash")
+        if not owner and owner_hash and owner_hash != Encryption.sha256(self.user_id + "eepy.page"):
+            msg = "User does not own target session"
+            raise SessionPermissonError(msg)
+
         success: bool = False
 
         if session_data.get("type") == "refresh":
             success = self.session_table.delete_session_pair(
                 session_data.get("_id", ""),
             )
-        if session_data.get("type") == "access":
+        elif session_data.get("type") == "access":
             success = self.session_table.delete_session_pair(
                 session_data.get("parent", ""),  # type: ignore[arg-type]
             )

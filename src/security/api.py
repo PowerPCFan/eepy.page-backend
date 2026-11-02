@@ -134,7 +134,7 @@ class Api:
 
         self.permissions: list[ApiPermission] = self.__get_permimssions()
 
-        if self.key_data:
+        if self.key_data and self.valid:
             self.affected_domains: list[str] = [
                 Domains.canonical_full_domain_name(d) for d in self.key_data.get("domains", [])
             ]
@@ -164,6 +164,10 @@ class Api:
             msg = "User not found"
             raise ValueError(msg)
 
+        if user_data.get("banned") or user_data.get("risk", {}).get("disabled"):
+            logger.info(f"API key rejected: user {user_data.get('_id')} is banned or disabled")
+            return None
+
         return user_data["api-keys"][self.encrypted_key]
 
     def __is_valid(self) -> bool:
@@ -172,7 +176,7 @@ class Api:
     def __user_cache(self) -> UserType:
         data: UserType | None = self.users_table.find_item({f"api-keys.{self.encrypted_key}": {"$exists": True}})  # type: ignore[assignment]
 
-        if data is None:
+        if data is None or data.get("banned") or data.get("risk", {}).get("disabled"):
             self.valid = False
             return {}  # type: ignore[typeddict-item]
 

@@ -1,6 +1,12 @@
 import pytest
 
-from server.routes.models.admin import AdminPermissionChange, BanUser, IpFind
+from server.routes.models.admin import (
+    AdminPermissionChange,
+    BanUser,
+    IpFind,
+    RiskUpdateBody,
+    UserDisabledBody,
+)
 
 
 def test_admin_permission_change_accepts_numeric_limits() -> None:
@@ -77,3 +83,22 @@ def test_ban_user_rejects_empty_reasons_list() -> None:
 def test_ip_find_rejects_empty_ips() -> None:
     with pytest.raises(ValueError, match="At least one IP address is required"):
         IpFind.model_validate({"ips": []})
+
+
+def test_risk_update_body_validation() -> None:
+    body = RiskUpdateBody(user_id="user-1", score=80, locked=True, clear_flags=False)
+    assert body.user_id == "user-1"
+    assert body.score == 80
+    assert body.locked is True
+    assert body.clear_flags is False
+
+    with pytest.raises(Exception):
+        RiskUpdateBody(user_id="user-1", score=150)
+
+
+def test_user_disabled_body_validation() -> None:
+    body = UserDisabledBody(user_id="user-2", disabled=True, reason="Suspected alternate account")
+    assert body.user_id == "user-2"
+    assert body.disabled is True
+    assert body.reason == "Suspected alternate account"
+

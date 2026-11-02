@@ -18,6 +18,7 @@ from mail.email import Email, is_disposable
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
+from security.rate_limit import client_ip
 from security.session import (
     REFRESH_AMOUNT,
     Session,
@@ -33,7 +34,7 @@ from server.routes.models.user import (
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-username_regex: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_-]{3,32}$")
+username_regex: re.Pattern[str] = re.compile(r"\A[a-zA-Z0-9_-]{3,32}\Z")
 
 is_debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
 ERROR_RESPONSE = {
@@ -153,7 +154,8 @@ class Auth:
     ) -> JSONResponse:
         # plain_username can backfill display-name/username for older rows that only stored hashes.
 
-        if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
+        ip: str = client_ip(request, default="")
+        if not self.captcha.verify(x_captcha_code, ip):
             raise HTTPException(422, detail="Invalid captcha")
 
         user_data: UserType | None = self.table.find_user_by_identifier(body.username)
@@ -161,27 +163,25 @@ class Auth:
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
-        if user_data.get("risk", {}).get("disabled"):
-            raise HTTPException(status_code=403, detail="Account is disabled. Please contact support.")
-
-        if not user_data["verified"]:
-            raise HTTPException(status_code=403, detail="Verification required")
-
         if user_data.get("password") is None:
             raise HTTPException(status_code=400, detail="Account does not support password login")
 
-        ip: str = request.client.host  # type: ignore[union-attr]
         if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        updated_risk = self.table.risk_manager.evaluate_and_update_risk(
-            user_id=user_data["_id"],
-            ip=ip,
-            device_id=x_device_id,
-            users_table=self.table,
-        )
-        if updated_risk.get("disabled"):
-            raise HTTPException(status_code=403, detail="Account is disabled. Please contact support.")
+        if user_data.get("risk", {}).get("disabled"):
+            raise HTTPException(
+                status_code=403,
+                detail="Account is disabled. Please contact support@eepy.page.",
+                headers={"X-Auth-Error": "account_disabled"},
+            )
+
+        if not user_data["verified"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Verification required",
+                headers={"X-Auth-Error": "verification_required"},
+            )
 
         logger.info(f"Login attempt from {user_data['_id']}")
 
@@ -206,6 +206,20 @@ class Auth:
             raise HTTPException(status_code=412, detail="MFA required")
 
         if session_status["success"]:
+            updated_risk = self.table.risk_manager.evaluate_and_update_risk(
+                user_id=user_data["_id"],
+                ip=ip,
+                device_id=x_device_id,
+                users_table=self.table,
+            )
+            if updated_risk.get("disabled"):
+                Session.clear_sessions(user_data["_id"], self.session_table)
+                raise HTTPException(
+                    status_code=403,
+                    detail="Account is disabled. Please contact support@eepy.page.",
+                    headers={"X-Auth-Error": "account_disabled"},
+                )
+
             resp = JSONResponse({"auth-token": session_status["access_token"]})
             cookie_name = "refresh-token" if is_debug else "__Host-refresh-token"
 
@@ -239,15 +253,16 @@ class Auth:
         if not refresh_token:
             raise HTTPException(status_code=412, detail="Refresh token cookie missing")
 
-        client = request.client
-        if not client:
+        ip = client_ip(request, default="")
+        if not ip:
             raise HTTPException(status_code=500, detail="Invalid client?")
 
         session_data = Session.refresh(
             refresh_token,
             self.session_table,
             request.headers.get("User-Agent", ""),
-            client.host,  # type: ignore[attr-defined]
+            ip,
+            users=self.table,
         )
 
         if not session_data:
@@ -276,7 +291,7 @@ class Auth:
         x_captcha_code: Annotated[str, Header()],
         x_device_id: Annotated[str | None, Header()] = None,
     ) -> None:
-        if not username_regex.match(body.username):
+        if not username_regex.fullmatch(body.username):
             raise HTTPException(
                 status_code=400,
                 detail="Username must be between 3 and 32 characters and only contain letters, numbers, underscores, and hyphens.",  # noqa: E501
@@ -288,10 +303,11 @@ class Auth:
                 detail="Disposable email addresses are not allowed",
             )
 
-        if not self.captcha.verify(x_captcha_code, request.client.host):  # type: ignore[union-attr]
+        ip = client_ip(request, default="")
+        if not self.captcha.verify(x_captcha_code, ip):
             raise HTTPException(422, detail="Invalid captcha")
 
-        country = self.handler.getDetails(request.client.host).all  # type: ignore[union-attr]
+        country = self.handler.getDetails(ip or None).all
         from_url: str = request.headers.get("Origin", "https://www.eepy.page")
 
         refer = request.headers.get("x-refer-code")
@@ -322,21 +338,21 @@ class Auth:
         session: Session = Depends(converter.create),
         x_device_id: Annotated[str | None, Header()] = None,
     ) -> None:
-        session_id: str
-        if request.headers.get("specific") == "true":
-            # The following will not be null if since if `specified` then id header must be present
-            session_id = request.headers.get("id")  # type: ignore[assignment]
-        else:
-            session_id = session.data.get("jti", "")
-
-        client_ip = request.client.host if request.client else ""
-        user_id = session.data.get("sub", "")
-        if user_id:
-            self.table.risk_manager.record_logout(user_id=user_id, ip=client_ip, device_id=x_device_id)
+        is_specific = request.headers.get("specific") == "true"
+        session_id: str = request.headers.get("id") or "" if is_specific else session.data.get("jti", "")
 
         try:
-            session.delete(session_id)
-        except SessionError:
+            deleted = session.delete(session_id)
+        except (SessionError, ValueError):
             raise HTTPException(404)
         except SessionPermissonError:
             raise HTTPException(461)
+
+        if not deleted:
+            raise HTTPException(404)
+
+        if not is_specific:
+            req_ip = client_ip(request, default="")
+            user_id = session.data.get("sub", "")
+            if user_id:
+                self.table.risk_manager.record_logout(user_id=user_id, ip=req_ip, device_id=x_device_id)

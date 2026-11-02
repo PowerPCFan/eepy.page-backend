@@ -1,12 +1,22 @@
 import logging
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock  # type: ignore[import-untyped]
 
+import pymongo
 import pyotp
 import pytest
+from starlette.requests import Request
 
 from database.exceptions import UserNotExistError
+from database.tables.domains import Domains
+from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import Users, UserType
+from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
+from dns_.dns import DNS
+from mail.email import Email
+from security.encryption import Encryption
+from security.risk import create_default_risk
 from security.session import (
     InvalidToken,
     Session,
@@ -14,6 +24,7 @@ from security.session import (
     SessionFlagError,
     SessionPermissonError,
 )
+from server.routes.auth import Auth
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +231,133 @@ def test_requires_flag_invalid() -> None:
 
     with pytest.raises(SessionFlagError):
         mock_function(session=valid_session)
+
+
+def test_disabled_account_rejected_on_session_refresh(
+    users: Users,
+    sessions: Sessions,
+    encryption: Encryption,
+    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    user_id = Encryption.sha256("disabled_session_user")
+
+    insert_test_user(
+        {
+            "_id": user_id,
+            "email": encryption.encrypt("disabled_session@example.com"),
+            "email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
+            "normalized-email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
+            "password": None,
+            "display-name": encryption.encrypt("disabled_session_user"),
+            "username": user_id,
+            "lang": "en",
+            "country": {"country": "US"},
+            "created": 1700000000,
+            "last-login": 1700000000,
+            "verified": True,
+            "domains": [],
+            "owned-tlds": ["eepy.page"],
+            "risk": {
+                "score": 85,
+                "locked": False,
+                "disabled": True,
+                "disable_reasons": ["Auto-disabled"],
+                "flags": {},
+            },
+            "migration-version": USER_MIGRATION_VERSION,
+        },
+    )
+
+    access_token, refresh_token = Session.create_session_pair(
+        user_id,
+        "pytest-agent",
+        "198.51.100.1",
+        sessions,
+    )
+    assert access_token
+    refreshed = Session.refresh(
+        refresh_token,
+        sessions,
+        "pytest-agent",
+        "198.51.100.1",
+        users=users,
+    )
+    assert refreshed is False
+    assert sessions.find_items({"owner": user_id, "type": "refresh"}) == []
+
+
+def test_session_delete_and_logout_for_both_refresh_and_access_types(
+    mongo_client: pymongo.MongoClient,
+    users: Users,
+    sessions: Sessions,
+    domains: Domains,
+    email: Email,
+    encryption: Encryption,
+    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    user_id = Encryption.sha256("session_owner")
+
+    insert_test_user(
+        {
+            "_id": user_id,
+            "email": encryption.encrypt("owner@example.com"),
+            "email-hash": Encryption.sha256("owner@example.comsupahcool"),
+            "normalized-email-hash": Encryption.sha256("owner@example.comsupahcool"),
+            "password": None,
+            "display-name": encryption.encrypt("session_owner"),
+            "username": user_id,
+            "lang": "en",
+            "country": {"country": "US"},
+            "created": 1700000000,
+            "last-login": 1700000000,
+            "verified": True,
+            "domains": [],
+            "owned-tlds": ["eepy.page"],
+            "risk": create_default_risk(),
+            "migration-version": USER_MIGRATION_VERSION,
+        },
+    )
+
+    access_1, _refresh_1 = Session.create_session_pair(user_id, "agent-1", "198.51.100.1", sessions)
+    access_2, _refresh_2 = Session.create_session_pair(user_id, "agent-2", "198.51.100.2", sessions)
+    assert access_1 is not None
+    assert access_2 is not None
+
+    session_1 = Session(access_1, users, sessions)
+    session_2 = Session(access_2, users, sessions)
+
+    access_2_doc = sessions.get_session(session_2.data["jti"])
+    assert access_2_doc is not None
+    refresh_2_id = access_2_doc["parent"]  # pyright: ignore[reportGeneralTypeIssues]
+
+    invites = Invites(mongo_client)
+    dns = DNS(domains)
+    auth = Auth(users, sessions, invites, email, dns)
+
+    req_specific = Request(
+        {
+            "type": "http",
+            "headers": [
+                (b"specific", b"true"),
+                (b"id", refresh_2_id.encode()),
+            ],
+            "client": ("198.51.100.1", 50000),
+        },
+    )
+    auth.logout(req_specific, session=session_1, x_device_id="dev-logout-1")
+    assert sessions.get_session(refresh_2_id) is None
+    assert sessions.get_session(session_2.data["jti"]) is None
+    assert users.recent_logouts.find_items({"user_id": user_id}) == []
+
+    req_normal = Request(
+        {
+            "type": "http",
+            "headers": [],
+            "client": ("198.51.100.1", 50000),
+        },
+    )
+    auth.logout(req_normal, session=session_1, x_device_id="dev-logout-1")
+    assert sessions.find_items({"owner": user_id}) == []
+    logout_rows = users.recent_logouts.find_items({"user_id": user_id})
+    assert len(logout_rows) == 1
+    assert logout_rows[0]["user_id"] == user_id

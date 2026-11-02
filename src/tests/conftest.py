@@ -264,3 +264,29 @@ def test_session_refresh():
 @pytest.fixture(scope="session")
 def test_user():
     return _test_user
+
+
+@pytest.fixture
+def insert_test_user(
+    users: Users,
+    sessions: Sessions,
+    codes: Codes,
+):
+    created_ids: list[str] = []
+    users.ip_activity.delete_many({})
+    users.recent_logouts.delete_many({})
+
+    def _insert(doc: dict) -> dict:
+        users.delete_document({"_id": doc["_id"]})
+        users.insert_document(doc)
+        created_ids.append(doc["_id"])
+        return doc
+
+    yield _insert
+
+    for uid in created_ids:
+        users.delete_document({"_id": uid})
+        sessions.delete_many({"owner": uid})
+        codes.delete_many({"user": uid})
+    users.ip_activity.delete_many({})
+    users.recent_logouts.delete_many({})

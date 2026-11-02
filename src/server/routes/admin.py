@@ -4,7 +4,7 @@ import logging
 import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from typing import get_args
+from typing import Any, get_args
 
 import jwt
 import requests
@@ -18,11 +18,13 @@ from database.tables.users import Users, UserType
 from dns_.dns import sanitize
 from dns_.exceptions import DNSException
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
+from mail.email import normalize_email_address
 from security.admin import AccountData, DomainDeletionError
 from security.admin import Admin as AdminTools
 from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.encryption import Encryption
+from security.risk import FLAGGED_THRESHOLD
 from security.session import Session
 from server.routes.models.admin import (
     AdminDomainEdit,
@@ -583,22 +585,42 @@ class Admin:
         self,
         email: str,
         session: Session = Depends(converter.create),
-    ) -> AccountData:
-        user_data = self.users.find_user(
-            {"email-hash": Encryption.sha256(email + "supahcool")},
-            find_banned=True,
+    ) -> AccountData | list[AccountData]:
+        clean_email = email.strip()
+        lower_email = clean_email.lower()
+        normalized_email = normalize_email_address(clean_email)
+
+        email_hashes = {
+            Encryption.sha256(lower_email + "supahcool"),
+            Encryption.sha256(clean_email + "supahcool"),
+        }
+        normalized_hash = Encryption.sha256(normalized_email + "supahcool")
+
+        matched_docs = list(
+            self.users.table.find(
+                {
+                    "$or": [
+                        {"email-hash": {"$in": list(email_hashes)}},
+                        {"normalized-email-hash": normalized_hash},
+                    ],
+                },
+                {"_id": 1},
+            ).limit(50),
         )
-        if user_data is None:
+
+        if not matched_docs:
             raise HTTPException(status_code=404, detail="User not found (find_item)")
 
-        user_profile: AccountData | None = self.admin_tools.get_user_details_by_id(
-            user_data["_id"],
-        )
+        profiles: list[AccountData] = []
+        for doc in matched_docs:
+            profile = self.admin_tools.get_user_details_by_id(doc["_id"])
+            if profile:
+                profiles.append(profile)
 
-        if not user_profile:
+        if not profiles:
             raise HTTPException(status_code=404, detail="User not found (get profile)")
 
-        return user_profile
+        return profiles[0] if len(profiles) == 1 else profiles
 
     @Session.requires_auth
     @Session.requires_permission(permission="userdetails")
@@ -946,23 +968,33 @@ class Admin:
     ) -> list[AccountData]:
         query = {
             "$or": [
-                {"risk.score": {"$gte": 40}},
+                {"risk.score": {"$gte": FLAGGED_THRESHOLD}},
                 {"risk.disabled": True},
             ],
         }
-        cursor = self.users.table.find(query).limit(100)
+        cursor = self.users.table.find(query)
         results: list[AccountData] = []
         for raw_user in cursor:
             try:
-                user_details = self.admin_tools.get_user_details_by_id(raw_user["_id"])
+                migrated_user = self.users.perform_migrations(raw_user)
+                user_details = self.admin_tools.get_user_details_by_id(
+                    raw_user["_id"],
+                    migrated_user,
+                )
                 if user_details:
                     results.append(user_details)
             except Exception:
                 logger.exception(f"Failed to load flagged user {raw_user.get('_id')}")
+        results.sort(
+            key=lambda item: (
+                -int(item.get("risk", {}).get("score", 0)),
+                (item.get("username") or "").lower(),
+            ),
+        )
         return results
 
     @Session.requires_auth
-    @Session.requires_permission(permission="changeuserdetails")
+    @Session.requires_permission(permission="userdetails")
     def update_user_risk(
         self,
         body: RiskUpdateBody,
@@ -972,27 +1004,28 @@ class Admin:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        risk = user.get("risk", {})
-        if body.score is not None:
-            risk["score"] = min(100, max(0, body.score))
-        if body.locked is not None:
-            risk["locked"] = body.locked
+        set_fields: dict[str, Any] = {}
         if body.clear_flags:
-            risk["flags"] = {}
+            set_fields["risk.flags"] = {}
+            if body.score is None:
+                set_fields["risk.score"] = 0
+        if body.score is not None:
+            set_fields["risk.score"] = min(100, max(0, body.score))
+        if body.locked is not None:
+            set_fields["risk.locked"] = body.locked
 
-        self.users.modify_document(
-            filter={"_id": body.user_id},
-            operation="$set",
-            key="risk",
-            value=risk,
-        )
+        if set_fields:
+            self.users.table.update_one(
+                {"_id": body.user_id},
+                {"$set": set_fields},
+            )
         updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
         if not updated_profile:
             raise HTTPException(status_code=404, detail="User not found after update")
         return updated_profile
 
     @Session.requires_auth
-    @Session.requires_permission(permission="changeuserdetails")
+    @Session.requires_permission(permission="userdetails")
     def toggle_user_disabled(
         self,
         body: UserDisabledBody,
@@ -1002,19 +1035,26 @@ class Admin:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        risk = user.get("risk", {})
-        risk["disabled"] = body.disabled
-        reasons = risk.setdefault("disable_reasons", [])
-        if body.disabled and body.reason and body.reason not in reasons:
-            reasons.append(body.reason)
-        elif not body.disabled:
-            reasons.clear()
+        update_op: dict[str, Any]
+        if body.disabled:
+            update_op = {"$set": {"risk.disabled": True}}
+            clean_reason = body.reason.strip() if body.reason else ""
+            if clean_reason:
+                update_op["$addToSet"] = {"risk.disable_reasons": clean_reason}
+        else:
+            update_op = {
+                "$set": {
+                    "risk.disabled": False,
+                    "risk.disable_reasons": [],
+                    "risk.locked": True,
+                    "risk.score": 0,
+                    "risk.flags": {},
+                },
+            }
 
-        self.users.modify_document(
-            filter={"_id": body.user_id},
-            operation="$set",
-            key="risk",
-            value=risk,
+        self.users.table.update_one(
+            {"_id": body.user_id},
+            update_op,
         )
         updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
         if not updated_profile:
