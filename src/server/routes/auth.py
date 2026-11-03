@@ -81,10 +81,27 @@ class Auth:
             responses={
                 200: {
                     "description": "Login successful",
+                    "headers": {
+                        "Set-Cookie": {
+                            "description": (
+                                "Sets the __Host-refresh-token cookie. "
+                                "The cookie is HttpOnly, Secure, SameSite=Lax, and scoped to /."
+                            ),
+                            "schema": {"type": "string"},
+                        },
+                    },
                     "content": {
                         "application/json": {
-                            "__Host-auth-token": "Token you can use for accessing things",
-                            "__Host-refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "auth-token": {
+                                        "type": "string",
+                                        "description": "Access token used for authentication.",
+                                    },
+                                },
+                                "required": ["auth-token"],
+                            },
                         },
                     },
                 },
@@ -104,10 +121,27 @@ class Auth:
             responses={
                 200: {
                     "description": "Refreshed tokens successfully",
+                    "headers": {
+                        "Set-Cookie": {
+                            "description": (
+                                "Sets the __Host-refresh-token cookie. "
+                                "The cookie is HttpOnly, Secure, SameSite=Lax, and scoped to /."
+                            ),
+                            "schema": {"type": "string"},
+                        },
+                    },
                     "content": {
                         "application/json": {
-                            "__Host-auth-token": "Token you can use for accessing things",
-                            "__Host-refresh-token": "Refreshing your auth-token after it expires in 15 minutes",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "auth-token": {
+                                        "type": "string",
+                                        "description": "Access token used for authentication.",
+                                    },
+                                },
+                                "required": ["auth-token"],
+                            },
                         },
                     },
                 },
