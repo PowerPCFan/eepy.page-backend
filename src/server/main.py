@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import logging
 import os
 import sys
@@ -70,7 +70,7 @@ sentry_sdk.init(
     send_default_pii=True,
 )
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None)
 app.state.safe_domains = [
     "https://eepy.page",
     "https://www.eepy.page",
@@ -144,14 +144,17 @@ threads["sessions"].join()
 threads["tunnels"].join()
 
 domain_instance = Domain(v.users, v.sessions, v.domains, v.dns)
-app.include_router(domain_instance.router)
+app.include_router(domain_instance.router, include_in_schema=False)
 app.state.domain_handler = domain_instance
 
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
-app.include_router(ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router)
+app.include_router(
+    ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router,
+    include_in_schema=False,
+)
 
 threads["invites"].join()
-app.include_router(Invite(v.users, v.sessions, v.invites).router)
+app.include_router(Invite(v.users, v.sessions, v.invites).router, include_in_schema=False)
 
 threads["codes"].join()
 
@@ -166,9 +169,13 @@ app.include_router(
         dns=v.dns,
         rewards=v.rewards,
     ).router,
+    include_in_schema=False,
 )
-app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
-app.include_router(Kofi(email, v.rewards).router)
+app.include_router(
+    Auth(v.users, v.sessions, v.invites, email, v.dns).router,
+    include_in_schema=False,
+)
+app.include_router(Kofi(email, v.rewards).router, include_in_schema=False)
 
 app.include_router(
     Admin(
@@ -183,6 +190,7 @@ app.include_router(
             email,
         ),
     ).router,
+    include_in_schema=False,
 )
 
 
@@ -192,9 +200,9 @@ async def status() -> JSONResponse:
         threads["status"].join()
 
     content = {
-        "started-at": datetime.datetime.fromtimestamp(
+        "started-at": dt.datetime.fromtimestamp(
             float(os.getenv("STARTED_AT", "0")),
-            datetime.UTC,
+            dt.UTC,
         ).isoformat(),
         "start-elapsed": f"{os.getenv('START_ELAPSED')}s",
     }
