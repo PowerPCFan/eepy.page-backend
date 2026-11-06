@@ -61,3 +61,28 @@
 
 	file_server
 }
+
+{$CADDY_WEBLATE_DOMAIN} {
+	encode zstd gzip
+
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
+	log {
+		output file /var/log/caddy/weblate_access.log {
+			roll_size 10mb
+			roll_keep 10
+			roll_keep_for 336h
+		}
+		level INFO
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	reverse_proxy 127.0.0.1:8010
+}
