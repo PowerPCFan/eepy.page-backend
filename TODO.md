@@ -1,15 +1,16 @@
-- Add back internationalization? Likely some sort of backend-frontend hybrid system, where the frontend sends a locale code to the backend on requests (likely via Accept-Language header or a URL query parameter of some sort), so then the backend returns responses in that language, and as for the frontend, text is pulled from those same JSON files and localized as well.
-  - If/when I do this, make sure I remove button/text fixed widths / other size constraints and switch to tricks like this to avoid buttons from jumping around when their content changes:
-  -
-  ```svelte
-  <Button>
-    <span class="inline-grid">
-      <!-- conditionally set an "invisible class" on the <span>s below, based on which text you want to show -->
-      <span class="col-start-1 row-start-1">Save Changes</span>
-      <span class="col-start-1 row-start-1">All Changes Saved</span>
-    </span>
-  </Button>
-  ```
+- I18n: remove button/text fixed widths / other size constraints and switch to tricks like this to avoid buttons from jumping around when their content changes:
+-
+```svelte
+<Button>
+<span class="inline-grid">
+  <!-- conditionally set an "invisible class" on the <span>s below, based on which text you want to show -->
+  <span class="col-start-1 row-start-1">Save Changes</span>
+  <span class="col-start-1 row-start-1">All Changes Saved</span>
+</span>
+</Button>
+```
+- Add i18n to the backend (currently frontend-only; this update will go along with the )
+  - separate backend files? also just improve locale organization it seems a bit messed up
 - Possibly switch to an existing auth system of some sort? Or at least look into options and possibly test some of them out
 - Standardize status codes
   - basically the idea is to switch to a few standard HTTP codes, and then use JSON response bodies to distinguish what they mean. So for example, a possible response on an endpoint where user info is being retrieved:
