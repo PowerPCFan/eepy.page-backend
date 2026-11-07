@@ -1,7 +1,5 @@
 import logging
 import time
-from collections import deque
-from threading import Event
 from typing import get_args
 
 from fastapi import APIRouter, Depends
@@ -113,11 +111,6 @@ class Domain:
         self.dns: DNS = dns
         self.domains: DomainTable = domains
         self.dns_validation: Validation = Validation(domains, dns)
-        self.verification_queue: deque = deque()
-        self.verification_dict: dict[str, dict[str, str]] = {}
-        self.current_queue_user: str = ""
-
-        self._stop_event: Event = Event()
 
         self.router = APIRouter(prefix="/domain")
 

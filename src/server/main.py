@@ -154,7 +154,6 @@ threads["tunnels"].join()
 
 domain_instance = Domain(v.users, v.sessions, v.domains, v.dns)
 app.include_router(domain_instance.router, include_in_schema=False)
-app.state.domain_handler = domain_instance
 
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
 app.include_router(
@@ -280,8 +279,3 @@ async def _shutdown_event() -> None:
         sentry_sdk.flush(timeout=5)
     except Exception:
         logger.exception("Error flushing Sentry")
-    try:
-        if hasattr(app.state, "domain_handler") and app.state.domain_handler is not None:
-            app.state.domain_handler.stop()
-    except Exception:
-        logger.exception("Error stopping domain handler")
