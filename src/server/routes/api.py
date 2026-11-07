@@ -155,7 +155,7 @@ class API:
     def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901
         can_user_register = self.dns_validation.can_user_register(body.domain, api.user_cache_data)
         tld = Domains.separate_domain_into_parts(body.domain)[-1]
-        user_owned_tlds = api.user_cache_data.get("owned-tlds", ["frii.site"])
+        user_owned_tlds = api.user_cache_data.get("owned-tlds", ["eepy.page"])
 
         if tld not in user_owned_tlds:
             raise HTTPException(status_code=401, detail=f"User must purchase TLD {tld} before registering this domain")
@@ -167,7 +167,7 @@ class API:
             is_domain_available: bool = self.dns_validation.is_free(
                 name=body.domain,
                 type=body.type,
-                domains=api.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
+                domains=api.user_cache_data.get("domains", []),  # pyright: ignore[reportArgumentType]
                 user_id=api.username,
                 user_is_admin=admin_is_enabled(api.user_cache_data),  # pyright: ignore[reportArgumentType]
             )
@@ -247,7 +247,7 @@ class API:
             )
 
         domain_data = self.domains.get_domain(
-            api.user_cache_data["domains"],
+            api.user_cache_data.get("domains", []),
             body.domain,
             body.old_type or body.type,
         )
@@ -255,7 +255,7 @@ class API:
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
         if body.type != domain_data["type"] and self.domains.get_domain(
-            api.user_cache_data["domains"],
+            api.user_cache_data.get("domains", []),
             body.domain,
             body.type,
         ):
@@ -293,7 +293,7 @@ class API:
         api: Api = Depends(converter.create),
     ) -> None:
         if type is None:
-            domain_data = self.domains.get_domain(api.user_cache_data["domains"], domain)
+            domain_data = self.domains.get_domain(api.user_cache_data.get("domains", []), domain)
             if domain_data is None:
                 raise HTTPException(
                     status_code=404,

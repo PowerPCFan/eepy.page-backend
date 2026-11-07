@@ -61,4 +61,7 @@ class ConvertAPI:
         self.users = users
 
     def create(self, request: Request) -> Api:
-        return Api(parse_headers(request.headers), self.users)
+        api = Api(parse_headers(request.headers), self.users)
+        if not api.valid:
+            raise ApiError("Invalid API key")
+        return api

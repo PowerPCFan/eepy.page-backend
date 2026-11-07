@@ -95,7 +95,7 @@ class Api:
                         logger.error("Target domain not specified in kwargs as 'domain'")
                         logger.debug(f"Args: {args}; kwargs: {kwargs}")
                         msg = "Domain not specified"
-                        raise ValueError(msg)
+                        raise ApiRangeError(msg)
 
                     lookup_domain: str = Domains.canonical_full_domain_name(target_domain)
 
@@ -141,11 +141,11 @@ class Api:
 
             if "*" in self.affected_domains:
                 logger.info("Wildcard in affected domains! Filling with users domains...")
-                self.affected_domains = Domains.domain_names(self.user_cache_data["domains"])
+                self.affected_domains = Domains.domain_names(self.user_cache_data.get("domains", []))
 
             self.user_domains = [
                 domain
-                for domain in Domains.normalize_domains(self.user_cache_data["domains"])
+                for domain in Domains.normalize_domains(self.user_cache_data.get("domains", []))
                 if domain["name"] in self.affected_domains
             ]
 
@@ -161,14 +161,13 @@ class Api:
         )
 
         if user_data is None:
-            msg = "User not found"
-            raise ValueError(msg)
+            return None
 
         if user_data.get("banned") or user_data.get("risk", {}).get("disabled"):
             logger.info(f"API key rejected: user {user_data.get('_id')} is banned or disabled")
             return None
 
-        return user_data["api-keys"][self.encrypted_key]
+        return user_data.get("api-keys", {}).get(self.encrypted_key)
 
     def __is_valid(self) -> bool:
         return self.key_data is not None
@@ -186,13 +185,13 @@ class Api:
         if not self.valid or self.key_data is None:
             return ""
 
-        return self.user_cache_data["_id"]
+        return self.user_cache_data.get("_id", "")
 
     def __get_permimssions(self) -> list[ApiPermission]:
         if not self.valid or self.key_data is None:
             return []
 
-        return self.key_data["perms"]
+        return self.key_data.get("perms", [])
 
     @staticmethod
     def create(
