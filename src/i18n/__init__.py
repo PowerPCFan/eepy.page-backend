@@ -11,7 +11,6 @@ from .errors import (
 )
 from .resolver import (
     is_supported_locale,
-    parse_accept_language,
     resolve_request_locale,
 )
 from .translator import (
@@ -30,7 +29,6 @@ __all__ = [
     "catalog",
     "get_current_locale",
     "is_supported_locale",
-    "parse_accept_language",
     "resolve_request_locale",
     "set_current_locale",
     "t",

@@ -4,10 +4,12 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
 
 import sentry_sdk
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from eepy_page_i18n import resolve_request_locale, set_current_locale
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import MongoClient
@@ -89,6 +91,13 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Auth-Error"],
 )
+
+
+@app.middleware("http")
+async def locale_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    set_current_locale(resolve_request_locale(request.headers))
+    return await call_next(request)
+
 
 client: MongoClient = MongoClient(os.getenv("MONGODB_URL"))
 

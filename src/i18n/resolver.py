@@ -1,4 +1,4 @@
-from eepy_page_i18n import normalize_locale, parse_accept_language, resolve_request_locale
+from eepy_page_i18n import normalize_locale, resolve_request_locale
 from eepy_page_i18n.catalog import SUPPORTED_LOCALES
 
 
@@ -9,4 +9,4 @@ def is_supported_locale(locale_str: str | None) -> bool:
     return base in SUPPORTED_LOCALES
 
 
-__all__ = ["is_supported_locale", "normalize_locale", "parse_accept_language", "resolve_request_locale"]
+__all__ = ["is_supported_locale", "normalize_locale", "resolve_request_locale"]
