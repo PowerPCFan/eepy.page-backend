@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
 from pymongo import MongoClient, UpdateOne
-from pymongo.collection import Collection
 
 from database.table import Table
 
@@ -47,17 +46,6 @@ def expiry_from_epoch(epoch_seconds: float, ttl_seconds: int) -> datetime:
     return datetime.fromtimestamp(epoch_seconds, UTC) + timedelta(seconds=ttl_seconds)
 
 
-def drop_legacy_int_ttl_indexes(collection: Collection, legacy_key: str) -> list[str]:
-    dropped: list[str] = []
-    for name, info in collection.index_information().items():
-        keys = [key for key, _direction in info.get("key", [])]
-        if "expireAfterSeconds" in info and keys == [legacy_key]:
-            logger.warning(f"Dropping legacy TTL index {name} on {collection.name}")
-            collection.drop_index(name)
-            dropped.append(name)
-    return dropped
-
-
 class IPActivity(Table):
     def __init__(self, mongo_client: MongoClient) -> None:
         super().__init__(mongo_client, "ip_activity")
@@ -65,7 +53,6 @@ class IPActivity(Table):
 
     def _ensure_indexes(self) -> None:
         try:
-            drop_legacy_int_ttl_indexes(self.table, "last_seen")
             self.table.create_index([("ip", 1), ("last_seen", -1)])
             self.table.create_index([("user_id", 1)])
             self.delete_in_time(EXPIRES_FIELD)
@@ -143,7 +130,6 @@ class RecentLogouts(Table):
 
     def _ensure_indexes(self) -> None:
         try:
-            drop_legacy_int_ttl_indexes(self.table, "time")
             self.table.create_index([("ip", 1)])
             self.table.create_index([("device_id", 1)])
             self.table.create_index([("user_id", 1)])

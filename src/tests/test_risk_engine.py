@@ -12,7 +12,6 @@ from database.tables.ip_activity import (
     IP_ACTIVITY_TTL_SECONDS,
     IPActivity,
     RecentLogouts,
-    drop_legacy_int_ttl_indexes,
     expiry_from_epoch,
     normalize_device_id,
 )
@@ -155,25 +154,11 @@ def test_calculate_risk_score_sum_and_clamping() -> None:
     assert calculate_risk_score(risk_data, now=now) == 100
 
 
-def test_ttl_expiry_and_legacy_index_cleanup(mongo_client: pymongo.MongoClient) -> None:
+def test_ttl_expiry_helper() -> None:
     dt = expiry_from_epoch(1700000000, 60)
     assert isinstance(dt, datetime)
     assert dt.tzinfo == UTC
     assert dt.timestamp() == 1700000060
-
-    temp_coll = mongo_client["database"]["test_ttl_cleanup_temp"]
-    temp_coll.drop()
-    try:
-        temp_coll.create_index([("last_seen", 1)], expireAfterSeconds=5184000)
-        temp_coll.create_index([(EXPIRES_FIELD, 1)], expireAfterSeconds=1)
-        assert "last_seen_1" in temp_coll.index_information()
-
-        dropped = drop_legacy_int_ttl_indexes(temp_coll, "last_seen")
-        assert dropped == ["last_seen_1"]
-        assert "last_seen_1" not in temp_coll.index_information()
-        assert f"{EXPIRES_FIELD}_1" in temp_coll.index_information()
-    finally:
-        temp_coll.drop()
 
 
 def test_evaluate_risk_signals_and_threshold(
