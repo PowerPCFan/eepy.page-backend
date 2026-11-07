@@ -72,6 +72,10 @@ class Method(StrEnum):
     PATCH = "PATCH"
     DELETE = "DELETE"
     PUT = "PUT"
+    HEAD = "HEAD"
+    OPTIONS = "OPTIONS"
+    TRACE = "TRACE"
+    CONNECT = "CONNECT"
 
     @staticmethod
     def from_str(value: str) -> Method:
@@ -80,6 +84,12 @@ class Method(StrEnum):
         except ValueError:
             msg = f"Invalid HTTP method: {value}"
             raise ValueError(msg)
+
+    @staticmethod
+    def get_equivalents(method: Method) -> Method:
+        if method == Method.HEAD:
+            return Method.GET
+        return method
 
 
 class PE(StrEnum):
@@ -372,7 +382,7 @@ ROUTE_POLICIES: dict[tuple[Method, str], PE] = {
 
 
 def get_policy(method: str, path: str) -> Policy:
-    method = Method.from_str(method.upper())
+    method = Method.get_equivalents(Method.from_str(method.upper()))
     named_path = "/serveo/tunnels/{tunnel_id}" if path.startswith("/serveo/tunnels/") else path
     policy_name = ROUTE_POLICIES.get((method, named_path))
 
