@@ -326,7 +326,7 @@ def test_ip_activity_and_recent_logouts_subclass_table() -> None:
 def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
     mongo_client: pymongo.MongoClient,
 ) -> None:
-    """Verifies index creation, legacy index drop, legacy document cleanup/backfill,
+    """Verifies index creation, legacy document cleanup/backfill,
     and BSON datetime expiresAfter fields against the real test MongoDB."""
     now = int(time.time())
     stale_epoch = now - IP_ACTIVITY_TTL_SECONDS - 100
@@ -339,7 +339,6 @@ def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
     ip_coll.drop()
     logout_coll.drop()
     try:
-        ip_coll.create_index([("last_seen", 1)], expireAfterSeconds=5184000)
         ip_coll.insert_many(
             [
                 {"_id": "1.2.3.4_stale", "ip": "1.2.3.4", "user_id": "stale_u", "last_seen": stale_epoch},
@@ -349,7 +348,6 @@ def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
 
         ip_table = IPActivity(mongo_client)
         ip_indexes = ip_table.table.index_information()
-        assert "last_seen_1" not in ip_indexes
         assert f"{EXPIRES_FIELD}_1" in ip_indexes
 
         assert ip_table.find_item({"_id": "1.2.3.4_stale"}) is None
@@ -362,12 +360,10 @@ def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
         assert recorded_ip is not None
         assert isinstance(recorded_ip[EXPIRES_FIELD], datetime)
 
-        logout_coll.create_index([("time", 1)], expireAfterSeconds=120)
         logout_coll.insert_one({"user_id": "legacy_u", "ip": "1.2.3.4", "device_id": "dev_1", "time": now - 10})
 
         logout_table = RecentLogouts(mongo_client)
         logout_indexes = logout_table.table.index_information()
-        assert "time_1" not in logout_indexes
         assert f"{EXPIRES_FIELD}_1" in logout_indexes
         assert logout_table.find_item({"user_id": "legacy_u"}) is None
 

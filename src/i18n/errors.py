@@ -28,7 +28,7 @@ def build_localized_error(
         if not alt_msg.startswith("["):
             message = alt_msg
         elif error_code.startswith("DOMAIN_"):
-            clean_code = error_code[len("DOMAIN_"):]
+            clean_code = error_code[len("DOMAIN_") :]
             domain_alt_key = f"errors.domains.{clean_code}"
             domain_alt_msg = t(domain_alt_key, locale=locale, **kwargs)
             if not domain_alt_msg.startswith("["):
@@ -39,7 +39,7 @@ def build_localized_error(
             if not auth_msg.startswith("["):
                 message = auth_msg
             elif error_code.startswith("AUTH_"):
-                clean_auth = error_code[len("AUTH_"):]
+                clean_auth = error_code[len("AUTH_") :]
                 auth_alt_key = f"errors.auth.{clean_auth}"
                 auth_alt_msg = t(auth_alt_key, locale=locale, **kwargs)
                 if not auth_alt_msg.startswith("["):

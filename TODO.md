@@ -43,3 +43,4 @@
 - Migrate from MongoDB to PostgreSQL and use SQLModel
 - Improve GDPR export system
 - Figure out wtf I'm doing with git. Like I need to stop doing 100000-line commits that get instantly pushed to main with me crossing my fingers that it works in prod. That just can't be happening anymore bro what are we doinggg. like it's not really a big deal since eepy.page doesn't have many users but i need to learn how to actually work on public, production systems because i do a shit ton of breaking changes out of nowhere as well. so i need proper versioning, release workflows, checklists/reminders, more incremental commits, semantic commit messages, more organization overall, using dev branches and pull requests, etc.
+- Fix turnstile! Not sure why it broke suddenly
