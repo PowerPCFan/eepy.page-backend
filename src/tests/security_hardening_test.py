@@ -24,6 +24,9 @@ class TestCaptcha:
 
         assert not Captcha("test-key").verify("captcha-response", "127.0.0.1")
 
+    def test_empty_turnstile_key_bypasses_verification(self) -> None:
+        assert Captcha("").verify("any-code", "127.0.0.1") is True
+
 
 class TestKofiWebhook:
     def test_missing_verification_secret_rejects_webhook(self, monkeypatch: pytest.MonkeyPatch) -> None:

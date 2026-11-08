@@ -11,6 +11,10 @@ class Captcha:
         self.turnstile_key: str = turnstile_key
 
     def verify(self, code: str, ip: str) -> bool:
+        if not self.turnstile_key:
+            logger.warning("TURNSTILE_KEY not set; skipping captcha verification")
+            return True
+
         logger.info("Verifying captcha")
         try:
             response = requests.post(
