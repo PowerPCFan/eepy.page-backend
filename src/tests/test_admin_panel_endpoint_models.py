@@ -22,6 +22,17 @@ def test_admin_permission_change_accepts_numeric_limits() -> None:
     assert model.value == 5
     assert isinstance(model.value, int)
 
+    negative_model = AdminPermissionChange.model_validate(
+        {
+            "id": "user123",
+            "permission": "max-domains",
+            "value": " -1 ",
+            "send_email": "false",
+        },
+    )
+    assert negative_model.value == -1
+    assert negative_model.send_email is False
+
 
 def test_admin_permission_change_rejects_non_numeric_limits() -> None:
     with pytest.raises(ValueError, match="Permission value must be an integer"):

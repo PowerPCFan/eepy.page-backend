@@ -63,7 +63,7 @@ class AdminPermissionChange(BaseModel):
     id: StrictStr
     permission: StrictStr
     value: bool | StrictInt | StrictStr
-    send_email: StrictBool = False
+    send_email: bool = False
 
     @field_validator("permission")
     def validate_permission(cls, permission: str) -> str:
@@ -83,10 +83,13 @@ class AdminPermissionChange(BaseModel):
                 msg = "Permission value must be an integer"
                 raise ValueError(msg)
             if isinstance(value, str):
-                if not value.isdigit():
+                try:
+                    int_val = int(value.strip())
+                except ValueError:
                     msg_0 = "Permission value must be an integer"
                     raise ValueError(msg_0)
-                return self.model_copy(update={"value": int(value)})
+                self.value = int_val
+                return self
             if isinstance(value, int):
                 return self
             msg_1 = "Permission value must be an integer"
@@ -97,15 +100,18 @@ class AdminPermissionChange(BaseModel):
                 return self
             if isinstance(value, int):
                 if value in {0, 1}:
-                    return self.model_copy(update={"value": bool(value)})
+                    self.value = bool(value)
+                    return self
                 msg_2 = "Permission value must be a boolean"
                 raise ValueError(msg_2)
             if isinstance(value, str):
                 normalized = value.strip().lower()
                 if normalized in {"true", "1", "yes", "on"}:
-                    return self.model_copy(update={"value": True})
+                    self.value = True
+                    return self
                 if normalized in {"false", "0", "no", "off"}:
-                    return self.model_copy(update={"value": False})
+                    self.value = False
+                    return self
                 msg = "Permission value must be a boolean"
                 raise ValueError(msg)
             msg_0 = "Permission value must be a boolean"
