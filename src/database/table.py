@@ -102,11 +102,11 @@ class Table:
             msg = "Filter didn't match anything"
             raise FilterMatchError(msg)
 
-    def create_index(self, key: str) -> None:
+    def create_index(self, key: str | list[tuple[str, int]]) -> None:
         """Creates a new index for a specific key
 
-        :param key: the key to be indexed
-        :type key: str
+        :param key: the key or sequence of (key, direction) tuples to be indexed
+        :type key: str | list[tuple[str, int]]
         """
         logger.info(f"Creating index on table {self.name} for key {key}")
         self.table.create_index(key)

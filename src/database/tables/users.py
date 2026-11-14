@@ -150,6 +150,7 @@ class Users(Table):
             self.create_index("risk.disabled")
             self.create_index("risk.device_id")
             self.create_index("migration-version")
+            self.create_index([("verified", 1), ("created", 1)])
         except Exception:
             logger.exception("Failed to initialize indexes on users table; continuing startup")
 
@@ -672,3 +673,31 @@ class Users(Table):
             if collisions:
                 logger.warning(f"Found {len(collisions)} pre-existing username case collision group(s): {collisions}")
         logger.info(f"Finished user migrations for {count} users.")
+
+    def delete_unverified_users(self, days: int = 7) -> int:
+        deleted: int = self.delete_many(
+            {
+                "verified": False,
+                "created": {
+                    "$lt": int(time.time()) - (days * 86400),
+                },
+            },
+        )
+
+        if deleted > 0:
+            logger.info(f"Deleted {deleted} accounts that have been unverified for >={days} days")
+        else:
+            logger.debug("delete_unverified_users: No eligible accounts found for deletion")
+
+        return deleted
+
+    def start_unverified_purge_loop(self, interval: int = 3600) -> None:
+        logger.info(f"Starting unverified account deletion thread (checks every {interval}s)")
+
+        while True:
+            try:
+                self.delete_unverified_users()
+            except Exception:
+                logger.exception("Failed during unverified account purge run")
+
+            time.sleep(interval)

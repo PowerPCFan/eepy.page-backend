@@ -110,6 +110,7 @@ class VariableInitializer:
         self.users: Users = Users(client)
         self.rewards = Rewards(client, self.users)
         threading.Thread(target=self.users.migrate_all_users, daemon=True).start()
+        threading.Thread(target=self.users.start_unverified_purge_loop, daemon=True).start()
 
     def gather_sessions(self) -> None:
         self.sessions: Sessions = Sessions(client)
