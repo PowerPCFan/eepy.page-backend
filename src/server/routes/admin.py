@@ -1056,6 +1056,19 @@ class Admin:
             {"_id": body.user_id},
             update_op,
         )
+
+        if body.send_email and user.get("email"):
+            if body.disabled:
+                action_text = "Your account has been temporarily disabled. If you believe this was done in error, please contact support@eepy.page."  # noqa: E501
+            else:
+                action_text = "Your account has been re-enabled. You may now log in to your account."
+
+            try:
+                decrypted_email = self.users.encryption.decrypt(user["email"])
+                self.admin_tools.send_nonblocking_action_email(decrypted_email, action_text)
+            except Exception:
+                logger.exception(f"Failed to send action email for user {body.user_id}")
+
         updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
         if not updated_profile:
             raise HTTPException(status_code=404, detail="User not found after update")

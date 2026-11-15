@@ -177,3 +177,4 @@ class UserDisabledBody(BaseModel):
     user_id: StrictStr
     disabled: StrictBool
     reason: StrictStr | None = None
+    send_email: StrictBool = False
