@@ -1,10 +1,10 @@
 import json
 import logging
-import os
 from collections.abc import Mapping
 
 import requests  # type: ignore[import-untyped]
 
+from config.env import Environment
 from database.tables.domains import DomainFormat, Domains
 from dns_.exceptions import DNSException
 from dns_.types import TYPES, RRSet
@@ -32,8 +32,8 @@ def sanitize(content: str, type: str) -> str:
 class DNS:
     def __init__(self, domains: Domains) -> None:
         self.table = domains
-        self.key: str = os.getenv("PDNS_API_KEY") or ""
-        self.domain: str = os.getenv("PDNS_DOMAIN") or ""
+        self.key: str = Environment.pdns_api_key()
+        self.domain: str = Environment.pdns_domain()
 
     def record_exists(self, domain: str, type: str) -> bool:
         """Checks PowerDNS for an existing exact rrset before creating a user record."""
@@ -140,7 +140,7 @@ class DNS:
         """
         Registers a new DNS record for the specified domain.
         Args:
-            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b.eepy.page, NOT a[dot]b[dot]eepy[dot]page)
+            domain (str): The name of the DNS record (e.g., a.b.eepy.page).
             content (str): The content of the DNS record.
             type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
             user_id (str): ID of the user creating the record
@@ -149,7 +149,7 @@ class DNS:
         Raises:
             DNSException: If the request to register the domain fails.
             ValueError: If the ID of the newly created DNS record cannot be retrieved.
-        """  # noqa: E501
+        """
 
         content = sanitize(content, type)
 
@@ -195,7 +195,7 @@ class DNS:
         """
         Registers a new DNS record for the specified domain.
         Args:
-            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b, NOT a[dot]b)
+            domain (str): The name of the DNS record (e.g., a.b).
             content (str): The content of the DNS record.
             type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
             user_id (str): ID of the user creating the record
@@ -305,9 +305,7 @@ class DNS:
         rrsets: dict[str, list[dict]] = {}
 
         for domain, type in domains.items():
-            (name, tld) = Domains.separate_domain_into_parts(
-                Domains.legacy_bracket_domain_to_dotted(domain),
-            )
+            (name, tld) = Domains.separate_domain_into_parts(domain)
 
             if tld not in rrsets:
                 rrsets[tld] = []

@@ -3,8 +3,6 @@
 from typing import Literal
 
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
     StrictBool,
     StrictInt,
@@ -12,13 +10,15 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from sqlmodel import SQLModel
+from sqlmodel._compat import SQLModelConfig
 
 from dns_.types import TYPES
 from security.admin_permissions import ADMIN_PERMISSION_NAMES
 
 
-class BanUser(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class BanUser(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
     reasons: list[StrictStr]
@@ -35,8 +35,8 @@ class BanUser(BaseModel):
         return self
 
 
-class IpFind(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class IpFind(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     ips: list[StrictStr]
 
@@ -51,14 +51,14 @@ class IpFind(BaseModel):
         return self
 
 
-class UserAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class UserAction(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
 
 
-class AdminPermissionChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class AdminPermissionChange(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     id: StrictStr
     permission: StrictStr
@@ -67,7 +67,7 @@ class AdminPermissionChange(BaseModel):
 
     @field_validator("permission")
     def validate_permission(cls, permission: str) -> str:
-        valid_permissions = {"enabled", "max-domains", "max-subdomains", *ADMIN_PERMISSION_NAMES}
+        valid_permissions = {"enabled", "max_domains", "max_subdomains", *ADMIN_PERMISSION_NAMES}
         if permission not in valid_permissions:
             msg = f"Invalid permission '{permission}'"
             raise ValueError(msg)
@@ -78,7 +78,7 @@ class AdminPermissionChange(BaseModel):
         permission = self.permission
         value = self.value
 
-        if permission in {"max-domains", "max-subdomains"}:
+        if permission in {"max_domains", "max_subdomains"}:
             if isinstance(value, bool):
                 msg = "Permission value must be an integer"
                 raise ValueError(msg)
@@ -121,15 +121,15 @@ class AdminPermissionChange(BaseModel):
         raise ValueError(msg_1)
 
 
-class AdminDomainEdit(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class AdminDomainEdit(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
     domain: StrictStr
     values: list[StrictStr]
     type: TYPES
     old_type: TYPES | None = None
-    mode: Literal["both", "mongo", "pdns"] = "both"
+    mode: Literal["both", "postgres", "db", "pdns"] = "both"
 
     @model_validator(mode="after")
     def validate_values(self) -> "AdminDomainEdit":
@@ -142,8 +142,8 @@ class AdminDomainEdit(BaseModel):
         return self
 
 
-class AdminStatusMessage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class AdminStatusMessage(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
     message: StrictStr
 
     @field_validator("message")
@@ -155,15 +155,15 @@ class AdminStatusMessage(BaseModel):
         return msg
 
 
-class ManualLoginTermination(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class ManualLoginTermination(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
     refresh_token: StrictStr
 
 
-class RiskUpdateBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class RiskUpdateBody(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
     score: StrictInt | None = Field(default=None, ge=0, le=100)
@@ -171,8 +171,8 @@ class RiskUpdateBody(BaseModel):
     clear_flags: StrictBool = False
 
 
-class UserDisabledBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class UserDisabledBody(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
 
     user_id: StrictStr
     disabled: StrictBool

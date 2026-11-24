@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import random
 import string
@@ -7,17 +9,36 @@ import argon2
 from argon2.exceptions import Argon2Error, InvalidHashError
 from cryptography.fernet import Fernet
 
+from config.env import Environment
+
 logger = logging.getLogger("eepy.page")
 
 
 class Encryption:
-    def __init__(self, encryption_key: str | None = None) -> None:
+    def __init__(
+        self,
+        encryption_key: str | None = None,
+        email_pepper: str | None = None,
+    ) -> None:
         self.fernet: Fernet | None = Fernet(bytes(encryption_key, "utf-8")) if encryption_key else None
         self.argon = argon2.PasswordHasher()
+
+        raw_pepper = email_pepper if email_pepper is not None else Environment.email_pepper()
+        self._email_pepper: bytes | None = raw_pepper.encode("utf-8") if raw_pepper else None
 
     @staticmethod
     def sha256(input: str) -> str:
         return sha256(input.encode("utf-8")).hexdigest()
+
+    def hash_email(self, email: str) -> str:
+        if not self._email_pepper:
+            msg = "EMAIL_PEPPER must be set to hash email addresses"
+            raise ValueError(msg)
+        return hmac.new(
+            self._email_pepper,
+            email.strip().lower().encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
     def create_password(self, plain_password: str) -> str:
         return self.argon.hash(plain_password)

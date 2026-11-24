@@ -1,14 +1,18 @@
 import contextlib
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from pymongo import MongoClient
+from sqlmodel import select
 
+from config.env import Environment
 from database.table import Table
+from models.tables import VerificationCode
 from security.encryption import Encryption
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -26,86 +30,78 @@ class CodeStatus(TypedDict):
 
 
 class Codes(Table):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client, "codes")
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, "codes")
 
         self.verification_codes: dict[str, GenericCodeFormat] = {}
         self.recovery_codes: dict[str, GenericCodeFormat] = {}
         self.deletion_codes: dict[str, GenericCodeFormat] = {}
 
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))
+        self.encryption: Encryption = Encryption(Environment.enc_key())
 
         self.__sync_codes()
 
     def __sync_codes(self) -> None:
         logger.info("Syncing codes...")
-        codes: list[dict] = self.get_table()
-
         codes_found: int = 0
-        for code in codes:
-            id: str = code["_id"]
-            target_cache = getattr(self, f"{code['type']}_codes", None)
-            if target_cache is None:
-                logger.warning("Ignoring unknown code type %s", code["type"])
-                continue
+        with self.session() as session:
+            rows = session.exec(select(VerificationCode)).all()
+            for row in rows:
+                target_cache = getattr(self, f"{row.type}_codes", None)
+                if target_cache is None:
+                    logger.warning("Ignoring unknown code type %s", row.type)
+                    continue
 
-            target_cache[id] = {
-                "account": code["account"],
-                "expire": code["expire"],
-            }
-
-            codes_found += 1
+                target_cache[row.id] = {
+                    "account": row.account,
+                    "expire": row.expire,
+                }
+                codes_found += 1
 
         logger.info(f"Synced {codes_found} codes")
 
     def create_code(self, type: str, target_username: str) -> str:
         logger.info(f"Creating code with the type of {type}")
-        code: str = Encryption.generate_random_string(16)
-
-        local_code: dict = {}
-
-        if type == "verification":
-            self.verification_codes[code] = {
-                "account": self.encryption.encrypt(target_username),
-                "expire": round(time.time()) + EXPIRE_TIME,
-            }
-            local_code = self.verification_codes
-
-        elif type == "deletion":
-            self.deletion_codes[code] = {
-                "account": self.encryption.encrypt(target_username),
-                "expire": round(time.time()) + EXPIRE_TIME,
-            }
-            local_code = self.deletion_codes
-
-        elif type == "recovery":
-            self.recovery_codes[code] = {
-                "account": self.encryption.encrypt(target_username),
-                "expire": round(time.time()) + EXPIRE_TIME,
-            }
-            local_code = self.recovery_codes
-
-        else:
+        if type not in {"verification", "deletion", "recovery"}:
             msg = "Code type is not valid"
             raise ValueError(msg)
 
-        self.insert_document(
-            {
-                "_id": code,
-                "type": type,
-                "expire": local_code[code]["expire"],
-                "account": local_code[code]["account"],
-                "expiresAfter": datetime.now(UTC) + timedelta(seconds=EXPIRE_TIME),
-            },
-        )
+        code: str = Encryption.generate_random_string(16)
+        encrypted_account = self.encryption.encrypt(target_username)
+        expire_ts = round(time.time()) + EXPIRE_TIME
+        expires_after = datetime.now(UTC) + timedelta(seconds=EXPIRE_TIME)
+
+        target_cache: dict[str, GenericCodeFormat] = getattr(self, f"{type}_codes")
+        target_cache[code] = {
+            "account": encrypted_account,
+            "expire": expire_ts,
+        }
+
+        with self.session() as session:
+            session.add(
+                VerificationCode(
+                    id=code,
+                    type=type,
+                    account=encrypted_account,
+                    expire=expire_ts,
+                    expires_after=expires_after,
+                ),
+            )
+
         logger.info(f"Created code for user {target_username}")
-
-        self.delete_in_time("expiresAfter")
-
         return code
 
     def is_valid(self, code: str, type: str) -> CodeStatus:
-        code_result = getattr(self, f"{type}_codes").get(code)
+        target_cache: dict[str, GenericCodeFormat] | None = getattr(self, f"{type}_codes", None)
+        code_result: GenericCodeFormat | None = target_cache.get(code) if target_cache is not None else None
+
+        if code_result is None:
+            with self.session() as session:
+                row = session.get(VerificationCode, code)
+                if row is not None and row.type == type:
+                    code_result = {"account": row.account, "expire": row.expire}
+                    if target_cache is not None:
+                        target_cache[code] = code_result
 
         if code_result is None:
             return {"valid": False}
@@ -126,4 +122,11 @@ class Codes(Table):
         if type == "verification":
             with contextlib.suppress(Exception):
                 self.verification_codes[code]["expire"] = round(time.time() - 600)
-        self.table.delete_one({"_id": code})
+        else:
+            target_cache: dict[str, GenericCodeFormat] | None = getattr(self, f"{type}_codes", None)
+            if target_cache is not None:
+                target_cache.pop(code, None)
+        with self.session() as session:
+            row = session.get(VerificationCode, code)
+            if row is not None:
+                session.delete(row)

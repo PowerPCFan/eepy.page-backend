@@ -1319,17 +1319,13 @@ class Validation:
                 )
             return False
 
-        for user in self.table.get_table():
-            if user_id is not None and user.get("_id") == user_id:
-                continue
-
-            for existing_domain in Domains.normalize_domains(user.get("domains", [])):
-                if Validation.domains_overlap(canonical_domain, existing_domain["name"]):
-                    logger.warning(f"Domain {canonical_domain} overlaps with {existing_domain['name']}")
-                    if raise_exceptions:
-                        msg = "Domain is already registered"
-                        raise DomainExistsError(msg)
-                    return False
+        overlapping = self.table.find_overlapping_domain(canonical_domain, exclude_user_id=user_id)
+        if overlapping is not None:
+            logger.warning(f"Domain {canonical_domain} overlaps with {overlapping}")
+            if raise_exceptions:
+                msg = "Domain is already registered"
+                raise DomainExistsError(msg)
+            return False
 
         logger.info("Domain not found in database.")
 
@@ -1355,7 +1351,7 @@ class Validation:
         :rtype: bool
         """  # noqa: E501
         if not user:
-            user_data: UserType | None = self.table.find_user({"_id": user_id})
+            user_data: UserType | None = self.table.get_user(user_id)
         else:
             user_data = user
         if user_data is None:
@@ -1391,9 +1387,9 @@ class Validation:
             f"User has {subdomain_amount} subdomains and {user_domain_amount} domains",
         )
 
-        limits = get_account_limits(user)  # pyright: ignore[reportArgumentType]
-        user_max_domains = int(limits["max-domains"])
-        user_max_subdomains = int(limits["max-subdomains"])
+        limits = get_account_limits(user)
+        user_max_domains = int(limits["max_domains"])
+        user_max_subdomains = int(limits["max_subdomains"])
 
         if not is_subdomain and user_domain_amount >= user_max_domains:
             return UserCanRegisterResult(success=False, comment="Domain limit exceeded")

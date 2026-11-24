@@ -1,9 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
-
-from pymongo import MongoClient
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from database.tables.ip_activity import (
     IP_ACTIVITY_TTL_SECONDS,
@@ -14,8 +12,9 @@ from database.tables.ip_activity import (
 )
 
 if TYPE_CHECKING:
-    from database.tables.users import Users
+    from sqlalchemy.engine import Engine
 
+    from database.tables.users import Users
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -124,18 +123,18 @@ def _short_user_id(user_id: str) -> str:
 class RiskManager:
     def __init__(
         self,
-        mongo_client: MongoClient | None = None,
+        db_engine: "Engine | None" = None,
         ip_activity: "IPActivity | None" = None,
         recent_logouts: "RecentLogouts | None" = None,
     ) -> None:
         if ip_activity is not None and recent_logouts is not None:
             self.ip_activity = ip_activity
             self.recent_logouts = recent_logouts
-        elif mongo_client is not None:
-            self.ip_activity = IPActivity(mongo_client)
-            self.recent_logouts = RecentLogouts(mongo_client)
+        elif db_engine is not None:
+            self.ip_activity = IPActivity(db_engine)
+            self.recent_logouts = RecentLogouts(db_engine)
         else:
-            msg = "Either mongo_client or both ip_activity and recent_logouts must be provided"
+            msg = "Either db_engine or both ip_activity and recent_logouts must be provided"
             raise ValueError(msg)
 
     def record_logout(self, user_id: str, ip: str, device_id: str | None = None) -> None:
@@ -145,20 +144,14 @@ class RiskManager:
     def _check_device_signal(self, ctx: RiskCheckContext) -> None:
         if not ctx.device_id:
             return
-        other_device_user = ctx.users_table.find_item(
-            {
-                "_id": {"$ne": ctx.user_id},
-                "risk.device_id": ctx.device_id,
-                "permissions.admin.enabled": {"$ne": True},
-            },
-        )
-        if other_device_user:
+        other_user_id = ctx.users_table.find_shared_device_user(ctx.user_id, ctx.device_id)
+        if other_user_id:
             ctx.flags["shared_device"] = {
                 "score": 50,
-                "reason": f"Shared persistent device token with user {_short_user_id(other_device_user['_id'])}",
+                "reason": f"Shared persistent device token with user {_short_user_id(other_user_id)}",
                 "detected_at": ctx.now,
                 "permanent": True,
-                "user_id": other_device_user["_id"],
+                "user_id": other_user_id,
             }
 
     def _check_ip_signal(self, ctx: RiskCheckContext) -> None:
@@ -168,19 +161,15 @@ class RiskManager:
         other_ip_activity = self.ip_activity.find_recent_shared_ip(ctx.ip, ctx.user_id, seven_days_ago)
         if not other_ip_activity:
             return
-        other_user = ctx.users_table.find_item(
-            {
-                "_id": other_ip_activity["user_id"],
-                "permissions.admin.enabled": {"$ne": True},
-            },
-        )
-        if other_user:
+        other_user_id = str(other_ip_activity["user_id"])
+        if ctx.users_table.is_non_admin_user(other_user_id):
             ctx.flags["shared_recent_ip"] = {
                 "score": 25,
-                "reason": f"Shared active IP with user {_short_user_id(other_user['_id'])} within 7 days",
+                "reason": f"Shared active IP with user {_short_user_id(other_user_id)} within 7 days",
                 "detected_at": ctx.now,
                 "expires_at": ctx.now + SHARED_IP_EXPIRY_SECONDS,
                 "permanent": False,
+                "user_id": other_user_id,
             }
 
     def _check_rapid_switch_signal(self, ctx: RiskCheckContext) -> None:
@@ -194,22 +183,17 @@ class RiskManager:
             since_timestamp,
         )
         for recent_switch in recent_switches:
-            other_user = ctx.users_table.find_item(
-                {
-                    "_id": recent_switch["user_id"],
-                    "permissions.admin.enabled": {"$ne": True},
-                },
-            )
-            if other_user:
+            other_user_id = str(recent_switch["user_id"])
+            if ctx.users_table.is_non_admin_user(other_user_id):
                 ctx.flags["rapid_switch"] = {
                     "score": 25,
                     "reason": (
                         f"Rapid account switch within {LOGOUT_VELOCITY_WINDOW_SECONDS}s "
-                        f"of logout from user {_short_user_id(other_user['_id'])}"
+                        f"of logout from user {_short_user_id(other_user_id)}"
                     ),
                     "detected_at": ctx.now,
                     "permanent": True,
-                    "user_id": other_user["_id"],
+                    "user_id": other_user_id,
                 }
                 break
 
@@ -221,11 +205,7 @@ class RiskManager:
         retained: dict[str, RiskFlag] = {}
         for key, flag in flags.items():
             ref_user_id = flag.get("user_id")
-            if (
-                ref_user_id
-                and key in {"shared_device", "rapid_switch"}
-                and users_table.find_item({"_id": ref_user_id}) is None
-            ):
+            if ref_user_id and key in {"shared_device", "rapid_switch"} and users_table.get_by_id(ref_user_id) is None:
                 continue
             retained[key] = flag
         return retained
@@ -240,7 +220,7 @@ class RiskManager:
         clean_ip = ip.strip() if ip else ""
         clean_device = normalize_device_id(device_id)
 
-        user = users_table.find_user({"_id": user_id}, find_banned=True)
+        user = users_table.get_user(user_id, find_banned=True)
         if not user:
             return create_default_risk(clean_device)
 
@@ -251,16 +231,7 @@ class RiskManager:
             risk_data["score"] = 0
             risk_data["locked"] = True
             risk_data["disabled"] = False
-            users_table.table.update_one(
-                {"_id": user_id},
-                {
-                    "$set": {
-                        "risk.score": 0,
-                        "risk.locked": True,
-                        "risk.disabled": False,
-                    },
-                },
-            )
+            users_table.save_evaluated_risk(user_id, risk_data, only_if_unlocked=False)
             return risk_data
 
         now = round(time.time())
@@ -270,10 +241,7 @@ class RiskManager:
         if risk_data.get("locked", False):
             self._update_ip_activity(clean_ip, user_id, now)
             if clean_device:
-                users_table.table.update_one(
-                    {"_id": user_id},
-                    {"$set": {"risk.device_id": clean_device}},
-                )
+                users_table.record_device(user_id, clean_device, now)
             return risk_data
 
         flags = prune_expired_flags(risk_data.get("flags", {}), now=now)
@@ -294,15 +262,6 @@ class RiskManager:
         new_score = calculate_risk_score(risk_data, now=now)
         risk_data["score"] = new_score
 
-        set_fields: dict[str, Any] = {
-            "risk.score": new_score,
-            "risk.flags": flags,
-        }
-        if clean_device:
-            set_fields["risk.device_id"] = clean_device
-
-        update_op: dict[str, Any] = {"$set": set_fields}
-
         if new_score >= AUTO_DISABLE_THRESHOLD and not risk_data.get("disabled", False):
             logger.warning(f"User {user_id} automatically disabled: risk score {new_score} >= {AUTO_DISABLE_THRESHOLD}")
             risk_data["disabled"] = True
@@ -310,13 +269,8 @@ class RiskManager:
             auto_reason = f"Automated: Risk score {new_score} reached or exceeded threshold ({AUTO_DISABLE_THRESHOLD})"
             if auto_reason not in reasons:
                 reasons.append(auto_reason)
-            set_fields["risk.disabled"] = True
-            update_op["$addToSet"] = {"risk.disable_reasons": auto_reason}
 
-        users_table.table.update_one(
-            {"_id": user_id, "risk.locked": {"$ne": True}},
-            update_op,
-        )
+        users_table.save_evaluated_risk(user_id, risk_data, only_if_unlocked=True)
         self._update_ip_activity(clean_ip, user_id, now)
 
         return risk_data

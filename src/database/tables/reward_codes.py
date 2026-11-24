@@ -1,71 +1,87 @@
 import logging
 import time
-from typing import TypedDict
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypedDict
 
-from pymongo import MongoClient
-
-from database.table import Table
+from database.table import Table, populate_user_fields_from_dict
 from database.tables.users import Users
+from models.tables import Reward, User, UserOwnedTLD
 from security.encryption import Encryption
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-RewardType = TypedDict(
-    "RewardType",
-    {
-        "_id": str,
-        "created": int,
-        "mappings": dict,
-        "associated-email": str,
-        "email-hash": str,
-        "used": bool,
-        "used-by": str | None,
-    },
-)
+
+class RewardType(TypedDict):
+    _id: str
+    created: int
+    mappings: dict
+    associated_email: str
+    email_hash: str
+    used: bool
+    used_by: str | None
 
 
 class Rewards(Table):
-    def __init__(self, mongo_client: MongoClient, users: Users) -> None:
+    def __init__(self, db_engine: "Engine | None", users: Users) -> None:
         self.encryption: Encryption = users.encryption
         self.users: Users = users
-        super().__init__(mongo_client, "rewards")
+        super().__init__(db_engine, "rewards")
 
     def create(self, email: str, rewards: dict) -> str:
-        """Creates a new reward code
-
-        :param rewards: a mongodb mapping which specifies what properties to change. Eg: `{"$set": {"admin.permissions.wildcards": True}}`
-        :type rewards: dict
-        """  # noqa: E501
-
+        """Creates a new reward code"""
         clean_email = email.strip()
-        document: RewardType = {
-            "_id": Encryption.generate_random_string(16),
-            "created": round(time.time()),
-            "mappings": rewards,
-            "associated-email": self.encryption.encrypt(clean_email),
-            "email-hash": self.encryption.sha256(clean_email.lower() + "supahcool"),
-            "used": False,
-            "used-by": None,
-        }
+        code_id = Encryption.generate_random_string(16)
+        with self.session() as session:
+            reward_obj = Reward(
+                id=code_id,
+                created=round(time.time()),
+                mappings=dict(rewards),
+                associated_email=self.encryption.encrypt(clean_email),
+                email_hash=self.encryption.hash_email(clean_email),
+                used=False,
+                used_by=None,
+            )
+            session.add(reward_obj)
 
-        self.table.insert_one(document)
-
-        return document["_id"]
+        return code_id
 
     def use(self, user_id: str, code: str) -> bool:
-        reward: RewardType | None = self.find_item({"_id": code})  # type: ignore[assignment]
+        with self.session() as session:
+            reward = session.get(Reward, code)
+            if reward is None:
+                logger.warning("Code doesn't exist")
+                return False
 
-        if reward is None:
-            logger.warning("Code doesn't exist")
-            return False
+            if reward.used:
+                logger.warning("Code has already been used")
+                return False
 
-        if reward.get("used"):
-            logger.warning("Code has already been used")
-            return False
+            user = session.get(User, user_id)
+            if user is not None:
+                mappings = reward.mappings or {}
+                grant_tlds = mappings.get("grant_tlds")
+                if isinstance(grant_tlds, list):
+                    for tld in grant_tlds:
+                        tld_str = str(tld).strip()
+                        if tld_str and session.get(UserOwnedTLD, (user_id, tld_str)) is None:
+                            session.add(UserOwnedTLD(user_id=user_id, tld=tld_str))
 
-        self.users.table.update_one({"_id": user_id}, reward.get("mappings", {}))
-        self.table.update_one(
-            {"_id": code},
-            {"$set": {"used": True, "used-by": user_id}},
-        )
-        return True
+                grant_credits = mappings.get("credits")
+                if isinstance(grant_credits, int):
+                    user.credits += grant_credits
+
+                extra_fields = mappings.get("fields")
+                if isinstance(extra_fields, Mapping) and extra_fields:
+                    merged = user.to_dict()
+                    merged.update(extra_fields)
+                    populate_user_fields_from_dict(user, merged)
+
+                session.add(user)
+
+            reward.used = True
+            reward.used_by = user_id
+            session.add(reward)
+            return True

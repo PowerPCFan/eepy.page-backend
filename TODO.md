@@ -46,3 +46,5 @@
 - Fix turnstile! Not sure why it broke suddenly
 - make it so unverified accounts cannot be included in alt checking (for example- this just happened in production, a user got flagged as an alt because they misspelled their email, so then they created a 2nd account with a properly spelled email which was then flagged. also weirdly enough the first account was not flagged. i also need to set up the whole "Alt groups" system/page in the admin panel the whole alt system needs a lot of work)
 - discord integration into admin panel? or some sort of other admin panel notification system for flagged accounts / other things that need attention?
+- remove caddy from everything- that should be my own internal setup, not something that's part of the backend and in the backend .env and stuff
+- set up a password vault for eepy.page-related passwords

@@ -1,10 +1,12 @@
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pymongo
-import pytest
 from fastapi import HTTPException
+import pytest
 from starlette.requests import Request
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 from database.tables.codes import Codes
 from database.tables.domains import Domains
@@ -14,10 +16,10 @@ from database.tables.sessions import Sessions
 from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
 from dns_.dns import DNS
 from mail.email import Email, normalize_email_address
+from models.user import LoginRequest, MfaRecovery
 from security.encryption import Encryption
 from security.risk import create_default_risk
 from server.routes.auth import Auth, username_regex
-from server.routes.models.user import LoginRequest, MfaRecovery
 from server.routes.user import User as UserRoutes
 
 
@@ -119,8 +121,9 @@ class TestCaseInsensitiveUsernameLogin:
     ) -> None:
         matched_user: UserType | None = users.find_user_by_identifier(username_variant)
         assert matched_user is not None
-        assert matched_user.get("password") is not None
-        assert encryption.check_password("testing", matched_user["password"]) is True  # pyright: ignore[reportArgumentType]
+        pw = matched_user.get("password")
+        assert pw is not None
+        assert encryption.check_password("testing", pw) is True
 
 
 class TestCaseInsensitiveEmailLogin:
@@ -163,8 +166,9 @@ class TestCaseInsensitiveEmailLogin:
     ) -> None:
         matched_user: UserType | None = users.find_user_by_identifier(email_variant)
         assert matched_user is not None
-        assert matched_user.get("password") is not None
-        assert encryption.check_password("testing", matched_user["password"]) is True  # pyright: ignore[reportArgumentType]
+        pw = matched_user.get("password")
+        assert pw is not None
+        assert encryption.check_password("testing", pw) is True
 
 
 class TestInvalidLoginIdentifiers:
@@ -193,11 +197,13 @@ class TestInvalidLoginIdentifiers:
     ) -> None:
         matched_user = users.find_user_by_identifier("testing")
         assert matched_user is not None
-        assert encryption.check_password("wrong_password", matched_user["password"]) is False  # pyright: ignore[reportArgumentType]
+        assert matched_user["password"] is not None
+        assert encryption.check_password("wrong_password", matched_user["password"]) is False
 
         matched_email_user = users.find_user_by_identifier("testing@email.com")
         assert matched_email_user is not None
-        assert encryption.check_password("wrong_password", matched_email_user["password"]) is False  # pyright: ignore[reportArgumentType]
+        assert matched_email_user["password"] is not None
+        assert encryption.check_password("wrong_password", matched_email_user["password"]) is False
 
 
 def test_username_case_collision_migration_and_exact_id_precedence(
@@ -211,46 +217,46 @@ def test_username_case_collision_migration_and_exact_id_precedence(
         {
             "_id": Encryption.sha256("alice"),
             "email": encryption.encrypt("alice1@example.com"),
-            "email-hash": Encryption.sha256("alice1@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("alice1@example.comsupahcool"),
+            "email_hash": encryption.hash_email("alice1@example.com"),
+            "normalized_email_hash": encryption.hash_email("alice1@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("alice"),
+            "display_name": encryption.encrypt("alice"),
             "username": lower_hash,
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     user_upper = insert_test_user(
         {
             "_id": Encryption.sha256("Alice"),
             "email": encryption.encrypt("alice2@example.com"),
-            "email-hash": Encryption.sha256("alice2@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("alice2@example.comsupahcool"),
+            "email_hash": encryption.hash_email("alice2@example.com"),
+            "normalized_email_hash": encryption.hash_email("alice2@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("Alice"),
+            "display_name": encryption.encrypt("Alice"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
         },
     )
 
-    stored_upper_before = users.find_item({"_id": user_upper["_id"]})
+    stored_upper_before = users.get_by_id(user_upper["_id"])
     assert stored_upper_before is not None
     migrated_upper = users.perform_migrations(stored_upper_before)  # pyright: ignore[reportArgumentType]
     assert "username" not in migrated_upper
-    stored_upper_after = users.find_item({"_id": user_upper["_id"]})
+    stored_upper_after = users.get_by_id(user_upper["_id"])
     assert stored_upper_after is not None
     assert "username" not in stored_upper_after
 
@@ -264,7 +270,7 @@ def test_username_case_collision_migration_and_exact_id_precedence(
 
 
 def test_login_route_ordering_email_login_and_mfa_gate(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
@@ -278,18 +284,18 @@ def test_login_route_ordering_email_login_and_mfa_gate(
         {
             "_id": Encryption.sha256("disabled_acc"),
             "email": encryption.encrypt("disabled@example.com"),
-            "email-hash": Encryption.sha256("disabled@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("disabled@example.comsupahcool"),
+            "email_hash": encryption.hash_email("disabled@example.com"),
+            "normalized_email_hash": encryption.hash_email("disabled@example.com"),
             "password": pw_hash,
-            "display-name": encryption.encrypt("disabled_acc"),
+            "display_name": encryption.encrypt("disabled_acc"),
             "username": Encryption.sha256("disabled_acc"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": False,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": {
                 "score": 85,
                 "locked": False,
@@ -297,53 +303,53 @@ def test_login_route_ordering_email_login_and_mfa_gate(
                 "disable_reasons": ["Auto"],
                 "flags": {},
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     mfa_user = insert_test_user(
         {
             "_id": Encryption.sha256("mfa_acc"),
             "email": encryption.encrypt("mfa@example.com"),
-            "email-hash": Encryption.sha256("mfa@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("mfa@example.comsupahcool"),
+            "email_hash": encryption.hash_email("mfa@example.com"),
+            "normalized_email_hash": encryption.hash_email("mfa@example.com"),
             "password": pw_hash,
-            "display-name": encryption.encrypt("mfa_acc"),
+            "display_name": encryption.encrypt("mfa_acc"),
             "username": Encryption.sha256("mfa_acc"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "totp": {"verified": True, "key": encryption.encrypt("JBSWY3DPEHPK3PXP"), "recovery": []},
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     active_user = insert_test_user(
         {
             "_id": Encryption.sha256("ActiveUser"),
             "email": encryption.encrypt("Active.User@gmail.com"),
-            "email-hash": Encryption.sha256("active.user@gmail.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256(normalize_email_address("Active.User@gmail.com") + "supahcool"),
+            "email_hash": encryption.hash_email("active.user@gmail.com"),
+            "normalized_email_hash": encryption.hash_email(normalize_email_address("Active.User@gmail.com")),
             "password": pw_hash,
-            "display-name": encryption.encrypt("ActiveUser"),
+            "display_name": encryption.encrypt("ActiveUser"),
             "username": Encryption.sha256("activeuser"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "totp": {},
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
-    invites = Invites(mongo_client)
+    invites = Invites(db_engine)
     dns = DNS(domains)
     auth = Auth(users, sessions, invites, email, dns)
     auth.captcha.verify = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
@@ -358,7 +364,7 @@ def test_login_route_ordering_email_login_and_mfa_gate(
             x_device_id="dev-attacker",
         )
     assert exc_info.value.status_code == 401
-    assert users.ip_activity.find_items({}) == []
+    assert users.ip_activity.find_all() == []
 
     with pytest.raises(HTTPException) as exc_info:
         auth.login(
@@ -378,8 +384,8 @@ def test_login_route_ordering_email_login_and_mfa_gate(
             x_device_id="dev-mfa-test",
         )
     assert exc_info.value.status_code == 412
-    assert users.ip_activity.find_items({}) == []
-    stored_mfa = users.find_item({"_id": mfa_user["_id"]})
+    assert users.ip_activity.find_all() == []
+    stored_mfa = users.get_by_id(mfa_user["_id"])
     assert stored_mfa is not None
     assert stored_mfa["risk"].get("device_id") is None
 
@@ -390,14 +396,14 @@ def test_login_route_ordering_email_login_and_mfa_gate(
         x_device_id="dev-active-01",
     )
     assert resp.status_code == 200
-    assert users.ip_activity.find_item({"_id": f"198.51.100.77_{active_user['_id']}"}) is not None
-    stored_active = users.find_item({"_id": active_user["_id"]})
+    assert users.ip_activity.get_by_id(f"198.51.100.77_{active_user['_id']}") is not None
+    stored_active = users.get_by_id(active_user["_id"])
     assert stored_active is not None
     assert stored_active["risk"]["device_id"] == "dev-active-01"
 
 
 def test_password_and_mfa_recovery_by_username_and_email_and_password_first_order(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     codes: Codes,
@@ -414,36 +420,36 @@ def test_password_and_mfa_recovery_by_username_and_email_and_password_first_orde
         {
             "_id": Encryption.sha256("nomfauser"),
             "email": encryption.encrypt("nomfa@example.com"),
-            "email-hash": Encryption.sha256("nomfa@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("nomfa@example.comsupahcool"),
+            "email_hash": encryption.hash_email("nomfa@example.com"),
+            "normalized_email_hash": encryption.hash_email("nomfa@example.com"),
             "password": pw_hash,
-            "display-name": encryption.encrypt("nomfauser"),
+            "display_name": encryption.encrypt("nomfauser"),
             "username": Encryption.sha256("nomfauser"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "totp": {},
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     mfa_user = insert_test_user(
         {
             "_id": Encryption.sha256("WithMfaUser"),
             "email": encryption.encrypt("With.Mfa@gmail.com"),
-            "email-hash": Encryption.sha256("with.mfa@gmail.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256(normalize_email_address("With.Mfa@gmail.com") + "supahcool"),
+            "email_hash": encryption.hash_email("with.mfa@gmail.com"),
+            "normalized_email_hash": encryption.hash_email(normalize_email_address("With.Mfa@gmail.com")),
             "password": pw_hash,
-            "display-name": encryption.encrypt("WithMfaUser"),
+            "display_name": encryption.encrypt("WithMfaUser"),
             "username": Encryption.sha256("withmfauser"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "totp": {
                 "verified": True,
@@ -451,30 +457,30 @@ def test_password_and_mfa_recovery_by_username_and_email_and_password_first_orde
                 "recovery": [encryption.encrypt("backup-code-1111"), encryption.encrypt("backup-code-2222")],
             },
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     insert_test_user(
         {
             "_id": Encryption.sha256("oauth_only"),
             "email": encryption.encrypt("oauth_only@example.com"),
-            "email-hash": Encryption.sha256("oauth_only@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("oauth_only@example.comsupahcool"),
+            "email_hash": encryption.hash_email("oauth_only@example.com"),
+            "normalized_email_hash": encryption.hash_email("oauth_only@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("oauth_only"),
+            "display_name": encryption.encrypt("oauth_only"),
             "username": Encryption.sha256("oauth_only"),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "totp": {},
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -491,7 +497,7 @@ def test_password_and_mfa_recovery_by_username_and_email_and_password_first_orde
     user_routes = UserRoutes(
         table=users,
         session_table=sessions,
-        invite_table=Invites(mongo_client),
+        invite_table=Invites(db_engine),
         email=email,
         codes=codes,
         dns=DNS(domains),
@@ -528,6 +534,6 @@ def test_password_and_mfa_recovery_by_username_and_email_and_password_first_orde
         MfaRecovery(username="With.Mfa@gmail.com", password="my-secret-pass"),
         x_backup_code="backup-code-1111",
     )
-    updated_mfa_user = users.find_item({"_id": mfa_user["_id"]})
+    updated_mfa_user = users.get_by_id(mfa_user["_id"])
     assert updated_mfa_user is not None
     assert "totp" not in updated_mfa_user

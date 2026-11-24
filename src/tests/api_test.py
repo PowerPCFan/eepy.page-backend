@@ -48,11 +48,10 @@ class TestUserApi:
                 domains=["domain-that-isnt-owned.eepy.page"],
             )
 
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="api-keys",
-            value={},
+        users.set_field(
+            test_user["_id"],
+            "api_keys",
+            {},
         )
 
     def test_key_permissions(self, test_user: UserType, users: Users) -> None:
@@ -192,19 +191,19 @@ def test_disabled_account_rejected_on_api_key(
         {
             "_id": user_id,
             "email": encryption.encrypt("u@example.com"),
-            "email-hash": Encryption.sha256("u@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("u@example.comsupahcool"),
+            "email_hash": encryption.hash_email("u@example.com"),
+            "normalized_email_hash": encryption.hash_email("u@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("disabled_api_user"),
+            "display_name": encryption.encrypt("disabled_api_user"),
             "username": user_id,
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [{"name": "sub.eepy.page", "type": "A", "ip": ["1.2.3.4"], "registered": 1700000000}],
-            "owned-tlds": ["eepy.page"],
-            "api-keys": {
+            "owned_tlds": ["eepy.page"],
+            "api_keys": {
                 key_hash: {
                     "string": encryption.encrypt(raw_api_key),
                     "perms": ["modify", "register", "delete", "list"],
@@ -219,7 +218,7 @@ def test_disabled_account_rejected_on_api_key(
                 "disable_reasons": ["Auto-disabled"],
                 "flags": {},
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 

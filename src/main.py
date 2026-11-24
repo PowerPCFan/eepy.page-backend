@@ -1,14 +1,15 @@
-import os
 import sys
 
 from dotenv import load_dotenv
+
+from config.env import Environment
 
 load_dotenv()
 
 
 if __name__ == "__main__":
     if "run" in sys.argv:
-        os.environ["DEBUG_MODE"] = "True"
+        Environment.set_value("DEBUG_MODE", "True")
         print("====================\nDebug mode enabled\n====================")
         print("This mode is only intended for running local development instances of this backend.")
         print("Running the backend with `python3 src/main.py run` will automatically enable debug mode.")

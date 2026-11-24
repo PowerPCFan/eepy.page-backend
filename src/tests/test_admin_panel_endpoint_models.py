@@ -1,6 +1,6 @@
 import pytest
 
-from server.routes.models.admin import (
+from models.admin import (
     AdminPermissionChange,
     BanUser,
     IpFind,
@@ -13,7 +13,7 @@ def test_admin_permission_change_accepts_numeric_limits() -> None:
     model = AdminPermissionChange.model_validate(
         {
             "id": "user123",
-            "permission": "max-domains",
+            "permission": "max_domains",
             "value": "5",
             "send_email": False,
         },
@@ -25,7 +25,7 @@ def test_admin_permission_change_accepts_numeric_limits() -> None:
     negative_model = AdminPermissionChange.model_validate(
         {
             "id": "user123",
-            "permission": "max-domains",
+            "permission": "max_domains",
             "value": " -1 ",
             "send_email": "false",
         },
@@ -39,7 +39,7 @@ def test_admin_permission_change_rejects_non_numeric_limits() -> None:
         AdminPermissionChange.model_validate(
             {
                 "id": "user123",
-                "permission": "max-domains",
+                "permission": "max_domains",
                 "value": "abc",
                 "send_email": False,
             },

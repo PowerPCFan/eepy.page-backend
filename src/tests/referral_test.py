@@ -30,18 +30,20 @@ class TestReferrals:
         assert not users.referrals.check("nice-code2")
 
     def test_use(self, users: Users, test_user: UserType) -> None:
-        current_max_domains = test_user["permissions"]["limits"]["max-domains"] # pyright: ignore[reportTypedDictNotRequiredAccess]
+        current_max_domains = test_user.get("permissions", {}).get("limits", {}).get("max_domains", 3)
 
-        # 1st referral: referred-count becomes 1, no domain bonus yet
+        # 1st referral: referred_count becomes 1, no domain bonus yet
         users.referrals.use(test_user, "nice-code")
 
         with pytest.raises(ValueError):
             users.referrals.use(test_user, "nice-code2")
 
-        modified_user: UserType = users.find_user({"_id": test_user["_id"]})  # type: ignore
-        assert modified_user["permissions"]["limits"]["max-domains"] == current_max_domains # pyright: ignore[reportTypedDictNotRequiredAccess]
+        modified_user = users.get_user(test_user["_id"])
+        assert modified_user is not None
+        assert modified_user.get("permissions", {}).get("limits", {}).get("max_domains") == current_max_domains
 
-        # 2nd referral: referred-count becomes 2, grants +1 domain bonus
+        # 2nd referral: referred_count becomes 2, grants +1 domain bonus
         users.referrals.use(test_user, "nice-code")
-        modified_user = users.find_user({"_id": test_user["_id"]})  # type: ignore
-        assert modified_user["permissions"]["limits"]["max-domains"] == current_max_domains + 1 # pyright: ignore[reportTypedDictNotRequiredAccess]
+        modified_user = users.get_user(test_user["_id"])
+        assert modified_user is not None
+        assert modified_user.get("permissions", {}).get("limits", {}).get("max_domains") == current_max_domains + 1

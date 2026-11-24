@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import secrets
 from enum import Enum
 from typing import Annotated, Any
@@ -8,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Form, Request
 from fastapi.exceptions import HTTPException
 
+from config.env import Environment
 from database.tables.reward_codes import Rewards
 from mail.email import Email
 
@@ -37,9 +37,9 @@ class PurchaseType(Enum):
 
 
 def add_tld_reward(mapping: dict[str, Any], tld: str) -> None:
-    add_to_set = mapping.setdefault("$addToSet", {})
-    owned_tlds = add_to_set.setdefault("owned-tlds", {"$each": []})
-    owned_tlds["$each"].append(tld)
+    grant_tlds: list[str] = mapping.setdefault("grant_tlds", [])
+    if tld not in grant_tlds:
+        grant_tlds.append(tld)
 
 
 class Kofi:
@@ -68,7 +68,7 @@ class Kofi:
             logger.warning("Ko-fi webhook contained invalid JSON")
             raise HTTPException(status_code=422, detail="Invalid JSON payload") from None
 
-        verification_token = os.getenv("KOFI_VERIFICATION_TOKEN")
+        verification_token = Environment.kofi_verification_token()
         submitted_token = kofi_data.get("verification_token")
 
         if (

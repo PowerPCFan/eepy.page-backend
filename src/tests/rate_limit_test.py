@@ -1,5 +1,4 @@
 import ast
-import os
 from collections.abc import Generator
 from pathlib import Path
 
@@ -7,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from config.env import Environment
 from security import rate_limit
 from security.rate_limit import Limit, Policy, RateLimitMiddleware, RedisStore, Scope, client_ip
 from starlette.requests import Request
@@ -14,7 +14,14 @@ from starlette.requests import Request
 
 @pytest.fixture
 def redis_store() -> Generator[RedisStore, None, None]:
-    store = RedisStore(os.getenv("REDIS_TEST_URL", "redis://localhost:6379/15"))
+    raw_url = Environment.redis_test_url()
+    try:
+        store = RedisStore(raw_url)
+    except Exception:
+        if "localhost" in raw_url:
+            store = RedisStore("redis://redis:6379/15")
+        else:
+            raise
     store.client.flushdb()
     yield store
     store.client.flushdb()

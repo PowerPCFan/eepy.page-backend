@@ -7,19 +7,23 @@ jobs:
     runs-on: ubuntu-22.04
 
     services:
-      mongodb:
-        image: mongo:8.0
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eepy_page_test
         ports:
-          - 27017:27017
+          - 5432:5432
         options: >-
-          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-cmd "pg_isready -U postgres -d eepy_page_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
       redis:
         image: redis:8.10-alpine
         ports:
-          - 6379:6379
+          - 6380:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -27,57 +31,60 @@ jobs:
           --health-retries 5
 
     env:
-      MONGODB_TEST_URL: mongodb://localhost:27017/
-      REDIS_TEST_URL: redis://localhost:6379/15
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/eepy_page_test
+      REDIS_TEST_URL: redis://localhost:6380/15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Python3
-        uses: actions/setup-python@v6
+      - name: Setup uv & Python 3.13
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          uv venv --python 3.13
+          uv pip install -r requirements.txt
 
       - name: Run pytest
         run: |
-          pytest
+          .venv/bin/pytest
 
   ruff:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - name: Setup uv & Python 3.13
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
 
       - name: Ruff - Install
-        run: pip install ruff==0.16.3
+        run: |
+          uv venv --python 3.13
+          uv pip install ruff==0.16.3
 
       - name: Ruff - Check linting
-        run: ruff check .
+        run: .venv/bin/ruff check .
 
       - name: Ruff - Check formatting
-        run: ruff format --check .
+        run: .venv/bin/ruff format --check .
 
   pyright:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - name: Setup uv & Python 3.13
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyright==1.1.411
+          uv venv --python 3.13
+          uv pip install -r requirements.txt pyright==1.1.411
 
       - name: Run Pyright
-        run: pyright --outputjson .
+        run: .venv/bin/pyright --pythonpath .venv/bin/python --outputjson ./src

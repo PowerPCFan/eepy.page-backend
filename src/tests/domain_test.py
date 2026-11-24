@@ -57,16 +57,9 @@ class TestDomainValidation:
     def test_domain_name_conversion(self) -> None:
         assert Domains.canonical_domain_name("a.b") == "a.b"
         assert Domains.canonical_full_domain_name("mysite") == "mysite.eepy.page"
-        assert Domains.display_domain_name("a[dot]b") == "a.b"
-        assert Domains.legacy_bracket_domain_to_dotted("a[dot]b") == "a.b"
 
     def test_separation(self) -> None:
         assert Domains.separate_domain_into_parts("test.eepy.page") == (
-            "test",
-            "eepy.page",
-        )
-
-        assert Domains.separate_domain_into_parts("test[dot]eepy[dot]page") == (
             "test",
             "eepy.page",
         )
@@ -85,7 +78,6 @@ class TestDomainValidation:
         assert Validation.is_reserved_domain("api.eepy.page")
         assert Validation.is_reserved_domain("API.eepy.page")
         assert Validation.is_reserved_domain("api.eepy.page.")
-        assert Validation.is_reserved_domain("api[dot]eepy[dot]page")
         assert Validation.is_reserved_domain("www.worksonmymachine.top")
         assert Validation.is_reserved_domain("www.eepy.page")
         assert Validation.is_reserved_domain("www3.eepy.page")
@@ -147,7 +139,7 @@ class TestDomainUser:
             "TEST.eepy.page",
             {"ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
         )  # type: ignore
-        updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
+        updated_user_data: UserType | None = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -160,7 +152,7 @@ class TestDomainUser:
             {"ip": "0.0.0.0", "type": "A", "registered": time.time()},
         )
 
-        updated_user_data = users.find_user({"_id": test_user["_id"]})
+        updated_user_data = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -180,7 +172,7 @@ class TestDomainUser:
             {"ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
         )
 
-        updated_user_data: UserType | None = users.find_user({"_id": test_user["_id"]})
+        updated_user_data: UserType | None = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -203,7 +195,7 @@ class TestDomainUser:
             {"ip": "updated-value", "registered": round(time.time()), "type": "TXT"},
         )
 
-        updated_user_data = users.find_user({"_id": test_user["_id"]})
+        updated_user_data = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -255,7 +247,7 @@ class TestDomainUser:
             old_type="A",
         )
 
-        updated_user_data = users.find_user({"_id": test_user["_id"]})
+        updated_user_data = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -291,7 +283,7 @@ class TestDomainUser:
             old_type="AAAA",
         )
 
-        updated_user_data = users.find_user({"_id": test_user["_id"]})
+        updated_user_data = users.get_user(test_user["_id"])
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
@@ -352,9 +344,7 @@ class TestDomainUser:
 
     def test_domain_highest_detection(self, validation: Validation, domains: Domains) -> None:
         assert Validation.find_required_domain("a.b.eepy.page") == "b.eepy.page"
-        assert Validation.find_required_domain("a[dot]b[dot]eepy[dot]page") == "b.eepy.page"
         assert Validation.find_required_domain("a.eepy.page") is None
-        assert Validation.find_required_domain("a[dot]eepy[dot]page") is None
 
     def test_domain_limits(self, test_user: UserType, users: Users) -> None:
         # First test the default domain limit
@@ -362,14 +352,13 @@ class TestDomainUser:
         assert Validation.can_user_register("subdomain.test2.eepy.page", test_user)[0]
 
         # Change domain limit to be 0. This stops the user from creating new domains, but still allows them to create subdomains
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="permissions.limits.max-domains",
-            value=0,
+        users.set_field(
+            test_user["_id"],
+            "permissions.limits.max_domains",
+            0,
         )
 
-        modified_user = users.find_user({"_id": test_user["_id"]})
+        modified_user = users.get_user(test_user["_id"])
         if not modified_user:
             logger.critical("Failed to get testing account")
             sys.exit()
@@ -378,14 +367,13 @@ class TestDomainUser:
         assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[0]
 
         # Disable subdomain registration too
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="permissions.limits.max-subdomains",
-            value=0,
+        users.set_field(
+            test_user["_id"],
+            "permissions.limits.max_subdomains",
+            0,
         )
 
-        modified_user = users.find_user({"_id": test_user["_id"]})
+        modified_user = users.get_user(test_user["_id"])
         if not modified_user:
             logger.critical("Failed to get testing account")
             sys.exit()
@@ -395,16 +383,14 @@ class TestDomainUser:
             modified_user,
         )[0]
 
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="permissions.limits.max-subdomains",
-            value=50,
+        users.set_field(
+            test_user["_id"],
+            "permissions.limits.max_subdomains",
+            50,
         )
 
-        users.modify_document(
-            filter={"_id": test_user["_id"]},
-            operation="$set",
-            key="permissions.limits.max-domains",
-            value=3,
+        users.set_field(
+            test_user["_id"],
+            "permissions.limits.max_domains",
+            3,
         )

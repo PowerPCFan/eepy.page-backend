@@ -10,28 +10,30 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 import requests
-from pymongo import MongoClient
-from simple_python_dotenv import load_dotenv
+from sqlmodel import select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
 backend_dir = scripts_dir.parent
 sys.path.insert(0, str(backend_dir / "src"))
-load_dotenv(backend_dir / ".env")
+sys.path.insert(0, str(scripts_dir))
 
+from simple_python_dotenv import load_dotenv  # noqa: E402
 
 if TYPE_CHECKING:
-    from pymongo.collection import Collection
+    from src.database.session import create_db_engine, session_scope
     from src.database.tables.domains import Domains
     from src.dns_.dns import sanitize
     from src.dns_.types import ALLOWED_TYPES
+    from src.models.tables import Domain
 else:
+    from database.session import create_db_engine, session_scope
     from database.tables.domains import Domains
     from dns_.dns import sanitize
     from dns_.types import ALLOWED_TYPES
+    from models.tables import Domain
 
+load_dotenv(backend_dir / ".env")
 
-DATABASE_NAME = "database"
-USERS_COLLECTION = "eepy.page"
 TLDS = {"eepy.page", "worksonmymachine.top"}
 EXCLUDED_NAMES = {
     item if any(item.endswith(tld) for tld in TLDS) else f"{item}.eepy.page"
@@ -49,43 +51,31 @@ def normalized_values(values: object, record_type: str) -> tuple[str, ...]:
     return tuple(sorted(sanitize(value, record_type) for value in values if isinstance(value, str)))
 
 
-def mongo_records(collection: Collection) -> tuple[dict[RecordKey, list[tuple[str, ...]]], dict[RecordKey, set[str]]]:
+def db_records(postgres_url: str) -> tuple[dict[RecordKey, list[tuple[str, ...]]], dict[RecordKey, set[str]]]:
     records: dict[RecordKey, list[tuple[str, ...]]] = defaultdict(list)
     owners: dict[RecordKey, set[str]] = defaultdict(set)
 
-    for user in collection.find({}, {"domains": 1}):
-        user_id = str(user.get("_id", "<unknown>"))
-        domains = user.get("domains", [])
-        if isinstance(domains, dict):
-            domains = [
-                {"name": name, **data}
-                for name, data in domains.items()
-                if isinstance(data, Mapping)
-            ]
-        if not isinstance(domains, Iterable) or isinstance(domains, (str, bytes)):
-            continue
-
-        for domain in domains:
-            if not isinstance(domain, Mapping):
-                continue
-            name = domain.get("name")
-            record_type = domain.get("type")
-            if not isinstance(name, str) or not isinstance(record_type, str):
-                continue
-            record_type = record_type.upper()
+    engine = create_db_engine(postgres_url)
+    with session_scope(engine) as session:
+        for dom in session.exec(select(Domain)).all():
+            record_type = dom.type.upper()
             if record_type not in ALLOWED_TYPES:
                 continue
+            key = (Domains.canonical_full_domain_name(dom.name), record_type)
+            records[key].append(normalized_values(dom.ip, record_type))
+            owners[key].add(dom.user_id)
 
-            key = (Domains.canonical_full_domain_name(name), record_type)
-            records[key].append(normalized_values(domain.get("ip", []), record_type))
-            owners[key].add(user_id)
-
-    return dict(records), owners
+    return records, owners
 
 
-def powerdns_records(session: requests.Session, powerdns_url: str, api_key: str) -> dict[RecordKey, list[tuple[str, ...]]]:
+def powerdns_records(
+    session: requests.Session,
+    powerdns_url: str,
+    api_key: str,
+) -> dict[RecordKey, list[tuple[str, ...]]]:
     headers = {"X-API-Key": api_key}
     server_url = f"{powerdns_url}/api/v1/servers/localhost"
+
     zones_response = session.get(f"{server_url}/zones", headers=headers, timeout=10)
     zones_response.raise_for_status()
 
@@ -95,11 +85,7 @@ def powerdns_records(session: requests.Session, powerdns_url: str, api_key: str)
         if not isinstance(zone_name, str):
             continue
 
-        zone_response = session.get(
-            f"{server_url}/zones/{zone_name}",
-            headers=headers,
-            timeout=10,
-        )
+        zone_response = session.get(f"{server_url}/zones/{zone_name}", headers=headers, timeout=10)
         zone_response.raise_for_status()
 
         for rrset in zone_response.json().get("rrsets", []):
@@ -108,16 +94,19 @@ def powerdns_records(session: requests.Session, powerdns_url: str, api_key: str)
             if not isinstance(name, str) or not isinstance(record_type, str):
                 continue
             record_type = record_type.upper()
-            name = name.rstrip(".").lower()
-            if record_type not in ALLOWED_TYPES or not any(name.endswith(tld) for tld in TLDS):
+            if record_type not in ALLOWED_TYPES:
+                continue
+
+            canonical_name = name.rstrip(".").lower()
+            if canonical_name in EXCLUDED_NAMES:
                 continue
 
             values = [
-                record.get("content")
+                record["content"]
                 for record in rrset.get("records", [])
                 if isinstance(record, Mapping) and isinstance(record.get("content"), str)
             ]
-            records[(name, record_type)].append(normalized_values(values, record_type))
+            records[(canonical_name, record_type)].append(normalized_values(values, record_type))
 
     return records
 
@@ -126,83 +115,55 @@ def describe(key: RecordKey) -> str:
     return f"{key[0]} [{key[1]}]"
 
 
-def print_section(title: str, entries: Iterable[str]) -> int:
-    entries = list(entries)
-    if not entries:
+def print_section(title: str, items: list[str]) -> int:
+    if not items:
         return 0
-    print(f"\n{title}:")
-    for entry in sorted(entries):
-        print(f"  {entry}")
-    return len(entries)
+    print(f"\n== {title} ({len(items)}) ==")
+    for item in items:
+        print(f"- {item}")
+    return len(items)
 
 
 def main() -> int:
-    mongodb_url = os.getenv("MONGODB_URL", "").strip()
+    postgres_url = os.getenv("POSTGRES_URL", "").strip()
     powerdns_url = os.getenv("PDNS_DOMAIN", "").rstrip("/")
     api_key = os.getenv("PDNS_API_KEY", "")
-    if not mongodb_url or not powerdns_url or not api_key:
-        print("MONGODB_URL, PDNS_DOMAIN, and PDNS_API_KEY must be set", file=sys.stderr)
+
+    if not postgres_url or not powerdns_url or not api_key:
+        print("POSTGRES_URL, PDNS_DOMAIN, and PDNS_API_KEY must be set", file=sys.stderr)
         return 1
 
-    with MongoClient(mongodb_url) as client, requests.Session() as session:
-        collection = client[DATABASE_NAME][USERS_COLLECTION]
-        mongo, owners = mongo_records(collection)
+    with requests.Session() as session:
+        pg_recs, owners = db_records(postgres_url)
         pdns = powerdns_records(session, powerdns_url, api_key)
 
-    mongo_keys = set(mongo)
+    pg_keys = set(pg_recs)
     pdns_keys = set(pdns)
     issues = 0
 
-    duplicate_mongo = [
+    duplicate_db = [
         f"{describe(key)} appears {len(values)} times for users {', '.join(sorted(owners[key]))}"
-        for key, values in mongo.items()
+        for key, values in pg_recs.items()
         if len(values) > 1
     ]
-    issues += print_section("Duplicate Mongo records", duplicate_mongo)
+    issues += print_section("Duplicate PostgreSQL records", duplicate_db)
 
-    mongo_by_name: dict[str, set[str]] = defaultdict(set)
-    pdns_by_name: dict[str, set[str]] = defaultdict(set)
-    for name, record_type in mongo_keys:
-        mongo_by_name[name].add(record_type)
-    for name, record_type in pdns_keys:
-        pdns_by_name[name].add(record_type)
+    missing_from_pdns = [describe(key) for key in sorted(pg_keys - pdns_keys)]
+    issues += print_section("PostgreSQL records missing from PowerDNS", missing_from_pdns)
 
-    conflicts = []
-    for source, records_by_name in (("Mongo", mongo_by_name), ("PowerDNS", pdns_by_name)):
-        for name, types in records_by_name.items():
-            if "CNAME" in types and len(types) > 1:
-                conflicts.append(f"{source}: {name} has incompatible types {', '.join(sorted(types))}")
-    issues += print_section("CNAME type conflicts", conflicts)
+    missing_from_db = [describe(key) for key in sorted(pdns_keys - pg_keys)]
+    issues += print_section("PowerDNS records missing from PostgreSQL", missing_from_db)
 
-    missing_from_pdns = [describe(key) for key in sorted(mongo_keys - pdns_keys)]
-    issues += print_section("Mongo records missing from PowerDNS", missing_from_pdns)
-
-    missing_from_mongo = [
-        describe(key)
-        for key in sorted(pdns_keys - mongo_keys)
-        if key[0] not in EXCLUDED_NAMES
-    ]
-    issues += print_section("PowerDNS records missing from Mongo", missing_from_mongo)
-
-    value_mismatches = []
-    for key in sorted(mongo_keys & pdns_keys):
-        mongo_values = set(mongo[key])
+    mismatches = []
+    for key in sorted(pg_keys & pdns_keys):
+        db_values = set(pg_recs[key])
         pdns_values = set(pdns[key])
-        if len(mongo_values) != 1 or len(pdns_values) != 1 or next(iter(mongo_values)) != next(iter(pdns_values)):
-            value_mismatches.append(
-                f"{describe(key)}: Mongo={sorted(mongo_values)} PowerDNS={sorted(pdns_values)}"
-            )
-    issues += print_section("Value mismatches", value_mismatches)
-
-    duplicate_pdns = [
-        f"{describe(key)} has {len(values)} PowerDNS rrsets"
-        for key, values in pdns.items()
-        if len(values) > 1
-    ]
-    issues += print_section("Duplicate PowerDNS rrsets", duplicate_pdns)
+        if len(db_values) != 1 or len(pdns_values) != 1 or next(iter(db_values)) != next(iter(pdns_values)):
+            mismatches.append(f"{describe(key)}: Postgres={sorted(db_values)} PowerDNS={sorted(pdns_values)}")
+    issues += print_section("Record value mismatches", mismatches)
 
     print(
-        f"Checked {len(mongo_keys)} Mongo keys and {len(pdns_keys)} PowerDNS keys; found {issues} issue(s).",
+        f"\nChecked {len(pg_keys)} PostgreSQL keys and {len(pdns_keys)} PowerDNS keys; found {issues} issue(s).",
         file=sys.stderr,
     )
     return 1 if issues else 0

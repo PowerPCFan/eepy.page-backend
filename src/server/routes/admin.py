@@ -1,16 +1,16 @@
 # ruff: noqa: ARG002
 
 import logging
-import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from typing import Any, get_args
+from typing import get_args
 
 import jwt
 import requests
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
 
+from config.env import Environment
 from database.exceptions import UserNotExistError
 from database.tables.sessions import Sessions
 from database.tables.status import Status
@@ -19,14 +19,7 @@ from dns_.dns import sanitize
 from dns_.exceptions import DNSException
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 from mail.email import normalize_email_address
-from security.admin import AccountData, DomainDeletionError
-from security.admin import Admin as AdminTools
-from security.admin_permissions import admin_is_enabled
-from security.convert import Convert
-from security.encryption import Encryption
-from security.risk import FLAGGED_THRESHOLD
-from security.session import Session
-from server.routes.models.admin import (
+from models.admin import (
     AdminDomainEdit,
     AdminPermissionChange,
     AdminStatusMessage,
@@ -37,6 +30,12 @@ from server.routes.models.admin import (
     UserAction,
     UserDisabledBody,
 )
+from security.admin import AccountData, DomainDeletionError
+from security.admin import Admin as AdminTools
+from security.admin_permissions import admin_is_enabled
+from security.convert import Convert
+from security.risk import FLAGGED_THRESHOLD
+from security.session import Session
 
 MAX_SAFE_32BIT_INT = 2**31 - 1
 
@@ -307,7 +306,7 @@ class Admin:
             "/dns/desync",
             self.find_desync,
             methods=["GET"],
-            responses={200: {"description": "MongoDB/PowerDNS synchronization report"}},
+            responses={200: {"description": "PostgreSQL/PowerDNS synchronization report"}},
             tags=["admin"],
         )
 
@@ -379,7 +378,7 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="account")
     def delete_user(self, body: BanUser, session: Session = Depends(converter.create)) -> None:
-        user_data: UserType | None = self.users.find_user({"_id": body.user_id})
+        user_data: UserType | None = self.users.get_user(body.user_id)
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -427,8 +426,9 @@ class Admin:
         if domain_data is None:
             raise HTTPException(status_code=404, detail="Domain not found")
 
+        normalized_domain = self.admin_tools.domains.canonical_domain_name(domain)
         dns_success = self.admin_tools.dns.delete_domain(
-            self.admin_tools.domains.display_domain_name(domain),
+            normalized_domain,
             domain_data["type"],
         )
 
@@ -437,7 +437,7 @@ class Admin:
                 if send_email:
                     self.admin_tools.email.send_domain_termination_email(
                         email,
-                        self.admin_tools.domains.display_domain_name(domain),
+                        normalized_domain,
                         reason,
                     )
                 logger.info(f"Deleted domain {domain}")
@@ -456,7 +456,7 @@ class Admin:
         type: str | None = None,
         session: Session = Depends(converter.create),
     ) -> dict[str, object]:
-        user = self.users.find_user({"_id": user_id}, find_banned=True)
+        user = self.users.get_user(user_id, find_banned=True)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -473,7 +473,7 @@ class Admin:
         body: AdminDomainEdit,
         session: Session = Depends(converter.create),
     ) -> dict[str, object]:
-        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        user = self.users.get_user(body.user_id, find_banned=True)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -509,7 +509,7 @@ class Admin:
                 logger.exception("Admin DNS domain edit failed")
                 raise HTTPException(status_code=500, detail="PowerDNS domain update failed") from error
 
-        if body.mode in {"both", "mongo"}:
+        if body.mode in {"both", "postgres", "db"}:
             try:
                 self.admin_tools.domains.modify_domain(
                     body.user_id,
@@ -519,7 +519,7 @@ class Admin:
                     old_type=domain_data["type"],
                 )
             except ValueError as error:
-                logger.exception("Admin MongoDB domain edit failed")
+                logger.exception("Admin database domain edit failed")
                 if body.mode == "both":
                     try:
                         raw: list[str] | str = domain_data["ip"]
@@ -532,7 +532,7 @@ class Admin:
                         )
                     except DNSException:
                         logger.exception("Admin domain edit rollback failed")
-                raise HTTPException(status_code=500, detail="MongoDB domain update failed") from error
+                raise HTTPException(status_code=500, detail="PostgreSQL domain update failed") from error
 
         return {"user_id": body.user_id, "domain": body.domain, "type": body.type, "mode": body.mode}
 
@@ -587,33 +587,19 @@ class Admin:
         session: Session = Depends(converter.create),
     ) -> AccountData | list[AccountData]:
         clean_email = email.strip()
-        lower_email = clean_email.lower()
         normalized_email = normalize_email_address(clean_email)
 
-        email_hashes = {
-            Encryption.sha256(lower_email + "supahcool"),
-            Encryption.sha256(clean_email + "supahcool"),
-        }
-        normalized_hash = Encryption.sha256(normalized_email + "supahcool")
+        email_hashes = {self.users.encryption.hash_email(clean_email)}
+        normalized_hash = self.users.encryption.hash_email(normalized_email)
 
-        matched_docs = list(
-            self.users.table.find(
-                {
-                    "$or": [
-                        {"email-hash": {"$in": list(email_hashes)}},
-                        {"normalized-email-hash": normalized_hash},
-                    ],
-                },
-                {"_id": 1},
-            ).limit(50),
-        )
+        matched_ids = self.users.find_users_by_email_hashes(email_hashes, normalized_hash, limit=50)
 
-        if not matched_docs:
+        if not matched_ids:
             raise HTTPException(status_code=404, detail="User not found (find_item)")
 
         profiles: list[AccountData] = []
-        for doc in matched_docs:
-            profile = self.admin_tools.get_user_details_by_id(doc["_id"])
+        for matched_id in matched_ids:
+            profile = self.admin_tools.get_user_details_by_id(matched_id)
             if profile:
                 profiles.append(profile)
 
@@ -682,7 +668,7 @@ class Admin:
             raise HTTPException(status_code=503, detail="Failed to delete record")
 
     @Session.requires_auth
-    @Session.requires_permission(permission="manage-permissions")
+    @Session.requires_permission(permission="manage_permissions")
     def change_permission(
         self,
         body: AdminPermissionChange = Depends(),
@@ -700,39 +686,17 @@ class Admin:
             raise HTTPException(status_code=412, detail=str(error)) from error
 
     @Session.requires_auth
-    @Session.requires_permission(permission="manage-permissions")
+    @Session.requires_permission(permission="manage_permissions")
     def full_admin(
         self,
         body: UserAction,
         session: Session = Depends(converter.create),
     ) -> None:
-        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        user = self.users.get_user(body.user_id, find_banned=True)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        self.users.table.update_one(
-            {"_id": body.user_id},
-            {
-                "$set": {
-                    "permissions.admin": {
-                        "enabled": True,
-                        "permissions": {
-                            "account": True,
-                            "dns": True,
-                            "manage-permissions": True,
-                            "reports": True,
-                            "userdetails": True,
-                            "wildcards": True,
-                        },
-                    },
-                    "permissions.limits": {
-                        "max-domains": MAX_SAFE_32BIT_INT,
-                        "max-subdomains": MAX_SAFE_32BIT_INT,
-                    },
-                    "permissions.features.invite": True,
-                },
-            },
-        )
+        self.users.grant_full_admin(body.user_id, MAX_SAFE_32BIT_INT)
 
     @Session.requires_auth
     @Session.requires_permission(permission="account")
@@ -742,11 +706,11 @@ class Admin:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> dict[str, str]:
-        user = self.users.find_user({"_id": body.user_id})
+        user = self.users.get_user(body.user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        original_metadata = {field: user.get(field) for field in ("accessed-from", "last-login") if field in user}
+        original_metadata = {field: user.get(field) for field in ("accessed_from", "last_login") if field in user}
 
         status = Session.create(
             username=body.user_id,
@@ -766,10 +730,7 @@ class Admin:
             refresh_token,
             options={"verify_signature": False, "verify_exp": False},
         )["jti"]
-        self.sessions.table.update_one(
-            {"_id": refresh_id},
-            {"$set": {"manual-login": {"user-id": body.user_id, "metadata": original_metadata}}},
-        )
+        self.sessions.set_manual_login(refresh_id, body.user_id, original_metadata)
 
         return {
             "access_token": status["access_token"] or "",
@@ -792,27 +753,13 @@ class Admin:
             raise HTTPException(status_code=404, detail="Manual login session not found")
 
         session_data = self.sessions.get_session(refresh_id)
-        manual_login = session_data.get("manual-login") if session_data else None
-        if not isinstance(manual_login, Mapping) or manual_login.get("user-id") != body.user_id:
+        manual_login = session_data.get("manual_login") if session_data else None
+        if not isinstance(manual_login, Mapping) or manual_login.get("user_id") != body.user_id:
             raise HTTPException(status_code=404, detail="Manual login session not found")
 
         metadata = manual_login.get("metadata", {})
         if isinstance(metadata, Mapping):
-            restore: dict[str, object] = {}
-            unset: dict[str, str] = {}
-            for field in ("accessed-from", "last-login"):
-                if field in metadata:
-                    restore[field] = metadata[field]
-                else:
-                    unset[field] = ""
-
-            update: dict[str, dict[str, object] | dict[str, str]] = {}
-            if restore:
-                update["$set"] = restore
-            if unset:
-                update["$unset"] = unset
-            if update:
-                self.users.table.update_one({"_id": body.user_id}, update)
+            self.users.restore_login_metadata(body.user_id, metadata)
 
         if not self.sessions.delete_session_pair(refresh_id):
             raise HTTPException(status_code=404, detail="Manual login session not found")
@@ -823,40 +770,31 @@ class Admin:
         self,
         session: Session = Depends(converter.create),
     ) -> dict[str, object]:
-        powerdns_url = os.getenv("PDNS_DOMAIN", "").rstrip("/")
-        api_key = os.getenv("PDNS_API_KEY", "")
+        powerdns_url = Environment.pdns_domain().rstrip("/")
+        api_key = Environment.pdns_api_key()
         if not powerdns_url or not api_key:
             raise HTTPException(status_code=503, detail="PowerDNS configuration is unavailable")
 
-        mongo_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
+        postgres_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
         owners: dict[tuple[str, str], set[str]] = defaultdict(set)
-        for user in self.users.table.find({}, {"domains": 1}):
-            user_id = str(user.get("_id", "<unknown>"))
-            domains = user.get("domains", [])
-            if isinstance(domains, dict):
-                domains = [{"name": name, **data} for name, data in domains.items() if isinstance(data, Mapping)]
-            if not isinstance(domains, Iterable) or isinstance(domains, (str, bytes)):
+        for user_id, domain in self.admin_tools.domains.get_all_domain_records():
+            name = domain.get("name")
+            record_type = domain.get("type")
+            if not isinstance(name, str) or not isinstance(record_type, str):
                 continue
-            for domain in domains:
-                if not isinstance(domain, Mapping):
-                    continue
-                name = domain.get("name")
-                record_type = domain.get("type")
-                if not isinstance(name, str) or not isinstance(record_type, str):
-                    continue
-                record_type = record_type.upper()
-                if record_type not in ALLOWED_TYPES:
-                    continue
-                raw_values = domain.get("ip", [])
-                values = [raw_values] if isinstance(raw_values, str) else raw_values
-                if not isinstance(values, Iterable) or isinstance(values, (bytes, Mapping)):
-                    continue
-                normalized = tuple(
-                    sorted(sanitize(value, record_type) for value in values if isinstance(value, str)),
-                )
-                key = (self.admin_tools.domains.canonical_full_domain_name(name), record_type)
-                mongo_records[key].append(normalized)
-                owners[key].add(user_id)
+            record_type = record_type.upper()
+            if record_type not in ALLOWED_TYPES:
+                continue
+            raw_values = domain.get("ip", [])
+            values = [raw_values] if isinstance(raw_values, str) else raw_values
+            if not isinstance(values, Iterable) or isinstance(values, (bytes, Mapping)):
+                continue
+            normalized = tuple(
+                sorted(sanitize(value, record_type) for value in values if isinstance(value, str)),
+            )
+            key = (self.admin_tools.domains.canonical_full_domain_name(name), record_type)
+            postgres_records[key].append(normalized)
+            owners[key].add(str(user_id))
 
         powerdns_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
         server_url = f"{powerdns_url}/api/v1/servers/localhost"
@@ -892,34 +830,35 @@ class Admin:
         except requests.RequestException as error:
             raise HTTPException(status_code=503, detail="PowerDNS request failed") from error
 
-        mongo_keys, powerdns_keys = set(mongo_records), set(powerdns_records)
+        postgres_keys, powerdns_keys = set(postgres_records), set(powerdns_records)
 
         def describe(key: tuple[str, str]) -> str:
             return f"{key[0]} [{key[1]}]"
 
-        duplicate_mongo = [
+        duplicate_postgres = [
             f"{describe(key)} appears {len(values)} times for users {', '.join(sorted(owners[key]))}"
-            for key, values in mongo_records.items()
+            for key, values in postgres_records.items()
             if len(values) > 1
         ]
-        missing_from_powerdns = [describe(key) for key in sorted(mongo_keys - powerdns_keys)]
-        missing_from_mongo = [describe(key) for key in sorted(powerdns_keys - mongo_keys)]
+        missing_from_powerdns = [describe(key) for key in sorted(postgres_keys - powerdns_keys)]
+        missing_from_postgres = [describe(key) for key in sorted(powerdns_keys - postgres_keys)]
         mismatches = [
-            f"{describe(key)}: Mongo={sorted(set(mongo_records[key]))} PowerDNS={sorted(set(powerdns_records[key]))}"
-            for key in sorted(mongo_keys & powerdns_keys)
-            if set(mongo_records[key]) != set(powerdns_records[key])
+            f"{describe(key)}: PostgreSQL={sorted(set(postgres_records[key]))} "
+            f"PowerDNS={sorted(set(powerdns_records[key]))}"
+            for key in sorted(postgres_keys & powerdns_keys)
+            if set(postgres_records[key]) != set(powerdns_records[key])
         ]
 
         issues = {
-            "duplicate_mongo": duplicate_mongo,
+            "duplicate_postgres": duplicate_postgres,
             "missing_from_powerdns": missing_from_powerdns,
-            "missing_from_mongo": missing_from_mongo,
+            "missing_from_postgres": missing_from_postgres,
             "value_mismatches": mismatches,
         }
-        return {"mongo_keys": len(mongo_keys), "powerdns_keys": len(powerdns_keys), "issues": issues}
+        return {"postgres_keys": len(postgres_keys), "powerdns_keys": len(powerdns_keys), "issues": issues}
 
     @Session.requires_auth
-    @Session.requires_permission(permission="manage-permissions")
+    @Session.requires_permission(permission="manage_permissions")
     def add_tld(
         self,
         id: str,
@@ -933,7 +872,7 @@ class Admin:
         self.admin_tools.add_domain(id, tld, send_email=send_email)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
-    @Session.requires_permission(permission="manage-permissions")
+    @Session.requires_permission(permission="manage_permissions")
     def remove_tld(
         self,
         id: str,
@@ -957,7 +896,7 @@ class Admin:
 
     @Session.requires_auth
     def can_access(self, session: Session = Depends(converter.create)) -> None:
-        if not admin_is_enabled(session.user_cache_data):  # pyright: ignore[reportArgumentType]
+        if not admin_is_enabled(session.user_cache_data):
             raise HTTPException(status_code=403, detail="Invalid permission")
 
     @Session.requires_auth
@@ -966,25 +905,17 @@ class Admin:
         self,
         session: Session = Depends(converter.create),
     ) -> list[AccountData]:
-        query = {
-            "$or": [
-                {"risk.score": {"$gte": FLAGGED_THRESHOLD}},
-                {"risk.disabled": True},
-            ],
-        }
-        cursor = self.users.table.find(query)
         results: list[AccountData] = []
-        for raw_user in cursor:
+        for migrated_user in self.users.find_flagged_users(FLAGGED_THRESHOLD):
             try:
-                migrated_user = self.users.perform_migrations(raw_user)
                 user_details = self.admin_tools.get_user_details_by_id(
-                    raw_user["_id"],
+                    migrated_user["_id"],
                     migrated_user,
                 )
                 if user_details:
                     results.append(user_details)
             except Exception:
-                logger.exception(f"Failed to load flagged user {raw_user.get('_id')}")
+                logger.exception(f"Failed to load flagged user {migrated_user.get('_id')}")
         results.sort(
             key=lambda item: (
                 -int(item.get("risk", {}).get("score", 0)),
@@ -1000,25 +931,16 @@ class Admin:
         body: RiskUpdateBody,
         session: Session = Depends(converter.create),
     ) -> AccountData:
-        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        user = self.users.get_user(body.user_id, find_banned=True)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        set_fields: dict[str, Any] = {}
-        if body.clear_flags:
-            set_fields["risk.flags"] = {}
-            if body.score is None:
-                set_fields["risk.score"] = 0
-        if body.score is not None:
-            set_fields["risk.score"] = min(100, max(0, body.score))
-        if body.locked is not None:
-            set_fields["risk.locked"] = body.locked
-
-        if set_fields:
-            self.users.table.update_one(
-                {"_id": body.user_id},
-                {"$set": set_fields},
-            )
+        self.users.update_user_risk_fields(
+            body.user_id,
+            score=body.score,
+            locked=body.locked,
+            clear_flags=body.clear_flags,
+        )
         updated_profile = self.admin_tools.get_user_details_by_id(body.user_id)
         if not updated_profile:
             raise HTTPException(status_code=404, detail="User not found after update")
@@ -1031,30 +953,14 @@ class Admin:
         body: UserDisabledBody,
         session: Session = Depends(converter.create),
     ) -> AccountData:
-        user = self.users.find_user({"_id": body.user_id}, find_banned=True)
+        user = self.users.get_user(body.user_id, find_banned=True)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        update_op: dict[str, Any]
-        if body.disabled:
-            update_op = {"$set": {"risk.disabled": True}}
-            clean_reason = body.reason.strip() if body.reason else ""
-            if clean_reason:
-                update_op["$addToSet"] = {"risk.disable_reasons": clean_reason}
-        else:
-            update_op = {
-                "$set": {
-                    "risk.disabled": False,
-                    "risk.disable_reasons": [],
-                    "risk.locked": True,
-                    "risk.score": 0,
-                    "risk.flags": {},
-                },
-            }
-
-        self.users.table.update_one(
-            {"_id": body.user_id},
-            update_op,
+        self.users.set_user_disabled(
+            body.user_id,
+            disabled=body.disabled,
+            reason=body.reason,
         )
 
         if body.send_email and user.get("email"):

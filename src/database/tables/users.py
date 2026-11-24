@@ -1,13 +1,16 @@
 import json
 import logging
-import os
 import time
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import requests
-from pymongo import MongoClient
+from sqlalchemy import func, or_
+from sqlalchemy.orm.attributes import flag_modified
+from sqlmodel import col, delete, select
 
+from config.env import Environment
 from database.exceptions import (
     EmailException,
     InviteException,
@@ -19,180 +22,425 @@ from database.table import Table
 from database.tables.ip_activity import IPActivity, RecentLogouts
 from database.tables.referrals import Referrals
 from mail.email import Email, normalize_email_address
+from models.tables import (
+    AltLink,
+    ApiKey,
+    Domain,
+    Invite,
+    SessionModel,
+    User,
+    UserDevice,
+    UserIP,
+    UserMFA,
+    UserOwnedTLD,
+    UserPermissions,
+    UserRiskProfile,
+)
+from models.user import (
+    MFA,
+    CountryType,
+    EncryptedString,
+    InviteType,
+    UserPageType,
+    UserType,
+)
 from security.encryption import Encryption
-from security.risk import RiskManager, UserRisk, create_default_risk
-from security.session import NewSessionType
+from security.risk import RiskManager, UserRisk, normalize_device_id
 
 if TYPE_CHECKING:
-    from database.tables.domains import DomainFormat, DomainRecord
+    from sqlalchemy.engine import Engine
+
     from database.tables.sessions import Sessions as SessionTable
     from security.api import ApiType
 
-
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-USER_MIGRATION_VERSION = 2
+USER_MIGRATION_VERSION = 1
+
+type UserMigrationStep = Callable[[User, "Users"], None]
+
+USER_MIGRATIONS: dict[int, UserMigrationStep] = {}
 
 
-class CountryType(TypedDict):
-    ip: str
-    hostname: NotRequired[str]
-    city: str
-    region: str
-    country: str  # 2 char country code (ex. FI)
-    loc: str  # latitude,longtitude
-    org: str
-    postal: str  # Zip code
-    timezone: str  # TZ format (ex. Europe/Helsinki)
-    country_name: str
-    isEU: bool
-    country_flag_url: str
-    country_flag: dict  # contains keys "emoji", and "unicode", which you can probably guess what it does
-    country_currency: dict  # contains keys "code", (ex. EUR), and symbol (ex. €)
-    continent: dict  # contains keys "code", (ex. EU), and name, (ex. Europe)
-    latitude: str
-    longitude: str
+def register_user_migration(version: int) -> Callable[[UserMigrationStep], UserMigrationStep]:
+    def decorator(func: UserMigrationStep) -> UserMigrationStep:
+        USER_MIGRATIONS[version] = func
+        return func
+
+    return decorator
 
 
-class InviteType(TypedDict):
-    used: bool
-    used_by: NotRequired[str]
-    used_at: NotRequired[int]  # epoch timestamp
-
-
-class MFA(TypedDict):
-    verified: bool
-    key: str
-    recovery: list[str]
-
-
-type EncryptedString = str
-
-UserPageType = TypedDict(
+__all__ = [
+    "MFA",
+    "USER_MIGRATIONS",
+    "USER_MIGRATION_VERSION",
+    "CountryType",
+    "EncryptedString",
+    "InviteType",
     "UserPageType",
-    {
-        "username": str,
-        "email": str,
-        "lang": str,
-        "country": CountryType | dict,
-        "created": int,
-        "verified": bool,
-        "permissions": dict[str, Any],
-        "beta-enroll": bool,
-        "sessions": list[NewSessionType],
-        "invites": dict[str, InviteType],
-        "mfa_enabled": bool,
-        "referral-code": str | None,
-        "referred-people": int | None,
-        "owned-tlds": list[str],
-    },
-)
-
-UserType = TypedDict(
     "UserType",
-    {
-        "_id": str,
-        "email": str,
-        # Password is an Argon2 hash for email/password accounts.
-        "password": str | None,
-        "display-name": str,
-        "username": NotRequired[str],
-        "lang": str,
-        "country": CountryType | dict,
-        "email-hash": NotRequired[str],
-        "normalized-email-hash": NotRequired[str],
-        "accessed-from": NotRequired[list[str]],
-        "created": int,  # Epoch timestamp
-        "last-login": int,  # Epoch timestamp
-        "permissions": NotRequired[dict[str, Any]],
-        "verified": bool,
-        "domains": Required[list["DomainRecord"] | dict[str, "DomainFormat"]],
-        "tunnels": NotRequired[list[dict[str, Any]]],
-        "feature-flags": NotRequired[dict[str, bool]],
-        "api-keys": NotRequired[dict[str, "ApiType"]],
-        "credits": NotRequired[int],
-        "beta-enroll": NotRequired[bool],
-        "beta-updated": NotRequired[int],
-        "invites": NotRequired[dict[str, InviteType]],
-        "invite-code": NotRequired[str],
-        "totp": NotRequired[MFA | dict],
-        "banned": NotRequired[bool],
-        "ban-reasons": NotRequired[list[str]],
-        "referral-code": NotRequired[str],
-        "referred-by": NotRequired[str],
-        "referred-count": NotRequired[int],
-        "owned-tlds": list[str],
-        "risk": NotRequired[UserRisk],
-        "migration-version": NotRequired[int],
-    },
-)
+    "Users",
+    "register_user_migration",
+]
 
 
 class Users(Table):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client, "eepy.page")
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY") or "none")
-        self.referrals: Referrals = Referrals(mongo_client, self)
-        self.ip_activity: IPActivity = IPActivity(mongo_client)
-        self.recent_logouts: RecentLogouts = RecentLogouts(mongo_client)
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, "users")
+        self.encryption: Encryption = Encryption(Environment.enc_key() or "none")
+        self.referrals: Referrals = Referrals(self.engine, self)
+        self.ip_activity: IPActivity = IPActivity(self.engine)
+        self.recent_logouts: RecentLogouts = RecentLogouts(self.engine)
         self.risk_manager: RiskManager = RiskManager(
             ip_activity=self.ip_activity,
             recent_logouts=self.recent_logouts,
         )
-        self._ensure_indexes()
 
-    def _ensure_indexes(self) -> None:
-        try:
-            self.create_index("username")
-            self.create_index("email-hash")
-            self.create_index("normalized-email-hash")
-            self.create_index("risk.score")
-            self.create_index("risk.disabled")
-            self.create_index("risk.device_id")
-            self.create_index("migration-version")
-            self.create_index([("verified", 1), ("created", 1)])
-        except Exception:
-            logger.exception("Failed to initialize indexes on users table; continuing startup")
-
-    def find_user(self, filter: dict, find_banned: bool = False) -> UserType | None:
-        data: UserType = self.find_item(filter)  # type: ignore[return-value,assignment]
-
-        if data:
-            data = self.perform_migrations(data)
-            if data.get("banned") and not find_banned:
-                return None
-
+    def get_user(self, user_id: str, find_banned: bool = False) -> UserType | None:
+        raw = self.get_by_id(user_id)
+        if raw is None:
+            return None
+        data = self.perform_migrations(cast("UserType", raw))
+        if data.get("banned") and not find_banned:
+            return None
         return data
 
     def find_user_by_identifier(self, identifier: str, find_banned: bool = False) -> UserType | None:
+        """Find a user by exact username, case-insensitive username, or email address."""
         clean_id = identifier.strip()
         if not clean_id:
             return None
-        lowercase_id = clean_id.lower()
 
-        exact_match = self.find_user({"_id": Encryption.sha256(clean_id)}, find_banned=find_banned)
-        if exact_match is not None:
-            return exact_match
+        exact_id = Encryption.sha256(clean_id)
+        lower_username_hash = Encryption.sha256(clean_id.lower())
 
-        search_conditions: list[dict] = [
-            {"username": Encryption.sha256(lowercase_id)},
-        ]
+        with self.session() as session:
+            row = session.get(User, exact_id)
+            if row is not None and row.banned and not find_banned:
+                row = None
 
-        if "@" in clean_id:
-            search_conditions.extend(
-                [
-                    {"email-hash": Encryption.sha256(lowercase_id + "supahcool")},
-                    {"email-hash": Encryption.sha256(clean_id + "supahcool")},
-                ],
+            if row is None:
+                conditions = [col(User.username) == lower_username_hash]
+                if "@" in clean_id:
+                    conditions.append(col(User.email_hash) == self.encryption.hash_email(clean_id))
+                stmt = select(User).where(or_(*conditions))
+                if not find_banned:
+                    stmt = stmt.where(col(User.banned) == False)
+                row = session.exec(stmt).first()
+
+            if row is None:
+                return None
+            user_dict = cast("UserType", row.to_dict())
+
+        user_dict = self.perform_migrations(user_dict)
+        if user_dict.get("banned") and not find_banned:
+            return None
+        return user_dict
+
+    def find_user_by_username_hash(self, username: str, find_banned: bool = False) -> UserType | None:
+        exact_hash = Encryption.sha256(username)
+        lower_hash = Encryption.sha256(username.lower())
+        with self.session() as session:
+            stmt = select(User).where(
+                or_(
+                    col(User.id) == exact_hash,
+                    col(User.username) == lower_hash,
+                ),
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                return None
+            user_dict = cast("UserType", row.to_dict())
+        user_dict = self.perform_migrations(user_dict)
+        if user_dict.get("banned") and not find_banned:
+            return None
+        return user_dict
+
+    def find_users_by_ips(self, ips: list[str]) -> list[UserType]:
+        clean_ips = [ip.strip() for ip in ips if ip and ip.strip()]
+        if not clean_ips:
+            return []
+        with self.session() as session:
+            stmt = (
+                select(User)
+                .join(UserIP, col(UserIP.user_id) == col(User.id))
+                .where(col(UserIP.ip).in_(clean_ips))
+                .distinct()
+            )
+            rows = session.exec(stmt).all()
+            return [cast("UserType", row.to_dict()) for row in rows]
+
+    def find_shared_device_user(self, user_id: str, device_id: str) -> str | None:
+        clean_dev = normalize_device_id(device_id)
+        if not clean_dev:
+            return None
+        with self.session() as session:
+            stmt = (
+                select(UserDevice.user_id)
+                .outerjoin(UserPermissions, col(UserPermissions.user_id) == col(UserDevice.user_id))
+                .where(
+                    col(UserDevice.device_id) == clean_dev,
+                    col(UserDevice.user_id) != user_id,
+                    or_(
+                        col(UserPermissions.admin_enabled).is_(None),
+                        col(UserPermissions.admin_enabled) == False,
+                    ),
+                )
+            )
+            return session.exec(stmt).first()
+
+    def is_non_admin_user(self, user_id: str) -> bool:
+        with self.session() as session:
+            stmt = (
+                select(User.id)
+                .outerjoin(UserPermissions, col(UserPermissions.user_id) == col(User.id))
+                .where(
+                    col(User.id) == user_id,
+                    or_(
+                        col(UserPermissions.admin_enabled).is_(None),
+                        col(UserPermissions.admin_enabled) == False,
+                    ),
+                )
+            )
+            return session.exec(stmt).first() is not None
+
+    def record_device(self, user_id: str, device_id: str, timestamp: int | None = None) -> None:
+        clean_dev = normalize_device_id(device_id)
+        if not clean_dev:
+            return
+        now_ts = round(time.time()) if timestamp is None else int(timestamp)
+        with self.session() as session:
+            if session.get(User, user_id) is None:
+                return
+            existing = session.get(UserDevice, (user_id, clean_dev))
+            if existing is not None:
+                existing.last_seen = now_ts
+                session.add(existing)
+            else:
+                session.add(
+                    UserDevice(
+                        user_id=user_id,
+                        device_id=clean_dev,
+                        first_seen=now_ts,
+                        last_seen=now_ts,
+                    ),
+                )
+
+    def get_alt_links(self, user_id: str) -> list[dict[str, Any]]:
+        """Return all alt-detection links involving a user from either direction."""
+        with self.session() as session:
+            stmt = select(AltLink).where(
+                or_(
+                    col(AltLink.user_id) == user_id,
+                    col(AltLink.related_user_id) == user_id,
+                ),
+            )
+            rows = session.exec(stmt).all()
+            return [
+                {
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "related_user_id": row.related_user_id,
+                    "signal_type": row.signal_type,
+                    "score": row.score,
+                    "reason": row.reason,
+                    "detected_at": row.detected_at,
+                    "expires_at": row.expires_at,
+                    "permanent": row.permanent,
+                }
+                for row in rows
+            ]
+
+    def create_api_key(  # noqa: PLR0913
+        self,
+        user_id: str,
+        *,
+        key_hash: str,
+        encrypted_key: str,
+        perms: list[str],
+        domains: list[str],
+        comment: str,
+    ) -> None:
+        with self.session() as session:
+            if session.get(User, user_id) is None:
+                msg = "User not found"
+                raise UserNotExistError(msg)
+            session.merge(
+                ApiKey(
+                    id=key_hash,
+                    user_id=user_id,
+                    string=encrypted_key,
+                    perms=list(perms),
+                    domains=list(domains),
+                    comment=comment,
+                ),
             )
 
-        return self.find_user(
-            {"$or": search_conditions} if len(search_conditions) > 1 else search_conditions[0],
-            find_banned=find_banned,
-        )
+    def set_verified(self, user_id: str, *, verified: bool = True) -> bool:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return False
+            user.verified = verified
+            session.add(user)
+            return True
 
-    def find_users(self, filter: dict) -> list[UserType] | None:
-        return self.find_items(filter)  # type: ignore[return-value]
+    def set_password(self, user_id: str, password_hash: str) -> bool:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return False
+            user.password = password_hash
+            session.add(user)
+            return True
+
+    def set_mfa(
+        self,
+        user_id: str,
+        secret_key: str,
+        recovery_codes: list[str],
+        *,
+        verified: bool = False,
+    ) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                msg = "User does not exist!"
+                raise UserNotExistError(msg)
+            mfa = user.mfa or UserMFA(user_id=user_id)
+            mfa.secret_key = secret_key
+            mfa.recovery_codes = list(recovery_codes)
+            mfa.verified = verified
+            flag_modified(mfa, "recovery_codes")
+            user.mfa = mfa
+            session.add(user)
+
+    def verify_mfa(self, user_id: str) -> bool:
+        with self.session() as session:
+            mfa = session.get(UserMFA, user_id)
+            if mfa is None:
+                return False
+            mfa.verified = True
+            session.add(mfa)
+            return True
+
+    def delete_mfa(self, user_id: str) -> bool:
+        with self.session() as session:
+            mfa = session.get(UserMFA, user_id)
+            if mfa is None:
+                return False
+            session.delete(mfa)
+            return True
+
+    def set_permission(self, user_id: str, permission: str, value: str | bool | int) -> bool:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return False
+            perms = user.permissions_rel or UserPermissions(user_id=user_id)
+            if permission == "max_domains":
+                perms.max_domains = int(value)
+            elif permission == "max_subdomains":
+                perms.max_subdomains = int(value)
+            elif permission == "enabled":
+                perms.admin_enabled = bool(value)
+            elif permission == "invite":
+                perms.feature_invite = bool(value)
+            elif permission in {"account", "dns", "manage_permissions", "reports", "userdetails", "wildcards"}:
+                setattr(perms, f"admin_{permission}", bool(value))
+            else:
+                return False
+            user.permissions_rel = perms
+            session.add(user)
+            return True
+
+    def add_owned_tld(self, user_id: str, tld: str) -> bool:
+        clean_tld = tld.strip()
+        if not clean_tld:
+            return False
+        with self.session() as session:
+            if session.get(User, user_id) is None:
+                return False
+            existing = session.get(UserOwnedTLD, (user_id, clean_tld))
+            if existing is None:
+                session.add(UserOwnedTLD(user_id=user_id, tld=clean_tld))
+            return True
+
+    def remove_owned_tld(self, user_id: str, tld: str) -> bool:
+        clean_tld = tld.strip()
+        if not clean_tld:
+            return False
+        with self.session() as session:
+            existing = session.get(UserOwnedTLD, (user_id, clean_tld))
+            if existing is None:
+                return False
+            session.delete(existing)
+            return True
+
+    def find_users_by_email_hashes(
+        self,
+        email_hashes: set[str],
+        normalized_hash: str,
+        limit: int = 50,
+    ) -> list[str]:
+        with self.session() as session:
+            stmt = (
+                select(User.id)
+                .where(
+                    or_(
+                        col(User.email_hash).in_(list(email_hashes)),
+                        col(User.normalized_email_hash) == normalized_hash,
+                    ),
+                )
+                .limit(limit)
+            )
+            return list(session.exec(stmt).all())
+
+    def find_user_by_domain_name(self, canonical_domain: str, find_banned: bool = True) -> UserType | None:
+        with self.session() as session:
+            stmt = (
+                select(User)
+                .join(Domain, col(Domain.user_id) == col(User.id))
+                .where(col(Domain.name) == canonical_domain)
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                return None
+            if row.banned and not find_banned:
+                return None
+            return self.perform_migrations(cast("UserType", row.to_dict()))
+
+    def find_user_by_api_key(self, key_hash: str) -> tuple[UserType | None, "ApiType | None"]:
+        with self.session() as session:
+            ak = session.get(ApiKey, key_hash)
+            if ak is None:
+                return None, None
+            user = session.get(User, ak.user_id)
+            if user is None:
+                return None, None
+            key_dict = cast("ApiType", ak.to_dict())
+            user_dict = cast("UserType", user.to_dict())
+        migrated = self.perform_migrations(user_dict)
+        return migrated, key_dict
+
+    def delete_api_key(self, user_id: str, key_hash: str) -> bool:
+        with self.session() as session:
+            stmt = select(ApiKey).where(ApiKey.id == key_hash, ApiKey.user_id == user_id)
+            ak = session.exec(stmt).first()
+            if ak is None:
+                return False
+            session.delete(ak)
+            return True
+
+    def count_users_created_after(self, created_timestamp: int) -> int:
+        with self.session() as session:
+            stmt = select(func.count()).select_from(User).where(User.created > created_timestamp)
+            return int(session.exec(stmt).one() or 0)
+
+    def count_total_users(self) -> int:
+        with self.session() as session:
+            stmt = select(func.count()).select_from(User)
+            return int(session.exec(stmt).one() or 0)
 
     def send_discord_analytic_webhook(
         self,
@@ -202,7 +450,7 @@ class Users(Table):
     ) -> None:
         start = time.time()
         requests.post(
-            os.getenv("DC_WEBHOOK", ""),
+            Environment.dc_webhook(),
             data=json.dumps(
                 {
                     "content": None,
@@ -216,23 +464,23 @@ class Users(Table):
                     ],
                     "attachments": [],
                 },
-            ),  # pyright: ignore[reportArgumentType]
+            ),
             headers={"Content-Type": "application/json"},
             timeout=5,
         )
         logger.debug(time.time() - start)
 
-    def create_user(  # noqa: PLR0913
+    def create_user(  # noqa: PLR0913, PLR0915
         self,
         *,
         username: str,
         password: str | None,
         email: str,
         language: str,
-        country,  # noqa: ANN001
-        time_signed_up,  # noqa: ANN001
+        country: dict[str, Any],
+        time_signed_up: int,
         email_instance: Email,
-        target_url: str,  # target_url should only be the hostname (e.g canary.eepy.page, www.eepy.page)
+        target_url: str,
         dont_send_email: bool = False,
         refer_code: str | None = None,
         skip_verification: bool = False,
@@ -249,82 +497,88 @@ class Users(Table):
             msg = "Email is already in use!"
             raise EmailException(msg)
 
-        if (
-            self.find_item(
-                {
-                    "$or": [
-                        {"_id": hashed_username},
-                        {"username": lowercase_hashed_username},
-                    ],
-                },
-            )
-            is not None
-        ):
-            msg_0 = "Username already taken!"
-            raise UsernameException(msg_0)
+        with self.session() as session:
+            existing = session.exec(
+                select(User).where(
+                    or_(
+                        col(User.id) == hashed_username,
+                        col(User.username) == lowercase_hashed_username,
+                    ),
+                ),
+            ).first()
+            if existing is not None:
+                msg_0 = "Username already taken!"
+                raise UsernameException(msg_0)
 
         clean_email: str = email.strip()
         normalized_email: str = normalize_email_address(clean_email)
 
-        normalized_email_hash: str = Encryption.sha256(normalized_email + "supahcool")
-        email_hash: str = Encryption.sha256(clean_email.lower() + "supahcool")
+        normalized_email_hash: str = self.encryption.hash_email(normalized_email)
+        email_hash: str = self.encryption.hash_email(clean_email)
 
-        account_data: UserType = {
-            "_id": hashed_username,
-            "email": self.encryption.encrypt(clean_email),
-            "password": (None if password is None else self.encryption.create_password(password)),
-            "display-name": self.encryption.encrypt(original_username),
-            "username": lowercase_hashed_username,
-            "lang": language,
-            "country": country,
-            "email-hash": email_hash,
-            "normalized-email-hash": normalized_email_hash,
-            "accessed-from": [],
-            "created": time_signed_up,
-            "last-login": round(time.time()),
-            "permissions": {
-                "admin": {
-                    "enabled": False,
-                    "permissions": {},
-                },
-                "limits": {
-                    "max-domains": 3,
-                    "max-subdomains": 5,
-                },
-                "features": {
-                    "invite": False,
-                },
-            },
-            "feature-flags": {},
-            "verified": bool(skip_verification),
-            "domains": [],
-            "api-keys": {},
-            "credits": 200,
-            "beta-enroll": False,
-            "beta-updated": 0,
-            "invites": {},
-            "invite-code": "",
-            "totp": {},
-            "banned": False,
-            "ban-reasons": [],
-            "referral-code": "",
-            "referred-by": "",
-            "referred-count": 0,
-            "owned-tlds": ["eepy.page"],
-            "risk": create_default_risk(device_id=device_id),
-            "migration-version": USER_MIGRATION_VERSION,
-        }
-
+        referred_by_val = ""
         if refer_code:
             if self.referrals.check(refer_code):
                 logger.info("User was referred")
-                account_data["referred-by"] = refer_code
+                referred_by_val = refer_code
             else:
                 logger.warning("Invalid referral code!")
                 msg_1 = "Invalid referral code!"
                 raise ReferralError(msg_1)
 
-        self.insert_document(account_data)
+        clean_device = normalize_device_id(device_id)
+        now_ts = round(time.time())
+        with self.session() as session:
+            new_user = User(
+                id=hashed_username,
+                email=self.encryption.encrypt(clean_email),
+                password=(None if password is None else self.encryption.create_password(password)),
+                display_name=self.encryption.encrypt(original_username),
+                username=lowercase_hashed_username,
+                lang=language,
+                country=dict(country) if isinstance(country, Mapping) else {},
+                email_hash=email_hash,
+                normalized_email_hash=normalized_email_hash,
+                created=int(time_signed_up),
+                last_login=now_ts,
+                feature_flags={},
+                verified=bool(skip_verification),
+                credits=200,
+                beta_enroll=False,
+                beta_updated=0,
+                invite_code="",
+                banned=False,
+                ban_reasons=[],
+                referral_code="",
+                referred_by=referred_by_val,
+                referred_count=0,
+                migration_version=USER_MIGRATION_VERSION,
+            )
+            new_user.permissions_rel = UserPermissions(
+                user_id=hashed_username,
+                max_domains=3,
+                max_subdomains=5,
+                feature_invite=False,
+                admin_enabled=False,
+            )
+            new_user.owned_tlds_rel = [UserOwnedTLD(user_id=hashed_username, tld="eepy.page")]
+            new_user.risk_profile = UserRiskProfile(
+                user_id=hashed_username,
+                score=0,
+                locked=False,
+                disabled=False,
+                disable_reasons=[],
+            )
+            if clean_device:
+                new_user.devices = [
+                    UserDevice(
+                        user_id=hashed_username,
+                        device_id=clean_device,
+                        first_seen=now_ts,
+                        last_seen=now_ts,
+                    ),
+                ]
+            session.add(new_user)
 
         ip = country.get("ip", "") if isinstance(country, dict) else ""
         try:
@@ -360,48 +614,39 @@ class Users(Table):
     def create_invite(self, user_id: str) -> str:
         logger.info("Creating invite...")
         invite_code: str = Encryption.generate_random_string(16)
-        invite_user: UserType | None = self.find_user({"_id": user_id})
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None or user.banned:
+                msg = "User does not exist!"
+                raise UserNotExistError(msg)
 
-        if invite_user is None:
-            msg = "User does not exist!"
-            raise UserNotExistError(msg)
+            if len(user.invites or []) >= 3:  # noqa: PLR2004
+                logger.info("User has surpassed their invite limit")
+                msg_0 = "Invite limit exceeded"
+                raise InviteException(msg_0)
 
-        if len(invite_user.get("invites", {})) >= 3:  # noqa: PLR2004
-            logger.info("User has surpassed their invite limit")
-            msg_0 = "Invite limit exceeded"
-            raise InviteException(msg_0)
-
-        self.table.update_one(
-            {"_id": user_id},
-            {
-                "$set": {
-                    f"invites.{invite_code}": {
-                        "used": False,
-                        "used_by": None,
-                        "used_at": None,
-                        "created": round(time.time()),
-                    },
-                },
-            },
-        )
-
+            session.add(
+                Invite(
+                    code=invite_code,
+                    creator_id=user_id,
+                    used=False,
+                    used_by=None,
+                    used_at=None,
+                    created=round(time.time()),
+                ),
+            )
         return invite_code
 
-    def get_invites(self, user_id: str) -> dict[str, InviteType] | dict:
-        """Get user's invites.
-        Returns empty dict if no invites are found
-        Raises ValueError if user does not exist
-        """
-        user_data: UserType | None = self.find_user({"_id": user_id})
+    def get_invites(self, user_id: str) -> dict[str, InviteType] | dict[str, Any]:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None or user.banned:
+                msg = "Invalid user!"
+                raise UserNotExistError(msg)
+            return {inv.code: inv.to_dict() for inv in (user.invites or [])}
 
-        if user_data is None:
-            msg = "Invalid user!"
-            raise UserNotExistError(msg)
-
-        return user_data.get("invites", {})
-
-    def get_user_gdpr(self, user_id: str) -> dict:
-        user_data: UserType | None = self.find_user({"_id": user_id})
+    def get_user_gdpr(self, user_id: str) -> dict[str, Any]:
+        user_data: UserType | None = self.get_user(user_id)
 
         if user_data is None:
             msg = "Invalid user"
@@ -413,7 +658,7 @@ class Users(Table):
             "creation_date": user_data["created"],
             "domains": user_data["domains"],
             "lang": user_data["lang"],
-            "last_login": user_data["last-login"],
+            "last_login": user_data["last_login"],
             "permissions": user_data.get("permissions", {}),
             "verified": user_data["verified"],
         }
@@ -426,8 +671,8 @@ class Users(Table):
         user_type: UserType | None = None,
     ) -> UserPageType:
         logger.info(f"Getting user profile for {user_id}")
-        user_data: UserType | None = user_type or self.find_user(
-            {"_id": user_id},
+        user_data: UserType | None = user_type or self.get_user(
+            user_id,
             find_banned,
         )
 
@@ -435,30 +680,26 @@ class Users(Table):
             msg = "Invalid user"
             raise UserNotExistError(msg)
 
-        # Two different filters because in the middle of migrating the session to JWTs
-        session_data = session_table.find_items(
-            {
-                "$or": [
-                    {"owner-hash": Encryption.sha256(user_id + "eepy.page")},
-                    {"$and": [{"owner": user_id}, {"type": "refresh"}]},
-                ],
-            },
-        )  # type: ignore[assignment]
+        now_utc = datetime.now(UTC)
+        owner_hash_target = Encryption.sha256(user_id + "eepy.page")
+        with session_table.session() as db_sess:
+            stmt = select(SessionModel).where(
+                col(SessionModel.expires) > now_utc,
+                or_(
+                    col(SessionModel.owner_hash) == owner_hash_target,
+                    (col(SessionModel.owner) == user_id) & (col(SessionModel.type) == "refresh"),
+                ),
+            )
+            session_rows = db_sess.exec(stmt).all()
+            session_data = [row.to_dict() for row in session_rows]
 
         for session in session_data:
-            # NOTE: If you're an admin and want to make a session last forever, this cant handle much lol
-            # I tried using 3025 and `.timestamp()` just errored out
-            if session.get("expire"):
-                logger.debug("Found old schema session")
-                session["expires"] = round(session.get("expire").timestamp())  # type: ignore[union-attr]
-                del session["expire"]
-
-            elif session.get("expires"):
-                logger.debug("Found new schema session")
-                session["expires"] = round(session.get("expires").timestamp())  # type: ignore[union-attr]
+            exp_val = session.get("expires")
+            if isinstance(exp_val, datetime):
+                session["expires"] = round(exp_val.timestamp())
 
         return {
-            "username": self.encryption.decrypt(user_data["display-name"]),
+            "username": self.encryption.decrypt(user_data["display_name"]),
             "email": self.encryption.decrypt(user_data["email"]),
             "lang": user_data["lang"],
             "country": user_data["country"],
@@ -466,223 +707,321 @@ class Users(Table):
             "verified": user_data["verified"],
             "permissions": user_data.get("permissions", {}),
             "domains": user_data["domains"],
-            "beta-enroll": user_data.get("beta-enroll", False),
-            "sessions": session_data,  # type: ignore[typeddict-item]
-            "invites": user_data.get("invites", {}),  # type: ignore[typeddict-item]
+            "beta_enroll": user_data.get("beta_enroll", False),
+            "sessions": session_data,
+            "invites": user_data.get("invites", {}),
             "mfa_enabled": user_data.get("totp", {}).get("verified", False),
-            "referral-code": user_data.get("referral-code"),
-            "referred-people": user_data.get("referred-count"),
-            "owned-tlds": user_data.get("owned-tlds", ["eepy.page"]),
+            "referral_code": user_data.get("referral_code"),
+            "referred_people": user_data.get("referred_count"),
+            "owned_tlds": user_data.get("owned_tlds", ["eepy.page"]),
         }
 
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
-        self.modify_document(
-            filter={"_id": user_id},
-            operation="$set",
-            key="beta-enroll",
-            value=mode,
-        )
-        self.modify_document(
-            filter={"_id": user_id},
-            operation="$set",
-            key="beta-updated",
-            value=round(time.time()),
-        )
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.beta_enroll = mode
+                user.beta_updated = round(time.time())
+                session.add(user)
 
     def mark_deletion_pending(self, userid: str, reasons: list[str]) -> None:
-        self.table.update_one(
-            {"_id": userid},
-            {
-                "$set": {
-                    "banned": True,
-                    "deleted-in": datetime.now(UTC) + timedelta(weeks=52),
-                },
-                "$push": {"ban-reasons": {"$each": reasons}},
-            },
-        )
-        self.delete_in_time("deleted-in")
+        with self.session() as session:
+            user = session.get(User, userid)
+            if user is not None:
+                user.banned = True
+                user.deleted_in = datetime.now(UTC) + timedelta(weeks=52)
+                current_reasons = list(user.ban_reasons or [])
+                current_reasons.extend(reasons)
+                user.ban_reasons = current_reasons
+                flag_modified(user, "ban_reasons")
+                session.add(user)
 
-    def perform_migrations(self, user: UserType) -> UserType:  # noqa: C901, PLR0912, PLR0915
-        start = time.time()
-        logger.debug(f"Running migrations for user {user['_id']}")
-        from database.tables.domains import Domains  # noqa: PLC0415
+    def reinstate_user(self, user_id: str) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.banned = False
+                user.unbanned = round(time.time())
+                user.deleted_in = None
+                session.add(user)
 
-        original_domains = user.get("domains", [])
-        domains = Domains.normalize_domains(original_domains)
-        fixed_domains = domains != original_domains
-
-        if not isinstance(user.get("domains"), list) or fixed_domains:
-            logger.info("Found domains which were fixed")
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="domains",
-                value=domains,
-            )
-            user["domains"] = domains
-
-        try:
-            raw_email = self.encryption.decrypt(user.get("email", "")).strip()
-            if raw_email:
-                normalized = normalize_email_address(raw_email)
-                expected_norm_hash = self.encryption.sha256(normalized + "supahcool")
-                if user.get("normalized-email-hash") != expected_norm_hash:
-                    logger.info("Migrating user normalized email hash")
-                    user["normalized-email-hash"] = expected_norm_hash
-                    self.modify_document(
-                        filter={"_id": user["_id"]},
-                        operation="$set",
-                        key="normalized-email-hash",
-                        value=user["normalized-email-hash"],
-                    )
-
-                expected_hash = self.encryption.sha256(raw_email.lower() + "supahcool")
-                if user.get("email-hash") != expected_hash:
-                    logger.info("Fixing/standardizing user email hash")
-                    user["email-hash"] = expected_hash
-                    self.modify_document(
-                        filter={"_id": user["_id"]},
-                        operation="$set",
-                        key="email-hash",
-                        value=user["email-hash"],
-                    )
-        except Exception:
-            logger.exception("Failed to migrate email hashes for user")
-
-        if len(set(user.get("accessed-from", []))) != len(
-            user.get("accessed-from", []),
-        ):
-            logger.info("Fixing invalid accessed-from property")
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="accessed-from",
-                value=list(set(user.get("accessed-from", []))),
-            )
-
-        if user.get("owned-tlds") is None:
-            logger.info("Updated owned TLDs")
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="owned-tlds",
-                value=["eepy.page"],
-            )
-
-        has_username_collision = False
-        if not user.get("username") and user.get("display-name"):
-            try:
-                decrypted_name = self.encryption.decrypt(user["display-name"]).strip()
-                if decrypted_name:
-                    lowercase_hash = Encryption.sha256(decrypted_name.lower())
-                    collision = self.find_item(
-                        {
-                            "_id": {"$ne": user["_id"]},
-                            "username": lowercase_hash,
-                        },
-                    )
-                    if collision:
-                        has_username_collision = True
-                        logger.warning(
-                            f"Username case collision detected while backfilling user {user['_id']} "
-                            f"(collides with {collision.get('_id')}); skipping username write",
-                        )
+    def record_login(self, user_id: str, ip: str) -> None:
+        now_ts = round(time.time())
+        clean_ip = ip.strip() if ip else ""
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.last_login = now_ts
+                session.add(user)
+                if clean_ip:
+                    existing_ip = session.get(UserIP, (user_id, clean_ip))
+                    if existing_ip is not None:
+                        existing_ip.last_seen = now_ts
+                        session.add(existing_ip)
                     else:
-                        self.modify_document(
-                            filter={"_id": user["_id"]},
-                            operation="$set",
-                            key="username",
-                            value=lowercase_hash,
+                        session.add(
+                            UserIP(
+                                user_id=user_id,
+                                ip=clean_ip,
+                                first_seen=now_ts,
+                                last_seen=now_ts,
+                            ),
                         )
-                        user["username"] = lowercase_hash
-            except Exception:
-                logger.exception(f"Failed to backfill username hash for user {user.get('_id')}")
 
-        if not user.get("risk"):
-            logger.info("Initializing risk object for user")
-            is_admin = bool(user.get("permissions", {}).get("admin", {}).get("enabled", False))
-            user["risk"] = create_default_risk(device_id=None, is_admin=is_admin)
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="risk",
-                value=user["risk"],
+    def update_display_name(self, user_id: str, encrypted_display_name: str, username_hash: str) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.display_name = encrypted_display_name
+                user.username = username_hash
+                session.add(user)
+
+    def grant_full_admin(self, user_id: str, max_limit: int) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                perms = user.permissions_rel or UserPermissions(user_id=user_id)
+                perms.admin_enabled = True
+                perms.admin_account = True
+                perms.admin_dns = True
+                perms.admin_manage_permissions = True
+                perms.admin_reports = True
+                perms.admin_userdetails = True
+                perms.admin_wildcards = True
+                perms.max_domains = max_limit
+                perms.max_subdomains = max_limit
+                perms.feature_invite = True
+                user.permissions_rel = perms
+                session.add(user)
+
+    def restore_login_metadata(self, user_id: str, metadata: Mapping[str, Any]) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                raw_ips = metadata.get("accessed_from")
+                if isinstance(raw_ips, list):
+                    seen: set[str] = set()
+                    restored_ips: list[UserIP] = []
+                    for idx, ip_val in enumerate(raw_ips):
+                        ip_str = str(ip_val).strip()
+                        if not ip_str or ip_str in seen:
+                            continue
+                        seen.add(ip_str)
+                        restored_ips.append(
+                            UserIP(user_id=user_id, ip=ip_str, first_seen=idx, last_seen=idx),
+                        )
+                    user.ips = restored_ips
+                else:
+                    user.ips = []
+
+                if "last_login" in metadata and metadata["last_login"] is not None:
+                    user.last_login = int(metadata["last_login"])
+                else:
+                    user.last_login = 0
+                session.add(user)
+
+    def find_flagged_users(self, flagged_threshold: int) -> list[UserType]:
+        with self.session() as session:
+            stmt = (
+                select(User)
+                .join(UserRiskProfile, col(UserRiskProfile.user_id) == col(User.id))
+                .where(
+                    or_(
+                        col(UserRiskProfile.score) >= flagged_threshold,
+                        col(UserRiskProfile.disabled) == True,
+                    ),
+                )
             )
+            rows = session.exec(stmt).all()
+            return [self.perform_migrations(cast("UserType", row.to_dict())) for row in rows]
 
-        api_keys = user.get("api-keys", {})
-        api_keys_fixed = False
-        for api_key in api_keys.values():
-            domains = api_key.get("domains", [])
-            normalized_domains = [
-                domain if domain == "*" else Domains.canonical_full_domain_name(domain) for domain in domains
-            ]
-            if normalized_domains != domains:
-                api_keys_fixed = True
-                api_key["domains"] = normalized_domains
+    def update_user_risk_fields(
+        self,
+        user_id: str,
+        *,
+        score: int | None = None,
+        locked: bool | None = None,
+        clear_flags: bool = False,
+    ) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            rp = user.risk_profile or UserRiskProfile(user_id=user_id)
+            if clear_flags:
+                user.alt_links = []
+                if score is None:
+                    rp.score = 0
+            if score is not None:
+                rp.score = min(100, max(0, score))
+            if locked is not None:
+                rp.locked = locked
+            user.risk_profile = rp
+            session.add(user)
 
-        if api_keys_fixed:
-            logger.info("Updated API key domain scopes")
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="api-keys",
-                value=api_keys,
-            )
+    def set_user_disabled(
+        self,
+        user_id: str,
+        *,
+        disabled: bool,
+        reason: str | None = None,
+    ) -> None:
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            rp = user.risk_profile or UserRiskProfile(user_id=user_id)
+            if disabled:
+                rp.disabled = True
+                clean_reason = reason.strip() if reason else ""
+                if clean_reason:
+                    reasons = list(rp.disable_reasons or [])
+                    if clean_reason not in reasons:
+                        reasons.append(clean_reason)
+                    rp.disable_reasons = reasons
+                    flag_modified(rp, "disable_reasons")
+            else:
+                rp.disabled = False
+                rp.disable_reasons = []
+                flag_modified(rp, "disable_reasons")
+                rp.locked = True
+                rp.score = 0
+                user.alt_links = []
+            user.risk_profile = rp
+            session.add(user)
 
-        if not has_username_collision and user.get("migration-version") != USER_MIGRATION_VERSION:
-            user["migration-version"] = USER_MIGRATION_VERSION
-            self.modify_document(
-                filter={"_id": user["_id"]},
-                operation="$set",
-                key="migration-version",
-                value=USER_MIGRATION_VERSION,
-                ignore_no_matches=True,
-            )
+    def save_evaluated_risk(
+        self,
+        user_id: str,
+        risk_data: UserRisk,
+        *,
+        only_if_unlocked: bool = True,
+    ) -> None:
+        now_ts = round(time.time())
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            rp = user.risk_profile or UserRiskProfile(user_id=user_id)
+            if only_if_unlocked and rp.locked:
+                return
 
-        logger.debug(f"Migrations took {time.time() - start:.5f}s")
+            rp.score = int(risk_data.get("score") or 0)
+            rp.locked = bool(risk_data.get("locked", False))
+            rp.disabled = bool(risk_data.get("disabled", False))
+            rp.disable_reasons = list(risk_data.get("disable_reasons") or [])
+            flag_modified(rp, "disable_reasons")
+            user.risk_profile = rp
+
+            clean_dev = normalize_device_id(risk_data.get("device_id"))
+            if clean_dev:
+                existing_dev = session.get(UserDevice, (user_id, clean_dev))
+                if existing_dev is not None:
+                    existing_dev.last_seen = now_ts
+                    session.add(existing_dev)
+                else:
+                    user.devices.append(
+                        UserDevice(
+                            user_id=user_id,
+                            device_id=clean_dev,
+                            first_seen=now_ts,
+                            last_seen=now_ts,
+                        ),
+                    )
+
+            new_links: list[AltLink] = []
+            for signal_type, flag_data in (risk_data.get("flags") or {}).items():
+                related_uid_raw = flag_data.get("user_id")
+                related_uid = str(related_uid_raw) if related_uid_raw else None
+                if related_uid is not None and session.get(User, related_uid) is None:
+                    continue
+                exp_val = flag_data.get("expires_at")
+                new_links.append(
+                    AltLink(
+                        user_id=user_id,
+                        related_user_id=related_uid,
+                        signal_type=str(signal_type),
+                        score=int(flag_data.get("score") or 0),
+                        reason=str(flag_data.get("reason") or ""),
+                        detected_at=int(flag_data.get("detected_at") or 0),
+                        expires_at=int(exp_val) if exp_val is not None else None,
+                        permanent=bool(flag_data.get("permanent", False)),
+                    ),
+                )
+            user.alt_links = new_links
+            session.add(user)
+
+    def perform_migrations(self, user: UserType) -> UserType:
+        """Runs registered in-backend migrations for a user record."""
+        current_version = int(user.get("migration_version") or 0)
+        if current_version >= USER_MIGRATION_VERSION and not USER_MIGRATIONS:
+            return user
+
+        if current_version < USER_MIGRATION_VERSION:
+            with self.session() as session:
+                user_row = session.get(User, user["_id"])
+                if user_row is None:
+                    return user
+
+                for target_ver in range(current_version + 1, USER_MIGRATION_VERSION + 1):
+                    migration_fn = USER_MIGRATIONS.get(target_ver)
+                    if migration_fn is not None:
+                        migration_fn(user_row, self)
+
+                user_row.migration_version = USER_MIGRATION_VERSION
+                session.add(user_row)
+                session.flush()
+                return cast("UserType", user_row.to_dict())
 
         return user
 
     def find_username_case_collisions(self) -> dict[str, list[str]]:
         by_lower_hash: dict[str, list[str]] = {}
-        for user in self.table.find({}, {"_id": 1, "username": 1, "display-name": 1}):
-            lower_hash = user.get("username")
-            if not lower_hash and user.get("display-name"):
-                try:
-                    decrypted = self.encryption.decrypt(user["display-name"]).strip()
-                    if decrypted:
-                        lower_hash = Encryption.sha256(decrypted.lower())
-                except Exception:  # noqa: S112
-                    continue
-            if lower_hash:
-                by_lower_hash.setdefault(lower_hash, []).append(user["_id"])
+        with self.session() as session:
+            for user in session.exec(select(User)).all():
+                lower_hash = user.username
+                if not lower_hash and user.display_name:
+                    try:
+                        decrypted = self.encryption.decrypt(user.display_name).strip()
+                        if decrypted:
+                            lower_hash = Encryption.sha256(decrypted.lower())
+                    except Exception:  # noqa: S112
+                        continue
+                if lower_hash:
+                    by_lower_hash.setdefault(lower_hash, []).append(user.id)
 
         return {h: ids for h, ids in by_lower_hash.items() if len(ids) > 1}
 
     def migrate_all_users(self) -> None:
         logger.info("Starting background user migrations...")
         count = 0
-        for user in self.table.find({"migration-version": {"$ne": USER_MIGRATION_VERSION}}):
+        with self.session() as session:
+            unmigrated_ids = list(
+                session.exec(
+                    select(User.id).where(User.migration_version != USER_MIGRATION_VERSION),
+                ).all(),
+            )
+
+        for user_id in unmigrated_ids:
             try:
-                self.perform_migrations(user)
-                count += 1
+                user_data = self.get_by_id(user_id)
+                if user_data:
+                    self.perform_migrations(cast("UserType", user_data))
+                    count += 1
             except Exception:
-                logger.exception(f"Failed to migrate user {user.get('_id', 'unknown')}")
-        if count > 0:
-            collisions = self.find_username_case_collisions()
-            if collisions:
-                logger.warning(f"Found {len(collisions)} pre-existing username case collision group(s): {collisions}")
+                logger.exception(f"Failed to migrate user {user_id}")
+
         logger.info(f"Finished user migrations for {count} users.")
 
     def delete_unverified_users(self, days: int = 7) -> int:
-        deleted: int = self.delete_many(
-            {
-                "verified": False,
-                "created": {
-                    "$lt": int(time.time()) - (days * 86400),
-                },
-            },
-        )
+        cutoff = int(time.time()) - (days * 86400)
+        with self.session() as session:
+            stmt = delete(User).where(
+                col(User.verified) == False,
+                col(User.created) < cutoff,
+            )
+            result = session.exec(stmt)
+            deleted = int(result.rowcount or 0)  # pyright: ignore[reportAttributeAccessIssue]
 
         if deleted > 0:
             logger.info(f"Deleted {deleted} accounts that have been unverified for >={days} days")

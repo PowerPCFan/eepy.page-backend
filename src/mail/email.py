@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -8,6 +7,7 @@ import resend
 import resend.exceptions
 from disposable_email_domains import blocklist
 
+from config.env import Environment
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
@@ -85,8 +85,8 @@ class Email:
     def __init__(self, codes: "Codes", users: "Users", encryption: Encryption) -> None:
         self.codes: Codes = codes
         self.users: Users = users
-        self.encryption: Encryption = encryption  # type: ignore[arg-type]
-        resend.api_key = os.getenv("RESEND_KEY")
+        self.encryption: Encryption = encryption
+        resend.api_key = Environment.resend_key()
 
     @staticmethod
     def is_disposable(email_or_domain: str) -> bool:
@@ -94,9 +94,9 @@ class Email:
 
     def is_taken(self, email: str) -> bool:
         normalized = normalize_email_address(email)
-        norm_hash: str = Encryption.sha256(normalized + "supahcool")
+        norm_hash: str = self.encryption.hash_email(normalized)
 
-        return self.users.find_item({"normalized-email-hash": norm_hash}) is not None
+        return self.users.find_one(normalized_email_hash=norm_hash) is not None
 
     def send_verification_code(self, base_url: str, username: str, email: str) -> bool:
         code: str = self.codes.create_code("verification", username)

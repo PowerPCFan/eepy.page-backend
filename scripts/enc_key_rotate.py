@@ -3,30 +3,37 @@
 from __future__ import annotations
 
 import os
-import sys
 import pathlib
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-from cryptography.fernet import Fernet, InvalidToken
-from pymongo import MongoClient
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.orm.attributes import flag_modified
+from sqlmodel import select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
-dotenv = scripts_dir.parent / ".env"
+backend_dir = scripts_dir.parent
+dotenv = backend_dir / ".env"
 
+sys.path.insert(0, str(backend_dir / "src"))
 sys.path.insert(0, str(scripts_dir))
-from simple_python_dotenv import load_dotenv
+
+from simple_python_dotenv import load_dotenv  # noqa: E402
+
+if TYPE_CHECKING:
+    from sqlmodel import Session
+
+    from src.database.session import create_db_engine, session_scope
+    from src.models.tables import Reward, User, VerificationCode
+else:
+    from database.session import create_db_engine, session_scope
+    from models.tables import Reward, User, VerificationCode
+
 load_dotenv(dotenv)
-
-
-DATABASE_NAME = "database"
-USERS_COLLECTION = "eepy.page"
-CODES_COLLECTION = "codes"
-REWARDS_COLLECTION = "rewards"
 
 
 @dataclass
@@ -35,14 +42,6 @@ class RotationStats:
     documents_changed: int = 0
     values_rotated: int = 0
     errors: int = 0
-
-
-def env_or_arg(value: str | None, env_name: str) -> str:
-    resolved = value or os.getenv(env_name)
-    if not resolved:
-        print(f"Missing required value: pass --{env_name.lower().replace('_', '-')} or set {env_name}", file=sys.stderr)
-        sys.exit(2)
-    return resolved
 
 
 def rotate_value(
@@ -65,133 +64,161 @@ def rotate_value(
 
 
 def rotate_users(  # noqa: C901, PLR0912, PLR0915
-    db: Any,  # noqa: ANN401
+    session: Session,
     decrypt_old: Callable[[bytes], bytes],
     encrypt_new: Callable[[bytes], bytes],
     *,
     apply: bool,
 ) -> RotationStats:
     stats = RotationStats()
-    collection = db[USERS_COLLECTION]
 
-    for user in collection.find({}):
+    for user in session.exec(select(User)).all():
         stats.documents_seen += 1
-        user_id = user.get("_id")
-        updates: dict[str, object] = {}
+        user_id = user.id
+        changed = False
 
-        fields = {
-            "email": user.get("email"),
-            "display-name": user.get("display-name"),
-            "totp.key": user.get("totp", {}).get("key") if isinstance(user.get("totp"), dict) else None,
-        }
-
-        for path, value in fields.items():
-            try:
-                rotated = rotate_value(value, decrypt_old, encrypt_new, path=f"{USERS_COLLECTION}.{user_id}.{path}")
-            except ValueError as exc:
-                stats.errors += 1
-                print(exc, file=sys.stderr)
-                continue
-
-            if rotated is not None:
-                updates[path] = rotated
+        try:
+            rotated_email = rotate_value(user.email, decrypt_old, encrypt_new, path=f"users.{user_id}.email")
+            if rotated_email is not None:
+                if apply:
+                    user.email = rotated_email
+                changed = True
                 stats.values_rotated += 1
+        except ValueError as exc:
+            stats.errors += 1
+            print(exc, file=sys.stderr)
 
-        api_keys = user.get("api-keys", {})
-        if isinstance(api_keys, dict):
-            for api_key_hash, api_key in api_keys.items():
-                if not isinstance(api_key, dict):
-                    continue
+        try:
+            rotated_dn = rotate_value(user.display_name, decrypt_old, encrypt_new, path=f"users.{user_id}.display_name")
+            if rotated_dn is not None:
+                if apply:
+                    user.display_name = rotated_dn
+                changed = True
+                stats.values_rotated += 1
+        except ValueError as exc:
+            stats.errors += 1
+            print(exc, file=sys.stderr)
 
-                path = f"api-keys.{api_key_hash}.string"
+        mfa = user.mfa
+        mfa_changed = False
+        if mfa is not None:
+            if mfa.secret_key:
                 try:
-                    rotated = rotate_value(
-                        api_key.get("string"),
+                    rotated_key = rotate_value(
+                        mfa.secret_key,
                         decrypt_old,
                         encrypt_new,
-                        path=f"{USERS_COLLECTION}.{user_id}.{path}",
+                        path=f"user_mfa.{user_id}.secret_key",
                     )
+                    if rotated_key is not None:
+                        if apply:
+                            mfa.secret_key = rotated_key
+                        mfa_changed = True
+                        changed = True
+                        stats.values_rotated += 1
                 except ValueError as exc:
                     stats.errors += 1
                     print(exc, file=sys.stderr)
-                    continue
 
-                if rotated is not None:
-                    updates[path] = rotated
-                    stats.values_rotated += 1
-
-        totp = user.get("totp", {})
-        recovery_codes = totp.get("recovery", []) if isinstance(totp, dict) else []
-        if isinstance(recovery_codes, list):
-            rotated_codes: list[object] = []
-            changed = False
+            recovery_codes = list(mfa.recovery_codes or [])
+            rotated_codes: list[str] = []
             for index, code in enumerate(recovery_codes):
                 try:
                     rotated = rotate_value(
                         code,
                         decrypt_old,
                         encrypt_new,
-                        path=f"{USERS_COLLECTION}.{user_id}.totp.recovery.{index}",
+                        path=f"user_mfa.{user_id}.recovery_codes.{index}",
                     )
+                    if rotated is not None:
+                        rotated_codes.append(rotated)
+                        mfa_changed = True
+                        changed = True
+                        stats.values_rotated += 1
+                    else:
+                        rotated_codes.append(code)
                 except ValueError as exc:
                     stats.errors += 1
                     print(exc, file=sys.stderr)
                     rotated_codes.append(code)
-                    continue
+            if mfa_changed and apply:
+                mfa.recovery_codes = rotated_codes
+                flag_modified(mfa, "recovery_codes")
+                session.add(mfa)
 
-                if rotated is None:
-                    rotated_codes.append(code)
-                else:
-                    rotated_codes.append(rotated)
+        for ak in user.api_keys or []:
+            try:
+                rotated_ak = rotate_value(ak.string, decrypt_old, encrypt_new, path=f"api_keys.{ak.id}.string")
+                if rotated_ak is not None:
+                    if apply:
+                        ak.string = rotated_ak
+                        session.add(ak)
                     changed = True
                     stats.values_rotated += 1
+            except ValueError as exc:
+                stats.errors += 1
+                print(exc, file=sys.stderr)
 
-            if changed:
-                updates["totp.recovery"] = rotated_codes
-
-        if updates:
+        if changed:
             stats.documents_changed += 1
             if apply:
-                collection.update_one({"_id": user_id}, {"$set": updates})
+                session.add(user)
 
     return stats
 
 
-def rotate_simple_collection(  # noqa: PLR0913
-    db: Any,  # noqa: ANN401
-    collection_name: str,
-    field_name: str,
+def rotate_codes(
+    session: Session,
     decrypt_old: Callable[[bytes], bytes],
     encrypt_new: Callable[[bytes], bytes],
     *,
     apply: bool,
 ) -> RotationStats:
     stats = RotationStats()
-    collection = db[collection_name]
-
-    for document in collection.find({field_name: {"$exists": True}}):
+    for code_row in session.exec(select(VerificationCode)).all():
         stats.documents_seen += 1
-        document_id = document.get("_id")
+        try:
+            rotated = rotate_value(code_row.account, decrypt_old, encrypt_new, path=f"codes.{code_row.id}.account")
+        except ValueError as exc:
+            stats.errors += 1
+            print(exc, file=sys.stderr)
+            continue
+        if rotated is not None:
+            stats.values_rotated += 1
+            stats.documents_changed += 1
+            if apply:
+                code_row.account = rotated
+                session.add(code_row)
+    return stats
+
+
+def rotate_rewards(
+    session: Session,
+    decrypt_old: Callable[[bytes], bytes],
+    encrypt_new: Callable[[bytes], bytes],
+    *,
+    apply: bool,
+) -> RotationStats:
+    stats = RotationStats()
+    for reward_row in session.exec(select(Reward)).all():
+        stats.documents_seen += 1
         try:
             rotated = rotate_value(
-                document.get(field_name),
+                reward_row.associated_email,
                 decrypt_old,
                 encrypt_new,
-                path=f"{collection_name}.{document_id}.{field_name}",
+                path=f"rewards.{reward_row.id}.associated_email",
             )
         except ValueError as exc:
             stats.errors += 1
             print(exc, file=sys.stderr)
             continue
-
-        if rotated is None:
-            continue
-
-        stats.values_rotated += 1
-        stats.documents_changed += 1
-        if apply:
-            collection.update_one({"_id": document_id}, {"$set": {field_name: rotated}})
-
+        if rotated is not None:
+            stats.values_rotated += 1
+            stats.documents_changed += 1
+            if apply:
+                reward_row.associated_email = rotated
+                session.add(reward_row)
     return stats
 
 
@@ -204,7 +231,7 @@ def print_stats(label: str, stats: RotationStats) -> None:
 
 def main() -> int:
     apply = bool(sys.argv[1:] and sys.argv[1] == "apply")
-    mongodb_url = str(os.getenv("MONGODB_URL", "")).strip()
+    postgres_url = str(os.getenv("POSTGRES_URL", "")).strip()
 
     old_fernet = Fernet(str(os.getenv("ENC_KEY", "")).strip().encode("utf-8"))
     new_fernet_plaintext = Fernet.generate_key().decode()
@@ -213,48 +240,23 @@ def main() -> int:
     if not apply:
         print("Dry run only. Re-run with apply to write rotated values.")
 
-    client = MongoClient(mongodb_url)
-    db = client[DATABASE_NAME]
+    engine = create_db_engine(postgres_url)
+    with session_scope(engine) as session:
+        user_stats = rotate_users(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
+        code_stats = rotate_codes(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
+        reward_stats = rotate_rewards(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
 
-    try:
-        user_stats = rotate_users(
-            db,
-            old_fernet.decrypt,
-            new_fernet.encrypt,
-            apply=apply,
-        )
-        code_stats = rotate_simple_collection(
-            db,
-            CODES_COLLECTION,
-            "account",
-            old_fernet.decrypt,
-            new_fernet.encrypt,
-            apply=apply,
-        )
-        reward_stats = rotate_simple_collection(
-            db,
-            REWARDS_COLLECTION,
-            "associated-email",
-            old_fernet.decrypt,
-            new_fernet.encrypt,
-            apply=apply,
-        )
-    finally:
-        client.close()
-
-    print_stats(USERS_COLLECTION, user_stats)
-    print_stats(CODES_COLLECTION, code_stats)
-    print_stats(REWARDS_COLLECTION, reward_stats)
+    print_stats("users", user_stats)
+    print_stats("codes", code_stats)
+    print_stats("rewards", reward_stats)
 
     total_errors = user_stats.errors + code_stats.errors + reward_stats.errors
     if total_errors:
         print(f"Finished with {total_errors} error(s).", file=sys.stderr)
         return 1
 
-    if apply:
-        print("Rotation complete. Paste this value into your .env to complete migration:")
-        print(f"ENC_KEY={new_fernet_plaintext}")
-
+    print("Rotation complete. Paste this value into your .env to complete migration:")
+    print(f"ENC_KEY={new_fernet_plaintext}")
     return 0
 
 

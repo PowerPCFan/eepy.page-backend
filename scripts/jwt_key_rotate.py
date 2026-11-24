@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
 
 from __future__ import annotations
+
 import os
-import sys
 import pathlib
-from pymongo import MongoClient
+import sys
+from typing import TYPE_CHECKING
+
+from sqlalchemy import func
+from sqlmodel import delete, select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
-dotenv = scripts_dir.parent / ".env"
+backend_dir = scripts_dir.parent
+dotenv = backend_dir / ".env"
 
+sys.path.insert(0, str(backend_dir / "src"))
 sys.path.insert(0, str(scripts_dir))
-# could just use python-dotenv since its in the same venv as pymongo
-# but i was bored and made this so i might as well put it to use somewhere
-from simple_python_dotenv import load_dotenv
+
+from simple_python_dotenv import load_dotenv  # noqa: E402
+
+if TYPE_CHECKING:
+    from src.database.session import create_db_engine, session_scope
+    from src.models.tables import SessionModel
+else:
+    from database.session import create_db_engine, session_scope
+    from models.tables import SessionModel
+
 load_dotenv(dotenv)
 
+
 def main() -> int:
-    mongodb_url = os.getenv("MONGODB_URL", "")
+    postgres_url = os.getenv("POSTGRES_URL", "")
     apply = bool(sys.argv[1:] and sys.argv[1] == "apply")
 
-    with MongoClient(mongodb_url) as cli:
-        collection = cli["database"]["sessions"]
-        session_count = collection.count_documents({})
+    engine = create_db_engine(postgres_url)
+    with session_scope(engine) as session:
+        session_count = int(session.exec(select(func.count()).select_from(SessionModel)).one() or 0)
         if not apply:
-            print(f"[dry run] Would delete {session_count} session document(s)")
+            print(f"[dry run] Would delete {session_count} session row(s)")
             return 0
-        result = collection.delete_many({})
+        result = session.exec(delete(SessionModel))
+        deleted = int(result.rowcount or 0)  # pyright: ignore[reportAttributeAccessIssue]
 
-    print(f"Deleted {result.deleted_count} session document(s)")
-    print("JWT_KEY migration complete - existing sessions were removed from MongoDB.")
+    print(f"Deleted {deleted} session row(s)")
+    print("JWT_KEY migration complete - existing sessions were removed from PostgreSQL.")
     return 0
 
 

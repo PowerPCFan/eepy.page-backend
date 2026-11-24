@@ -1,11 +1,9 @@
 import logging
-import re
 import time
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
-from pydantic import BaseModel, Field, field_validator
 
 from database.tables.domains import Domains
 from database.tables.serveo import ServeoTable
@@ -13,37 +11,14 @@ from database.tables.sessions import Sessions
 from dns_.dns import DNS
 from dns_.exceptions import DNSException
 from dns_.validation import Validation
+from models.domain import DomainType
+from models.serveo import TunnelCreate, TunnelUpdate
 from security.convert import Convert
 from security.session import Session
 from server.routes.domain import register_domain_record
-from server.routes.models.domain import DomainType
 
 logger = logging.getLogger("eepy.page")
 converter = Convert()
-
-
-class TunnelCreate(BaseModel):
-    subdomain: str
-    local_port: int = Field(ge=1, le=65535)
-    ssh_fingerprint: str = Field(min_length=10, max_length=200)
-
-    @field_validator("ssh_fingerprint", mode="before")
-    @classmethod
-    def extract_ssh_fingerprint(cls, value: object) -> str:
-        if not isinstance(value, str):
-            msg = "SSH fingerprint must be text"
-            raise ValueError(msg)  # noqa: TRY004
-
-        match = re.search(r"SHA256:[A-Za-z0-9+/]+={0,2}", value)
-        if not match:
-            msg_0 = "Enter an SSH SHA256 fingerprint"
-            raise ValueError(msg_0)
-
-        return match.group(0)
-
-
-class TunnelUpdate(BaseModel):
-    local_port: int = Field(ge=1, le=65535)
 
 
 class ServeoRoutes:
@@ -86,7 +61,7 @@ class ServeoRoutes:
 
     @Session.requires_auth
     def list_tunnels(self, session: Session = Depends(converter.create)) -> dict:
-        tunnels = self.table.tunnels(session.username)
+        tunnels = self.table.tunnels(session.user_id)
         return {
             "connected": True,
             "tunnels": [
@@ -116,7 +91,7 @@ class ServeoRoutes:
                 DomainType(domain=hostname, type="CNAME", values=[target]),
                 session,
             )
-            session.user_cache_data["domains"] = self.domains.get_domains(session.username)
+            session.user_cache_data["domains"] = self.domains.get_domains(session.user_id)
             register_domain_record(
                 self.domains,
                 self.dns,
@@ -128,8 +103,8 @@ class ServeoRoutes:
             try:
                 self.dns.delete_domain(hostname, "CNAME")
                 self.dns.delete_domain(auth_record, "TXT")
-                self.domains.delete_domain(session.username, hostname, "CNAME")
-                self.domains.delete_domain(session.username, auth_record, "TXT")
+                self.domains.delete_domain(session.user_id, hostname, "CNAME")
+                self.domains.delete_domain(session.user_id, auth_record, "TXT")
             except DNSException:
                 logger.exception("Failed to roll back Serveo DNS")
             if isinstance(error, HTTPException):
@@ -137,7 +112,7 @@ class ServeoRoutes:
             raise HTTPException(502, detail="Failed to provision tunnel DNS")
         tunnel_document = {
             "_id": str(uuid4()),
-            "user_id": session.username,
+            "user_id": session.user_id,
             "serveo_auth_record": auth_record,
             "ssh_fingerprint": body.ssh_fingerprint,
             "subdomain": body.subdomain,
@@ -162,7 +137,7 @@ class ServeoRoutes:
         body: TunnelUpdate,
         session: Session = Depends(converter.create),
     ) -> dict:
-        tunnel = self.table.get_tunnel(session.username, tunnel_id)
+        tunnel = self.table.get_tunnel(session.user_id, tunnel_id)
         if not tunnel:
             raise HTTPException(404, detail="Tunnel not found")
 
@@ -181,21 +156,21 @@ class ServeoRoutes:
             "command": ServeoRoutes._generate_ssh_command(hostname, body.local_port),
             "updated_at": int(time.time()),
         }
-        self.table.replace_tunnel(tunnel_id, session.username, updated)
+        self.table.replace_tunnel(tunnel_id, session.user_id, updated)
         updated.pop("_id", None)
         command = ServeoRoutes._generate_ssh_command(hostname, body.local_port)
         return {"tunnel": {**updated, "id": tunnel_id, "command": command}, "command": command}
 
     @Session.requires_auth
     def delete_tunnel(self, tunnel_id: str, session: Session = Depends(converter.create)) -> None:
-        tunnel = self.table.get_tunnel(session.username, tunnel_id)
+        tunnel = self.table.get_tunnel(session.user_id, tunnel_id)
         if not tunnel:
             raise HTTPException(404, detail="Tunnel not found")
         if not self.dns.delete_domain(tunnel["hostname"], "CNAME"):
             raise HTTPException(502, detail="Tunnel deleted but DNS cleanup failed")
         if not self.dns.delete_domain(tunnel["serveo_auth_record"], "TXT"):
             raise HTTPException(502, detail="Tunnel deleted but Serveo authorization cleanup failed")
-        if not self.domains.delete_domain(session.username, tunnel["hostname"], "CNAME"):
+        if not self.domains.delete_domain(session.user_id, tunnel["hostname"], "CNAME"):
             raise HTTPException(502, detail="Tunnel deleted but domain cleanup failed")
-        self.domains.delete_domain(session.username, tunnel["serveo_auth_record"], "TXT")
-        self.table.remove_tunnel(tunnel_id, session.username)
+        self.domains.delete_domain(session.user_id, tunnel["serveo_auth_record"], "TXT")
+        self.table.remove_tunnel(tunnel_id, session.user_id)

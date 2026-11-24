@@ -1,67 +1,98 @@
 from collections.abc import Mapping
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from pymongo import MongoClient
+from sqlmodel import select
 
-from database.tables.users import Users
+from database.table import Table
+from models.serveo import ServeoRecord
+from models.tables import ServeoTunnel
 
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
-class ServeoRecord(TypedDict):
-    _id: str
-    user_id: str
-    serveo_auth_record: str
-    ssh_fingerprint: str
-    subdomain: str
-    hostname: str
-    service: str
-    local_port: int
-    command: str
-    created_at: int
-    updated_at: int
+__all__ = ["ServeoRecord", "ServeoTable"]
 
 
-class ServeoTable(Users):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client)
+class ServeoTable(Table):
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, "serveo_tunnels")
 
     @staticmethod
     def _tunnels_from_user(user: dict[str, Any]) -> list[ServeoRecord]:
         tunnels = user.get("tunnels", [])
-        return [cast("ServeoRecord", {**tunnel, "_id": tunnel["id"], "user_id": user["_id"]}) for tunnel in tunnels]
+        return [
+            cast("ServeoRecord", {**tunnel, "_id": tunnel.get("id") or tunnel.get("_id"), "user_id": user["_id"]})
+            for tunnel in tunnels
+        ]
 
     def get_tunnel(self, user_id: str, tunnel_id: str) -> ServeoRecord | None:
         if not isinstance(user_id, str) or not isinstance(tunnel_id, str):
             return None
-        user = self.table.find_one({"_id": user_id}, {"tunnels": 1})
-        if not user:
-            return None
-        return next((tunnel for tunnel in self._tunnels_from_user(user) if tunnel["_id"] == tunnel_id), None)
+        with self.session() as session:
+            stmt = select(ServeoTunnel).where(
+                ServeoTunnel.id == tunnel_id,
+                ServeoTunnel.user_id == user_id,
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                return None
+            return cast("ServeoRecord", row.to_record())
 
     def save_tunnel(self, document: Mapping[str, Any]) -> None:
-        user_id = document["user_id"]
-        tunnel = {key: value for key, value in document.items() if key not in {"user_id", "_id"}}
-        tunnel["id"] = document["_id"]
-        self.table.update_one({"_id": user_id}, {"$push": {"tunnels": tunnel}})
+        tunnel_id = str(document.get("_id") or document.get("id"))
+        user_id = str(document["user_id"])
+        with self.session() as session:
+            session.add(
+                ServeoTunnel(
+                    id=tunnel_id,
+                    user_id=user_id,
+                    serveo_auth_record=str(document.get("serveo_auth_record", "")),
+                    ssh_fingerprint=str(document.get("ssh_fingerprint", "")),
+                    subdomain=str(document.get("subdomain", "")),
+                    hostname=str(document.get("hostname", "")),
+                    service=str(document.get("service", "")),
+                    local_port=int(document.get("local_port", 80)),
+                    command=str(document.get("command", "")),
+                    created_at=int(document.get("created_at", 0)),
+                    updated_at=int(document.get("updated_at", 0)),
+                ),
+            )
 
     def replace_tunnel(self, tunnel_id: str, user_id: str, tunnel: Mapping[str, Any]) -> None:
         if tunnel.get("_id") != tunnel_id:
             msg = "Tunnel ID cannot change"
             raise ValueError(msg)
-        embedded = {key: value for key, value in tunnel.items() if key not in {"_id", "user_id"}}
-        embedded["id"] = tunnel_id
-        self.table.update_one(
-            {"_id": user_id, "tunnels.id": tunnel_id},
-            {"$set": {"tunnels.$": embedded}},
-        )
+        with self.session() as session:
+            stmt = select(ServeoTunnel).where(
+                ServeoTunnel.id == tunnel_id,
+                ServeoTunnel.user_id == user_id,
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                return
+            row.serveo_auth_record = str(tunnel.get("serveo_auth_record", row.serveo_auth_record))
+            row.ssh_fingerprint = str(tunnel.get("ssh_fingerprint", row.ssh_fingerprint))
+            row.subdomain = str(tunnel.get("subdomain", row.subdomain))
+            row.hostname = str(tunnel.get("hostname", row.hostname))
+            row.service = str(tunnel.get("service", row.service))
+            row.local_port = int(tunnel.get("local_port", row.local_port))
+            row.command = str(tunnel.get("command", row.command))
+            row.created_at = int(tunnel.get("created_at", row.created_at))
+            row.updated_at = int(tunnel.get("updated_at", row.updated_at))
+            session.add(row)
 
     def remove_tunnel(self, tunnel_id: str, user_id: str) -> None:
-        self.table.update_one(
-            {"_id": user_id, "tunnels.id": tunnel_id},
-            {"$pull": {"tunnels": {"id": tunnel_id}}},
-        )
+        with self.session() as session:
+            stmt = select(ServeoTunnel).where(
+                ServeoTunnel.id == tunnel_id,
+                ServeoTunnel.user_id == user_id,
+            )
+            row = session.exec(stmt).first()
+            if row is not None:
+                session.delete(row)
 
     def tunnels(self, user_id: str) -> list[ServeoRecord]:
-        user = self.table.find_one({"_id": user_id}, {"tunnels": 1})
-        if not user:
-            return []
-        return self._tunnels_from_user(user)
+        with self.session() as session:
+            stmt = select(ServeoTunnel).where(ServeoTunnel.user_id == user_id)
+            rows = session.exec(stmt).all()
+            return [cast("ServeoRecord", row.to_record()) for row in rows]

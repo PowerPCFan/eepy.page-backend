@@ -15,10 +15,10 @@ from dns_.dns import DNS, ConflictingDomain
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import AVAILABLE_TLDS
 from dns_.validation import Validation
+from models.domain import DomainRetrieve, DomainType
 from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.session import Session
-from server.routes.models.domain import DomainRetrieve, DomainType
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -36,7 +36,7 @@ def register_domain_record(  # noqa: C901, PLR0912
         raise HTTPException(status_code=412, detail="Deprecated usage of register. Please pass the TLD!")
 
     _, tld = domains.separate_domain_into_parts(domain_name)
-    if tld not in session.user_cache_data.get("owned-tlds", ["eepy.page"]):
+    if tld not in session.user_cache_data.get("owned_tlds", ["eepy.page"]):
         raise HTTPException(status_code=401, detail=f"User must purchase {tld} before registering this domain")
 
     can_user_register = dns_validation.can_user_register(domain_name, session.user_cache_data)
@@ -48,8 +48,8 @@ def register_domain_record(  # noqa: C901, PLR0912
             domain_name,
             body.type,
             session.user_cache_data["domains"],  # pyright: ignore[reportArgumentType]
-            user_id=session.username,
-            user_is_admin=admin_is_enabled(session.user_cache_data),  # pyright: ignore[reportArgumentType]
+            user_id=session.user_id,
+            user_is_admin=admin_is_enabled(session.user_cache_data),
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid record name")
@@ -81,7 +81,7 @@ def register_domain_record(  # noqa: C901, PLR0912
             domain_name,
             body.values[0],
             body.type,
-            f"Registered through website user: {session.username}",
+            f"Registered through website user: {session.user_id}",
         )
     except ConflictingDomain:
         raise HTTPException(status_code=409, detail="Domain is already registered")
@@ -90,7 +90,7 @@ def register_domain_record(  # noqa: C901, PLR0912
         raise HTTPException(status_code=500, detail="DNS Registration failed")
 
     domains.add_domain(
-        session.username,
+        session.user_id,
         domain_name,
         {"type": body.type, "ip": body.values, "registered": round(time.time())},
     )
@@ -199,7 +199,7 @@ class Domain:
             raise HTTPException(status_code=412, detail=f"Invalid value in {body.values}")
 
         if not self.dns_validation.user_owns_domain(
-            session.username,
+            session.user_id,
             body.domain,
             body.old_type or body.type,
             session.user_cache_data,
@@ -229,7 +229,7 @@ class Domain:
                 type=body.type,
                 old_type=old_type,
                 domain=body.domain,
-                user_id=session.username,
+                user_id=session.user_id,
             )
 
             if not success:
@@ -241,21 +241,21 @@ class Domain:
 
         try:
             self.domains.modify_domain(
-                session.username,
+                session.user_id,
                 body.domain,
                 value=body.values,
                 type=body.type,
                 old_type=old_type,
             )
         except ValueError:
-            logger.exception(f"Failed to update MongoDB record for {body.domain}")
+            logger.exception(f"Failed to update PostgreSQL record for {body.domain}")
             try:
                 self.dns.modify_domain(
                     values=domain_data["ip"],  # pyright: ignore[reportArgumentType]
                     type=old_type,
                     old_type=body.type,
                     domain=body.domain,
-                    user_id=session.username,
+                    user_id=session.user_id,
                 )
             except DNSException:
                 logger.exception(f"Failed to roll back DNS record for {body.domain}")
@@ -268,7 +268,7 @@ class Domain:
         return JSONResponse(
             {
                 "domains": domains,
-                "owned-tlds": session.user_cache_data.get("owned-tlds", ["eepy.page"]),
+                "owned_tlds": session.user_cache_data.get("owned_tlds", ["eepy.page"]),
             },
         )  # pyright: ignore[reportReturnType]
 
@@ -286,7 +286,7 @@ class Domain:
                     detail=f"Cannot delete domain while subdomains exist ({preview}). Please delete subdomains first.",
                 )
 
-        if not self.domains.delete_domain(session.username, domain, type):
+        if not self.domains.delete_domain(session.user_id, domain, type):
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",

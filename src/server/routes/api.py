@@ -13,10 +13,10 @@ from database.tables.users import Users as UsersTable
 from dns_.dns import DNS
 from dns_.exceptions import DNSException, DomainExistsError
 from dns_.validation import Validation
+from models.domain import DomainType
 from security.admin_permissions import admin_is_enabled
 from security.api import Api, ApiPermission
 from security.convert import ConvertAPI
-from server.routes.models.domain import DomainType
 
 converter: ConvertAPI = ConvertAPI()
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -155,7 +155,7 @@ class API:
     def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901
         can_user_register = self.dns_validation.can_user_register(body.domain, api.user_cache_data)
         tld = Domains.separate_domain_into_parts(body.domain)[-1]
-        user_owned_tlds = api.user_cache_data.get("owned-tlds", ["eepy.page"])
+        user_owned_tlds = api.user_cache_data.get("owned_tlds", ["eepy.page"])
 
         if tld not in user_owned_tlds:
             raise HTTPException(status_code=401, detail=f"User must purchase TLD {tld} before registering this domain")
@@ -168,8 +168,8 @@ class API:
                 name=body.domain,
                 type=body.type,
                 domains=api.user_cache_data.get("domains", []),  # pyright: ignore[reportArgumentType]
-                user_id=api.username,
-                user_is_admin=admin_is_enabled(api.user_cache_data),  # pyright: ignore[reportArgumentType]
+                user_id=api.user_id,
+                user_is_admin=admin_is_enabled(api.user_cache_data),
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -200,14 +200,14 @@ class API:
                 body.domain,
                 body.values[0],
                 body.type,
-                f"Registered through API user: {api.username}",
+                f"Registered through API user: {api.user_id}",
             )
         except DNSException:
             logger.exception("DNSException occurred during domain registration:")
             raise HTTPException(status_code=500, detail="DNS Registration failed")
 
         self.domains.add_domain(
-            api.username,
+            api.user_id,
             body.domain,
             {
                 "type": body.type,
@@ -236,7 +236,7 @@ class API:
             )
 
         if not self.dns_validation.user_owns_domain(
-            api.username,
+            api.user_id,
             body.domain,
             body.old_type or body.type,
             api.user_cache_data,
@@ -267,7 +267,7 @@ class API:
                 type=body.type,
                 old_type=domain_data["type"],
                 domain=body.domain,
-                user_id=api.username,
+                user_id=api.user_id,
             )
 
         except ValueError:  # domain id is corrupt
@@ -277,7 +277,7 @@ class API:
             raise HTTPException(status_code=500)
 
         self.domains.modify_domain(
-            api.username,
+            api.user_id,
             body.domain,
             value=body.values,
             type=body.type,
@@ -313,7 +313,7 @@ class API:
                     detail=f"Cannot delete domain while subdomains exist ({preview}). Please delete subdomains first.",
                 )
 
-        if not self.domains.delete_domain(api.username, domain, type):
+        if not self.domains.delete_domain(api.user_id, domain, type):
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",

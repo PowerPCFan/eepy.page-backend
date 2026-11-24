@@ -1,48 +1,38 @@
 import logging
 from itertools import starmap
-from typing import NotRequired, TypedDict, get_args
+from typing import TYPE_CHECKING, cast, get_args
 
-from pymongo import MongoClient
+from sqlalchemy import or_
+from sqlalchemy.orm.attributes import flag_modified
+from sqlmodel import col, select
 
 from database.exceptions import UserNotExistError
-from database.tables.users import Users, UserType
-from dns_.types import AVAILABLE_TLDS, TYPES, get_rec_type
+from database.table import Table
+from dns_.types import AVAILABLE_TLDS, TYPES, get_record_type
+from models.domain import DomainFormat, DomainRecord, RepairFormat
+from models.tables import Domain, User
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
+    from models.user import UserType
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-
-class DomainFormat(TypedDict):
-    ip: list[str] | str
-    registered: int | float
-    type: TYPES
+__all__ = ["DomainFormat", "DomainRecord", "Domains", "RepairFormat"]
 
 
-class DomainRecord(DomainFormat):
-    name: str
-
-
-RepairFormat = TypedDict(
-    "RepairFormat",
-    {
-        "fixed": int,
-        "skipped": int,
-        "duplicates": int,
-        "broken-id": NotRequired[dict[str, DomainFormat]],
-    },
-)
-
-
-class Domains(Users):
+class Domains(Table):
     """Modifies domains in database.
     Please make sure to validate the domain BEFORE you use any functions here!
     """
 
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client)
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, "domains")
 
     @staticmethod
     def canonical_domain_name(domain: str) -> str:
-        return Domains.legacy_bracket_domain_to_dotted(domain).removesuffix(".").lower()
+        return domain.removesuffix(".").lower()
 
     @staticmethod
     def canonical_full_domain_name(domain: str) -> str:
@@ -58,37 +48,21 @@ class Domains(Users):
 
     @staticmethod
     def separate_domain_into_parts(domain: str) -> tuple[str, str]:
-        """Returns the name and TLD of the domain
-
-        :param domain: the full domain (e.g a.eepy.page)
-        :type domain: str
-        :return: name, tld. NOTE: the name does not include a dot at the end, and the tld does not contain a dot at the beginning. Looks something like this: (a, eepy.page)
-        :rtype: tuple[str, str]
-        """  # noqa: E501
         tld: str = "eepy.page"
-
-        dotted_domain = Domains.legacy_bracket_domain_to_dotted(domain)
+        clean_domain = domain.removesuffix(".")
 
         for available_tld in get_args(AVAILABLE_TLDS):
-            if dotted_domain.endswith(available_tld):
+            if clean_domain.endswith(available_tld):
                 tld = available_tld
                 break
 
-        return (dotted_domain.rsplit(tld, 1)[0].rstrip("."), tld)
-
-    @staticmethod
-    def legacy_bracket_domain_to_dotted(domain: str) -> str:
-        return domain.replace("[dot]", ".")
-
-    @staticmethod
-    def display_domain_name(domain: str) -> str:
-        return Domains.legacy_bracket_domain_to_dotted(domain)
+        return (clean_domain.rsplit(tld, 1)[0].rstrip("."), tld)
 
     @staticmethod
     def normalize_domain_record(domain: str, domain_data: DomainFormat) -> DomainRecord:
         return {
             "name": Domains.canonical_full_domain_name(domain),
-            "type": get_rec_type(domain_data["type"].upper()),
+            "type": get_record_type(domain_data["type"].upper()),
             "ip": domain_data["ip"] if isinstance(domain_data["ip"], list) else [domain_data["ip"]],
             "registered": domain_data["registered"],
         }
@@ -179,6 +153,36 @@ class Domains(Users):
         remaining = [record for record in matching if record["type"] != type.upper()]
         return len(remaining) == 0
 
+    def get_user(self, user_id: str, find_banned: bool = False) -> "UserType | None":
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user is None or (user.banned and not find_banned):
+                return None
+            return cast("UserType", user.to_dict())
+
+    def get_all_domain_records(self, exclude_user_id: str | None = None) -> list[tuple[str, DomainRecord]]:
+        with self.session() as session:
+            stmt = select(Domain)
+            if exclude_user_id is not None:
+                stmt = stmt.where(col(Domain.user_id) != exclude_user_id)
+            rows = session.exec(stmt).all()
+            return [(row.user_id, row.to_record()) for row in rows]
+
+    def find_overlapping_domain(self, domain: str, exclude_user_id: str | None = None) -> str | None:
+        canonical_full = Domains.canonical_full_domain_name(domain)
+        labels = canonical_full.split(".")
+        candidates = [".".join(labels[i:]) for i in range(max(1, len(labels) - 2))]
+        with self.session() as session:
+            stmt = select(Domain.name).where(
+                or_(
+                    col(Domain.name).in_(candidates),
+                    col(Domain.name).endswith(f".{canonical_full}", autoescape=True),
+                ),
+            )
+            if exclude_user_id is not None:
+                stmt = stmt.where(Domain.user_id != exclude_user_id)
+            return session.exec(stmt).first()
+
     def add_domain(
         self,
         target_user: str,
@@ -186,42 +190,39 @@ class Domains(Users):
         domain_data: DomainFormat,
     ) -> None:
         domain_record = Domains.normalize_domain_record(domain, domain_data)
-        result = self.table.update_one(
-            {
-                "_id": target_user,
-                "domains": {
-                    "$elemMatch": {
-                        "name": domain_record["name"],
-                        "type": domain_record["type"],
-                    },
-                },
-            },
-            {"$set": {"domains.$": domain_record}},
-        )
-
-        if result.matched_count == 0:
-            self.table.update_one(
-                {
-                    "_id": target_user,
-                    "domains": {
-                        "$not": {
-                            "$elemMatch": {
-                                "name": domain_record["name"],
-                                "type": domain_record["type"],
-                            },
-                        },
-                    },
-                },
-                {"$push": {"domains": domain_record}},
+        with self.session() as session:
+            user = session.get(User, target_user)
+            if user is None:
+                return
+            stmt = select(Domain).where(
+                Domain.user_id == target_user,
+                Domain.name == domain_record["name"],
+                Domain.type == domain_record["type"],
             )
+            existing = session.exec(stmt).first()
+            if existing is not None:
+                existing.ip = list(domain_record["ip"])
+                existing.registered = int(domain_record["registered"])
+                flag_modified(existing, "ip")
+                session.add(existing)
+            else:
+                session.add(
+                    Domain(
+                        user_id=target_user,
+                        name=domain_record["name"],
+                        type=domain_record["type"],
+                        ip=list(domain_record["ip"]),
+                        registered=int(domain_record["registered"]),
+                    ),
+                )
 
     def get_domains(self, target_user: str) -> list[DomainRecord]:
-        user_data: UserType | None = self.find_user({"_id": target_user})
-        if user_data is None:
-            msg = "User does not exist"
-            raise UserNotExistError(msg)
-
-        return Domains.normalize_domains(user_data["domains"])
+        with self.session() as session:
+            user = session.get(User, target_user)
+            if user is None or user.banned:
+                msg = "User does not exist"
+                raise UserNotExistError(msg)
+            return [d.to_record() for d in (user.domains or [])]
 
     def modify_domain(
         self,
@@ -231,79 +232,76 @@ class Domains(Users):
         type: TYPES | None = None,
         old_type: TYPES | None = None,
     ) -> bool:
-        """Modifies domain in database
-
-        Args:
-            target_user (str): ID of target user
-            domain (str): the record name with the TLD attached (e.g domain.eepy.page)
-            value (str | None, optional): Updated record value. Defaults to current one.
-            type (str | None, optional): Updated type value. Defaults to current one.
-
-        Raises:
-            ValueError: If user does not exist
-        """
         canonical_domain: str = Domains.canonical_full_domain_name(domain)
         logger.info(f"Modifying domain {canonical_domain}...")
 
-        user_data: UserType | None = self.find_user({"_id": target_user})
-        if user_data is None:
-            msg = "Failed to find user"
-            raise ValueError(msg)
-
-        domain_data = Domains.get_domain(user_data["domains"], canonical_domain, old_type or None)
-        if domain_data is None:
-            msg = "Domain not found"
-            raise ValueError(msg)
-
-        if type is not None and type.upper() != domain_data["type"]:
-            existing_type = Domains.get_domain(user_data["domains"], canonical_domain, type.upper())
-            if existing_type is not None:
-                msg = "Domain already exists"
+        with self.session() as session:
+            user = session.get(User, target_user)
+            if user is None or user.banned:
+                msg = "Failed to find user"
                 raise ValueError(msg)
 
-        updated_domain_data: DomainRecord = {
-            "name": canonical_domain,
-            "ip": value if value is not None else domain_data["ip"],
-            "registered": domain_data["registered"],
-            "type": get_rec_type((type or domain_data["type"]).upper()),
-        }
+            target_type = (old_type or type or "").upper() if (old_type or type) else None
+            stmt = select(Domain).where(
+                Domain.user_id == target_user,
+                Domain.name == canonical_domain,
+            )
+            matches = list(session.exec(stmt).all())
 
-        result = self.table.update_one(
-            {
-                "_id": target_user,
-                "domains": {
-                    "$elemMatch": {
-                        "name": canonical_domain,
-                        "type": domain_data["type"],
-                    },
-                },
-            },
-            {"$set": {"domains.$": updated_domain_data}},
-        )
+            target_row: Domain | None = None
+            if old_type is not None:
+                old_upper = old_type.upper()
+                target_row = next((m for m in matches if m.type == old_upper), None)
+            elif len(matches) == 1:
+                if type is None or matches[0].type == type.upper():
+                    target_row = matches[0]
+            elif target_type:
+                target_row = next((m for m in matches if m.type == target_type), None)
 
-        if result.matched_count == 0:
-            logger.error(f"Failed to replace domain record {canonical_domain} for {target_user}")
-            msg_0 = "Domain record was not updated"
-            raise ValueError(msg_0)
+            if target_row is None:
+                msg = "Domain not found"
+                raise ValueError(msg)
 
-        return True
+            new_type_upper = get_record_type((type or target_row.type).upper())
+            if new_type_upper != target_row.type:
+                conflict = next((m for m in matches if m.type == new_type_upper), None)
+                if conflict is not None:
+                    msg = "Domain already exists"
+                    raise ValueError(msg)
+
+            if value is not None:
+                target_row.ip = list(value) if isinstance(value, list) else [value]
+                flag_modified(target_row, "ip")
+            target_row.type = new_type_upper
+            session.add(target_row)
+            return True
 
     def delete_domain(self, target_user: str, domain: str, type: str | None = None) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
         logger.info(f"Deleting domain {canonical_domain}")
 
-        user_data: UserType | None = self.find_user({"_id": target_user})
-        if user_data is None:
-            return False
+        with self.session() as session:
+            user = session.get(User, target_user)
+            if user is None or user.banned:
+                return False
 
-        domain_data = Domains.get_domain(user_data["domains"], canonical_domain, type)
-        if domain_data is None:
-            return False
+            stmt = select(Domain).where(
+                Domain.user_id == target_user,
+                Domain.name == canonical_domain,
+            )
+            matches = list(session.exec(stmt).all())
+            if not matches:
+                return False
 
-        return (
-            self.table.update_one(
-                {"_id": target_user},
-                {"$pull": {"domains": {"name": canonical_domain, "type": domain_data["type"]}}},
-            ).modified_count
-            != 0
-        )
+            target_row: Domain | None = None
+            if type is not None:
+                type_upper = type.upper()
+                target_row = next((m for m in matches if m.type == type_upper), None)
+            elif len(matches) == 1:
+                target_row = matches[0]
+
+            if target_row is None:
+                return False
+
+            session.delete(target_row)
+            return True

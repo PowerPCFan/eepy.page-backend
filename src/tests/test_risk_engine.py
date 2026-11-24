@@ -1,15 +1,12 @@
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
-
-import pymongo
+import time
+from typing import TYPE_CHECKING, Any
 
 from database.table import Table
 from database.tables.domains import Domains
 from database.tables.ip_activity import (
     EXPIRES_FIELD,
-    IP_ACTIVITY_TTL_SECONDS,
     IPActivity,
     RecentLogouts,
     expiry_from_epoch,
@@ -20,6 +17,7 @@ from database.tables.status import Status
 from database.tables.users import USER_MIGRATION_VERSION, Users
 from dns_.dns import DNS
 from mail.email import Email
+from models.admin import UserDisabledBody
 from security.admin import Admin as AdminTools
 from security.encryption import Encryption
 from security.risk import (
@@ -32,7 +30,9 @@ from security.risk import (
 )
 from security.session import Session
 from server.routes.admin import Admin as AdminRoutes
-from server.routes.models.admin import UserDisabledBody
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 
 def make_admin_session(
@@ -47,18 +47,18 @@ def make_admin_session(
         {
             "_id": admin_id,
             "email": encryption.encrypt("admin_actor@example.com"),
-            "email-hash": Encryption.sha256("admin_actor@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("admin_actor@example.comsupahcool"),
+            "email_hash": encryption.hash_email("admin_actor@example.com"),
+            "normalized_email_hash": encryption.hash_email("admin_actor@example.com"),
             "password": encryption.create_password("admin-pass"),
-            "display-name": encryption.encrypt("pytest_admin_actor"),
+            "display_name": encryption.encrypt("pytest_admin_actor"),
             "username": admin_id,
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "permissions": {
                 "admin": {
                     "enabled": True,
@@ -66,7 +66,7 @@ def make_admin_session(
                 },
             },
             "risk": create_default_risk(is_admin=True),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     access_token, _ = Session.create_session_pair(
@@ -172,7 +172,7 @@ def test_evaluate_risk_signals_and_threshold(
             "_id": "aaaa1111222233334444",
             "permissions": {"admin": {"enabled": False}},
             "risk": create_default_risk("device-shared-01"),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     user_b = insert_test_user(
@@ -180,7 +180,7 @@ def test_evaluate_risk_signals_and_threshold(
             "_id": "bbbb5555666677778888",
             "permissions": {"admin": {"enabled": False}},
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -200,7 +200,7 @@ def test_evaluate_risk_signals_and_threshold(
     assert "aaaa111122..." in risk_b["flags"]["shared_device"]["reason"]
     assert risk_b["flags"]["shared_device"].get("user_id") == user_a["_id"]
 
-    stored_b_doc = users.find_item({"_id": user_b["_id"]})
+    stored_b_doc = users.get_by_id(user_b["_id"])
     assert stored_b_doc is not None
     stored_b = stored_b_doc["risk"]
     assert stored_b["score"] == 75
@@ -219,7 +219,7 @@ def test_evaluate_risk_signals_and_threshold(
     assert "from user aaaa111122..." in risk_b_after["flags"]["rapid_switch"]["reason"]
     assert risk_b_after["flags"]["rapid_switch"].get("user_id") == user_a["_id"]
 
-    stored_b_after_doc = users.find_item({"_id": user_b["_id"]})
+    stored_b_after_doc = users.get_by_id(user_b["_id"])
     assert stored_b_after_doc is not None
     stored_b_after = stored_b_after_doc["risk"]
     assert stored_b_after["score"] == 100
@@ -238,7 +238,7 @@ def test_rapid_switch_outside_window_and_empty_ip(
             "_id": "user_a_id_12345",
             "permissions": {"admin": {"enabled": False}},
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     user_b = insert_test_user(
@@ -246,7 +246,7 @@ def test_rapid_switch_outside_window_and_empty_ip(
             "_id": "user_b_id_67890",
             "permissions": {"admin": {"enabled": False}},
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -282,7 +282,7 @@ def test_locked_profile_preserves_admin_reenable(
             "_id": "user_a_1234567890",
             "permissions": {"admin": {"enabled": False}},
             "risk": create_default_risk("device-shared-99"),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
     user_b = insert_test_user(
@@ -304,7 +304,7 @@ def test_locked_profile_preserves_admin_reenable(
                 },
                 "device_id": "device-shared-99",
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -323,57 +323,28 @@ def test_ip_activity_and_recent_logouts_subclass_table() -> None:
     assert issubclass(RecentLogouts, Table)
 
 
-def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
-    mongo_client: pymongo.MongoClient,
+def test_ip_activity_and_recent_logouts_recording_and_datetime_ttl(
+    db_engine: "Engine",
 ) -> None:
-    """Verifies index creation, legacy document cleanup/backfill,
-    and BSON datetime expiresAfter fields against the real test MongoDB."""
     now = int(time.time())
-    stale_epoch = now - IP_ACTIVITY_TTL_SECONDS - 100
-    fresh_epoch = now - 3600
+    ip_table = IPActivity(db_engine)
+    logout_table = RecentLogouts(db_engine)
 
-    db = mongo_client["database"]
-    ip_coll = db["ip_activity"]
-    logout_coll = db["recent_logouts"]
-
-    ip_coll.drop()
-    logout_coll.drop()
+    ip_table.delete_where()
+    logout_table.delete_where()
     try:
-        ip_coll.insert_many(
-            [
-                {"_id": "1.2.3.4_stale", "ip": "1.2.3.4", "user_id": "stale_u", "last_seen": stale_epoch},
-                {"_id": "1.2.3.4_fresh", "ip": "1.2.3.4", "user_id": "fresh_u", "last_seen": fresh_epoch},
-            ],
-        )
-
-        ip_table = IPActivity(mongo_client)
-        ip_indexes = ip_table.table.index_information()
-        assert f"{EXPIRES_FIELD}_1" in ip_indexes
-
-        assert ip_table.find_item({"_id": "1.2.3.4_stale"}) is None
-        fresh_doc = ip_table.find_item({"_id": "1.2.3.4_fresh"})
-        assert fresh_doc is not None
-        assert isinstance(fresh_doc.get(EXPIRES_FIELD), datetime)
-
         ip_table.record_activity("203.0.113.5", "user_1", now)
-        recorded_ip = ip_table.find_item({"_id": "203.0.113.5_user_1"})
+        recorded_ip = ip_table.get_by_id("203.0.113.5_user_1")
         assert recorded_ip is not None
         assert isinstance(recorded_ip[EXPIRES_FIELD], datetime)
 
-        logout_coll.insert_one({"user_id": "legacy_u", "ip": "1.2.3.4", "device_id": "dev_1", "time": now - 10})
-
-        logout_table = RecentLogouts(mongo_client)
-        logout_indexes = logout_table.table.index_information()
-        assert f"{EXPIRES_FIELD}_1" in logout_indexes
-        assert logout_table.find_item({"user_id": "legacy_u"}) is None
-
         logout_table.record_logout("user_1", "203.0.113.5", "dev_1234", now)
-        recorded_logout = logout_table.find_item({"user_id": "user_1"})
+        recorded_logout = logout_table.find_one(user_id="user_1")
         assert recorded_logout is not None
         assert isinstance(recorded_logout[EXPIRES_FIELD], datetime)
     finally:
-        ip_coll.delete_many({})
-        logout_coll.delete_many({})
+        ip_table.delete_where()
+        logout_table.delete_where()
 
 
 def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
@@ -404,12 +375,11 @@ def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
                         "reason": "Rapid account switch within 120s of logout from user legacy_use...",
                         "detected_at": now - 500,
                         "permanent": True,
-                        # Legacy flag: no user_id field stored
                     },
                 },
                 "device_id": "dev-solo-01",
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -423,14 +393,14 @@ def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
     assert "rapid_switch" in updated["flags"]
     assert updated["score"] == 25
 
-    stored_b = users.find_item({"_id": user_b["_id"]})
+    stored_b = users.get_by_id(user_b["_id"])
     assert stored_b is not None
     assert stored_b["risk"]["score"] == 25
     assert "shared_device" not in stored_b["risk"]["flags"]
 
 
 def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
@@ -444,18 +414,18 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
         {
             "_id": Encryption.sha256("charlie_flagged"),
             "email": encryption.encrypt("charlie_flagged@example.com"),
-            "email-hash": Encryption.sha256("charlie_flagged@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("charlie_flagged@example.comsupahcool"),
+            "email_hash": encryption.hash_email("charlie_flagged@example.com"),
+            "normalized_email_hash": encryption.hash_email("charlie_flagged@example.com"),
             "password": encryption.create_password("secret"),
-            "display-name": encryption.encrypt("charlie_flagged"),
+            "display_name": encryption.encrypt("charlie_flagged"),
             "username": Encryption.sha256("charlie_flagged"),
             "lang": "en",
             "country": {"country": "US"},
             "created": now - 1000,
-            "last-login": now - 100,
+            "last_login": now - 100,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "permissions": {"admin": {"enabled": False, "permissions": {}}},
             "risk": {
                 "score": 100,
@@ -472,12 +442,12 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
                 },
                 "device_id": "dev-1234",
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
     dns = DNS(domains)
-    status_table = Status(mongo_client)
+    status_table = Status(db_engine)
     admin_tools = AdminTools(users, sessions, domains, dns, email)
     admin_routes = AdminRoutes(users, sessions, status_table, admin_tools)
     admin_session = make_admin_session(
@@ -508,18 +478,25 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
         UserDisabledBody(user_id=flagged_user["_id"], disabled=False),
         session=admin_session,
     )
-    users.table.update_one(
-        {"_id": flagged_user["_id"], "risk.locked": {"$ne": True}},
-        {"$set": {"risk.score": 90, "risk.disabled": True}},
+    users.save_evaluated_risk(
+        flagged_user["_id"],
+        {
+            "score": 90,
+            "locked": False,
+            "disabled": True,
+            "disable_reasons": ["Stale"],
+            "flags": {},
+        },
+        only_if_unlocked=True,
     )
-    stored_after = users.find_item({"_id": flagged_user["_id"]})
+    stored_after = users.get_by_id(flagged_user["_id"])
     assert stored_after is not None
     assert stored_after["risk"]["score"] == 0
     assert stored_after["risk"]["disabled"] is False
 
 
 def test_get_flagged_users_sorts_by_score_then_username_without_limit(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
@@ -532,18 +509,18 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
         return {
             "_id": uid,
             "email": encryption.encrypt(f"{username.lower()}@example.com"),
-            "email-hash": Encryption.sha256(f"{username.lower()}@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256(f"{username.lower()}@example.comsupahcool"),
+            "email_hash": encryption.hash_email(f"{username.lower()}@example.com"),
+            "normalized_email_hash": encryption.hash_email(f"{username.lower()}@example.com"),
             "password": None,
-            "display-name": encryption.encrypt(username),
+            "display_name": encryption.encrypt(username),
             "username": Encryption.sha256(username.lower()),
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "permissions": {"admin": {"enabled": False}},
             "risk": {
                 "score": score,
@@ -552,7 +529,7 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
                 "disable_reasons": [],
                 "flags": {},
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         }
 
     for doc in [
@@ -565,7 +542,7 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
         insert_test_user(doc)
 
     dns = DNS(domains)
-    status_table = Status(mongo_client)
+    status_table = Status(db_engine)
     admin_tools = AdminTools(users, sessions, domains, dns, email)
     admin_routes = AdminRoutes(users, sessions, status_table, admin_tools)
     admin_session = make_admin_session(
@@ -584,3 +561,78 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
         "Zeta",
         "LowScoreDisabled",
     ]
+
+
+def test_alt_links_relational_graph_and_cascade_delete(
+    users: Users,
+    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    user_a = insert_test_user(
+        {
+            "_id": "alt_graph_user_a",
+            "permissions": {"admin": {"enabled": False}},
+            "risk": create_default_risk("dev-graph-01"),
+            "migration_version": USER_MIGRATION_VERSION,
+        },
+    )
+    user_b = insert_test_user(
+        {
+            "_id": "alt_graph_user_b",
+            "permissions": {"admin": {"enabled": False}},
+            "risk": create_default_risk(),
+            "migration_version": USER_MIGRATION_VERSION,
+        },
+    )
+
+    users.risk_manager.evaluate_and_update_risk(
+        user_id=user_b["_id"],
+        ip="198.51.100.40",
+        device_id="dev-graph-01",
+        users_table=users,
+    )
+
+    links_from_a = users.get_alt_links(user_a["_id"])
+    links_from_b = users.get_alt_links(user_b["_id"])
+    assert len(links_from_a) == 1
+    assert len(links_from_b) == 1
+    assert links_from_a[0]["signal_type"] == "shared_device"
+    assert links_from_a[0]["user_id"] == user_b["_id"]
+    assert links_from_a[0]["related_user_id"] == user_a["_id"]
+
+    # Deleting user_a cascades out the alt_links row automatically
+    users.delete_by_id(user_a["_id"])
+    assert users.get_alt_links(user_b["_id"]) == []
+
+
+def test_multiple_devices_tracked_per_user(
+    users: Users,
+    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    user_a = insert_test_user(
+        {
+            "_id": "multi_dev_user_a",
+            "permissions": {"admin": {"enabled": False}},
+            "risk": create_default_risk("dev-laptop-01"),
+            "migration_version": USER_MIGRATION_VERSION,
+        },
+    )
+    user_b = insert_test_user(
+        {
+            "_id": "multi_dev_user_b",
+            "permissions": {"admin": {"enabled": False}},
+            "risk": create_default_risk(),
+            "migration_version": USER_MIGRATION_VERSION,
+        },
+    )
+
+    # User A logs in from a second device; the first device must remain tracked
+    users.record_device(user_a["_id"], "dev-phone-02")
+
+    risk_b = users.risk_manager.evaluate_and_update_risk(
+        user_id=user_b["_id"],
+        ip="198.51.100.77",
+        device_id="dev-laptop-01",
+        users_table=users,
+    )
+    assert "shared_device" in risk_b["flags"]
+    assert risk_b["flags"]["shared_device"].get("user_id") == user_a["_id"]

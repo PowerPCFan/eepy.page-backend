@@ -1,12 +1,14 @@
-import logging
 from collections.abc import Callable
-from typing import Any
-from unittest.mock import MagicMock  # type: ignore[import-untyped]
+import logging
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
-import pymongo
 import pyotp
 import pytest
 from starlette.requests import Request
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 from database.exceptions import UserNotExistError
 from database.tables.domains import Domains
@@ -72,8 +74,9 @@ class TestCreation:
         url = mfa_result["url"]
         backup = mfa_result["codes"]
 
-        refreshed_user = users.find_user({"_id": test_user["_id"]})
-        session.user_cache_data = refreshed_user  # type: ignore
+        refreshed_user = users.get_user(test_user["_id"])
+        assert refreshed_user is not None
+        session.user_cache_data = refreshed_user
 
         code = pyotp.TOTP(pyotp.parse_uri(url).secret).now()
         assert session.verify_2fa(code)
@@ -122,7 +125,7 @@ class TestCreation:
         assert test_session.user_id == test_session.user_cache_data["_id"]
         assert test_session.token_result != InvalidToken
 
-        user = users.find_user({"_id": test_user["_id"]})
+        user = users.get_user(test_user["_id"])
         assert user is not None
 
         assert test_session.user_cache_data == user
@@ -144,9 +147,6 @@ class TestCreation:
 
         session = Session(session_data["access_token"], users, sessions)
         assert session.delete(session.data["jti"])
-
-    def test_attributes(self, test_session: Session) -> None:
-        assert test_session.user_id == test_session.username  # backwards compatability
 
     def test_missing_jwt_key_fails_before_signing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("JWT_KEY", raising=False)
@@ -245,18 +245,18 @@ def test_disabled_account_rejected_on_session_refresh(
         {
             "_id": user_id,
             "email": encryption.encrypt("disabled_session@example.com"),
-            "email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
+            "email_hash": encryption.hash_email("disabled_session@example.com"),
+            "normalized_email_hash": encryption.hash_email("disabled_session@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("disabled_session_user"),
+            "display_name": encryption.encrypt("disabled_session_user"),
             "username": user_id,
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": {
                 "score": 85,
                 "locked": False,
@@ -264,7 +264,7 @@ def test_disabled_account_rejected_on_session_refresh(
                 "disable_reasons": ["Auto-disabled"],
                 "flags": {},
             },
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -283,11 +283,11 @@ def test_disabled_account_rejected_on_session_refresh(
         users=users,
     )
     assert refreshed is False
-    assert sessions.find_items({"owner": user_id, "type": "refresh"}) == []
+    assert sessions.find_all(owner=user_id, type="refresh") == []
 
 
 def test_session_delete_and_logout_for_both_refresh_and_access_types(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
@@ -301,20 +301,20 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
         {
             "_id": user_id,
             "email": encryption.encrypt("owner@example.com"),
-            "email-hash": Encryption.sha256("owner@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("owner@example.comsupahcool"),
+            "email_hash": encryption.hash_email("owner@example.com"),
+            "normalized_email_hash": encryption.hash_email("owner@example.com"),
             "password": None,
-            "display-name": encryption.encrypt("session_owner"),
+            "display_name": encryption.encrypt("session_owner"),
             "username": user_id,
             "lang": "en",
             "country": {"country": "US"},
             "created": 1700000000,
-            "last-login": 1700000000,
+            "last_login": 1700000000,
             "verified": True,
             "domains": [],
-            "owned-tlds": ["eepy.page"],
+            "owned_tlds": ["eepy.page"],
             "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
+            "migration_version": USER_MIGRATION_VERSION,
         },
     )
 
@@ -330,7 +330,7 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
     assert access_2_doc is not None
     refresh_2_id = access_2_doc["parent"]  # pyright: ignore[reportGeneralTypeIssues]
 
-    invites = Invites(mongo_client)
+    invites = Invites(db_engine)
     dns = DNS(domains)
     auth = Auth(users, sessions, invites, email, dns)
 
@@ -347,7 +347,7 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
     auth.logout(req_specific, session=session_1, x_device_id="dev-logout-1")
     assert sessions.get_session(refresh_2_id) is None
     assert sessions.get_session(session_2.data["jti"]) is None
-    assert users.recent_logouts.find_items({"user_id": user_id}) == []
+    assert users.recent_logouts.find_all(user_id=user_id) == []
 
     req_normal = Request(
         {
@@ -357,7 +357,7 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
         },
     )
     auth.logout(req_normal, session=session_1, x_device_id="dev-logout-1")
-    assert sessions.find_items({"owner": user_id}) == []
-    logout_rows = users.recent_logouts.find_items({"user_id": user_id})
+    assert sessions.find_all(owner=user_id) == []
+    logout_rows = users.recent_logouts.find_all(user_id=user_id)
     assert len(logout_rows) == 1
     assert logout_rows[0]["user_id"] == user_id
