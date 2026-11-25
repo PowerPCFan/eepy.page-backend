@@ -153,11 +153,11 @@ class API:
     @Api.requires_auth
     @Api.requires_permission("register")
     def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901
-        can_user_register = self.dns_validation.can_user_register(body.domain, api.user_cache_data)
+        user = api.user
+        can_user_register = self.dns_validation.can_user_register(body.domain, user)
         tld = Domains.separate_domain_into_parts(body.domain)[-1]
-        user_owned_tlds = api.user_cache_data.get("owned_tlds", ["eepy.page"])
 
-        if tld not in user_owned_tlds:
+        if tld not in user.owned_tlds:
             raise HTTPException(status_code=401, detail=f"User must purchase TLD {tld} before registering this domain")
 
         if not can_user_register.success:
@@ -167,9 +167,9 @@ class API:
             is_domain_available: bool = self.dns_validation.is_free(
                 name=body.domain,
                 type=body.type,
-                domains=api.user_cache_data.get("domains", []),  # pyright: ignore[reportArgumentType]
+                domains=user.domains,
                 user_id=api.user_id,
-                user_is_admin=admin_is_enabled(api.user_cache_data),
+                user_is_admin=admin_is_enabled(user),
             )
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid record name")
@@ -235,11 +235,12 @@ class API:
                 detail=f"Invalid value in {body.values}",
             )
 
+        user = api.user
         if not self.dns_validation.user_owns_domain(
             api.user_id,
             body.domain,
             body.old_type or body.type,
-            api.user_cache_data,
+            user,
         ):
             raise HTTPException(
                 status_code=403,
@@ -247,15 +248,15 @@ class API:
             )
 
         domain_data = self.domains.get_domain(
-            api.user_cache_data.get("domains", []),
+            user.domains,
             body.domain,
             body.old_type or body.type,
         )
         if domain_data is None:
             raise HTTPException(status_code=403, detail=f"You do not own the domain {body.domain}")
 
-        if body.type != domain_data["type"] and self.domains.get_domain(
-            api.user_cache_data.get("domains", []),
+        if body.type != domain_data.type and self.domains.get_domain(
+            user.domains,
             body.domain,
             body.type,
         ):
@@ -265,7 +266,7 @@ class API:
             self.dns.modify_domain(
                 values=body.values,
                 type=body.type,
-                old_type=domain_data["type"],
+                old_type=domain_data.type,
                 domain=body.domain,
                 user_id=api.user_id,
             )
@@ -281,7 +282,7 @@ class API:
             body.domain,
             value=body.values,
             type=body.type,
-            old_type=domain_data["type"],
+            old_type=domain_data.type,
         )
 
     @Api.requires_auth
@@ -292,16 +293,16 @@ class API:
         type: str | None = None,
         api: Api = Depends(converter.create),
     ) -> None:
+        user_domains = api.user_cache_data.domains if api.user_cache_data else []
         if type is None:
-            domain_data = self.domains.get_domain(api.user_cache_data.get("domains", []), domain)
+            domain_data = self.domains.get_domain(user_domains, domain)
             if domain_data is None:
                 raise HTTPException(
                     status_code=404,
                     detail="Domain type could not be fetched. Please specify it manually with the `type` query param",
                 )
-            type = domain_data["type"]
+            type = domain_data.type
 
-        user_domains = api.user_cache_data.get("domains") if api.user_cache_data else None
         if user_domains and self.domains.will_domain_be_removed(user_domains, domain, type):
             subdomains = self.domains.get_child_subdomains(user_domains, domain)
             if subdomains:

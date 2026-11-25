@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
 
@@ -14,24 +14,14 @@ if TYPE_CHECKING:
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class StatusType(TypedDict):
-    _id: str
-    time: float
-    message: str
-    active: bool
-
-
-class Status(Table):
+class Status(Table[StatusModel]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "status")
+        super().__init__(db_engine, StatusModel)
 
-    def get(self) -> StatusType | None:
+    def get(self) -> StatusModel | None:
         logger.info("Getting active status")
         with self.session() as session:
-            row = session.scalars(select(StatusModel).where(StatusModel.active.is_(True))).first()
-            if row is None:
-                return None
-            return row.to_dict()
+            return session.scalars(select(StatusModel).where(StatusModel.active.is_(True))).first()
 
     def set(self, message: str) -> None:
         with self.session() as session:

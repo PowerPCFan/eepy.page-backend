@@ -3,7 +3,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import requests
 from sqlalchemy import delete, func, or_, select
@@ -33,29 +33,22 @@ from database.models import (
 )
 from database.session import rowcount
 from database.table import Table
+from database.tables.domains import Domains
 from database.tables.ip_activity import IPActivity, RecentLogouts
 from database.tables.referrals import Referrals
 from mail.email import Email, normalize_email_address
 from security.encryption import Encryption
 from security.risk import RiskManager, UserRisk, normalize_device_id
-from server.models.user import (
-    MFA,
-    CountryType,
-    EncryptedString,
-    InviteType,
-    UserPageType,
-    UserType,
-)
+from server.models.user import CountryInfo, InviteType, UserPageType
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from database.tables.sessions import Sessions as SessionTable
-    from security.api import ApiType
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-USER_MIGRATION_VERSION = 1
+USER_MIGRATION_VERSION = 2
 
 type UserMigrationStep = Callable[[User, "Users"], None]
 
@@ -70,23 +63,28 @@ def register_user_migration(version: int) -> Callable[[UserMigrationStep], UserM
     return decorator
 
 
+@register_user_migration(2)
+def _migrate_normalize_country_fields(user: User, _users: "Users") -> None:
+    normalized = CountryInfo.from_raw(user.country).model_dump()
+    if user.country != normalized:
+        user.country = normalized
+        flag_modified(user, "country")
+
+
 __all__ = [
-    "MFA",
     "USER_MIGRATIONS",
     "USER_MIGRATION_VERSION",
-    "CountryType",
-    "EncryptedString",
+    "CountryInfo",
     "InviteType",
     "UserPageType",
-    "UserType",
     "Users",
     "register_user_migration",
 ]
 
 
-class Users(Table):
+class Users(Table[User]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "users")
+        super().__init__(db_engine, User)
         self.encryption: Encryption = Encryption(Environment.enc_key() or "none")
         self.referrals: Referrals = Referrals(self.engine, self)
         self.ip_activity: IPActivity = IPActivity(self.engine)
@@ -96,16 +94,17 @@ class Users(Table):
             recent_logouts=self.recent_logouts,
         )
 
-    def get_user(self, user_id: str, find_banned: bool = False) -> UserType | None:
-        raw = self.get_by_id(user_id)
-        if raw is None:
+    def get_user(self, user_id: str, find_banned: bool = False) -> User | None:
+        with self.session() as session:
+            row = session.get(User, user_id)
+        if row is None:
             return None
-        data = self.perform_migrations(cast("UserType", raw))
-        if data.get("banned") and not find_banned:
+        user = self.perform_migrations(row)
+        if user.banned and not find_banned:
             return None
-        return data
+        return user
 
-    def find_user_by_identifier(self, identifier: str, find_banned: bool = False) -> UserType | None:
+    def find_user_by_identifier(self, identifier: str, find_banned: bool = False) -> User | None:
         """Find a user by exact username, case-insensitive username, or email address."""
         clean_id = identifier.strip()
         if not clean_id:
@@ -130,14 +129,13 @@ class Users(Table):
 
             if row is None:
                 return None
-            user_dict = cast("UserType", row.to_dict())
 
-        user_dict = self.perform_migrations(user_dict)
-        if user_dict.get("banned") and not find_banned:
+        user = self.perform_migrations(row)
+        if user.banned and not find_banned:
             return None
-        return user_dict
+        return user
 
-    def find_user_by_username_hash(self, username: str, find_banned: bool = False) -> UserType | None:
+    def find_user_by_username_hash(self, username: str, find_banned: bool = False) -> User | None:
         exact_hash = Encryption.sha256(username)
         lower_hash = Encryption.sha256(username.lower())
         with self.session() as session:
@@ -150,20 +148,18 @@ class Users(Table):
             row = session.scalars(stmt).first()
             if row is None:
                 return None
-            user_dict = cast("UserType", row.to_dict())
-        user_dict = self.perform_migrations(user_dict)
-        if user_dict.get("banned") and not find_banned:
+        user = self.perform_migrations(row)
+        if user.banned and not find_banned:
             return None
-        return user_dict
+        return user
 
-    def find_users_by_ips(self, ips: list[str]) -> list[UserType]:
+    def find_users_by_ips(self, ips: list[str]) -> list[User]:
         clean_ips = [ip.strip() for ip in ips if ip and ip.strip()]
         if not clean_ips:
             return []
         with self.session() as session:
             stmt = select(User).join(UserIP, UserIP.user_id == User.id).where(UserIP.ip.in_(clean_ips)).distinct()
-            rows = session.scalars(stmt).all()
-            return [cast("UserType", row.to_dict()) for row in rows]
+            return list(session.scalars(stmt).all())
 
     def find_shared_device_user(self, user_id: str, device_id: str) -> str | None:
         clean_dev = normalize_device_id(device_id)
@@ -391,7 +387,7 @@ class Users(Table):
             )
             return list(session.scalars(stmt).all())
 
-    def find_user_by_domain_name(self, canonical_domain: str, find_banned: bool = True) -> UserType | None:
+    def find_user_by_domain_name(self, canonical_domain: str, find_banned: bool = True) -> User | None:
         with self.session() as session:
             stmt = select(User).join(Domain, Domain.user_id == User.id).where(Domain.name == canonical_domain)
             row = session.scalars(stmt).first()
@@ -399,9 +395,9 @@ class Users(Table):
                 return None
             if row.banned and not find_banned:
                 return None
-            return self.perform_migrations(cast("UserType", row.to_dict()))
+        return self.perform_migrations(row)
 
-    def find_user_by_api_key(self, key_hash: str) -> tuple[UserType | None, "ApiType | None"]:
+    def find_user_by_api_key(self, key_hash: str) -> tuple[User | None, ApiKey | None]:
         with self.session() as session:
             ak = session.get(ApiKey, key_hash)
             if ak is None:
@@ -409,10 +405,7 @@ class Users(Table):
             user = session.get(User, ak.user_id)
             if user is None:
                 return None, None
-            key_dict = cast("ApiType", ak.to_dict())
-            user_dict = cast("UserType", user.to_dict())
-        migrated = self.perform_migrations(user_dict)
-        return migrated, key_dict
+        return self.perform_migrations(user), ak
 
     def delete_api_key(self, user_id: str, key_hash: str) -> bool:
         with self.session() as session:
@@ -422,6 +415,10 @@ class Users(Table):
                 return False
             session.delete(ak)
             return True
+
+    def clear_api_keys(self, user_id: str) -> None:
+        with self.session() as session:
+            session.execute(delete(ApiKey).where(ApiKey.user_id == user_id))
 
     def count_users_created_after(self, created_timestamp: int) -> int:
         with self.session() as session:
@@ -461,7 +458,7 @@ class Users(Table):
         )
         logger.debug(time.time() - start)
 
-    def create_user(  # noqa: PLR0913, PLR0915
+    def create_user(  # noqa: C901, PLR0913, PLR0915
         self,
         *,
         username: str,
@@ -518,6 +515,7 @@ class Users(Table):
                 raise ReferralError(msg_1)
 
         clean_device = normalize_device_id(device_id)
+        normalized_country = CountryInfo.from_raw(country).model_dump()
         now_ts = round(time.time())
         with self.session() as session:
             new_user = User(
@@ -527,7 +525,7 @@ class Users(Table):
                 display_name=self.encryption.encrypt(original_username),
                 username=lowercase_hashed_username,
                 lang=language,
-                country=dict(country) if isinstance(country, Mapping) else {},
+                country=normalized_country,
                 email_hash=email_hash,
                 normalized_email_hash=normalized_email_hash,
                 created=int(time_signed_up),
@@ -571,7 +569,7 @@ class Users(Table):
                 ]
             session.add(new_user)
 
-        ip = country.get("ip", "") if isinstance(country, dict) else ""
+        ip = normalized_country.get("ip") or ""
         try:
             self.risk_manager.evaluate_and_update_risk(
                 user_id=hashed_username,
@@ -595,10 +593,12 @@ class Users(Table):
             msg_2 = "Email already in use!"
             raise EmailException(msg_2)
 
-        try:
-            self.send_discord_analytic_webhook(country["country"], target_url, hashed_username)
-        except Exception as e:
-            logger.warning(e)
+        country_code = normalized_country.get("country")
+        if country_code:
+            try:
+                self.send_discord_analytic_webhook(country_code, target_url, hashed_username)
+            except Exception as e:
+                logger.warning(e)
 
         return hashed_username
 
@@ -628,30 +628,30 @@ class Users(Table):
             )
         return invite_code
 
-    def get_invites(self, user_id: str) -> dict[str, InviteType] | dict[str, Any]:
+    def get_invites(self, user_id: str) -> dict[str, InviteType]:
         with self.session() as session:
             user = session.get(User, user_id)
             if user is None or user.banned:
                 msg = "Invalid user!"
                 raise UserNotExistError(msg)
-            return {inv.code: inv.to_dict() for inv in (user.invites or [])}
+            return {inv.code: InviteType.model_validate(inv) for inv in (user.invites or [])}
 
     def get_user_gdpr(self, user_id: str) -> dict[str, Any]:
-        user_data: UserType | None = self.get_user(user_id)
+        user_data = self.get_user(user_id)
 
         if user_data is None:
             msg = "Invalid user"
             raise UserNotExistError(msg)
 
         return {
-            "user_id": user_data["_id"],
-            "location": user_data["country"],
-            "creation_date": user_data["created"],
-            "domains": user_data["domains"],
-            "lang": user_data["lang"],
-            "last_login": user_data["last_login"],
-            "permissions": user_data.get("permissions", {}),
-            "verified": user_data["verified"],
+            "user_id": user_data.id,
+            "location": user_data.country,
+            "creation_date": user_data.created,
+            "domains": [d.model_dump() for d in Domains.normalize_domains(user_data.domains)],
+            "lang": user_data.lang,
+            "last_login": user_data.last_login,
+            "permissions": user_data.permissions_dict(),
+            "verified": user_data.verified,
         }
 
     def get_user_profile(
@@ -659,10 +659,10 @@ class Users(Table):
         user_id: str,
         session_table: "SessionTable",
         find_banned: bool = False,
-        user_type: UserType | None = None,
+        user: User | None = None,
     ) -> UserPageType:
         logger.info(f"Getting user profile for {user_id}")
-        user_data: UserType | None = user_type or self.get_user(
+        user_data = user or self.get_user(
             user_id,
             find_banned,
         )
@@ -682,30 +682,25 @@ class Users(Table):
                 ),
             )
             session_rows = db_sess.scalars(stmt).all()
-            session_data = [row.to_dict() for row in session_rows]
+            session_data = [row.to_public_dict() for row in session_rows]
 
-        for session in session_data:
-            exp_val = session.get("expires")
-            if isinstance(exp_val, datetime):
-                session["expires"] = round(exp_val.timestamp())
-
-        return {
-            "username": self.encryption.decrypt(user_data["display_name"]),
-            "email": self.encryption.decrypt(user_data["email"]),
-            "lang": user_data["lang"],
-            "country": user_data["country"],
-            "created": user_data["created"],
-            "verified": user_data["verified"],
-            "permissions": user_data.get("permissions", {}),
-            "domains": user_data["domains"],
-            "beta_enroll": user_data.get("beta_enroll", False),
-            "sessions": session_data,
-            "invites": user_data.get("invites", {}),
-            "mfa_enabled": user_data.get("totp", {}).get("verified", False),
-            "referral_code": user_data.get("referral_code"),
-            "referred_people": user_data.get("referred_count"),
-            "owned_tlds": user_data.get("owned_tlds", ["eepy.page"]),
-        }
+        return UserPageType(
+            username=self.encryption.decrypt(user_data.display_name),
+            email=self.encryption.decrypt(user_data.email),
+            lang=user_data.lang,
+            country=CountryInfo.from_raw(user_data.country),
+            created=user_data.created,
+            verified=user_data.verified,
+            permissions=user_data.permissions_dict(),
+            domains=Domains.normalize_domains(user_data.domains),
+            beta_enroll=user_data.beta_enroll,
+            sessions=session_data,
+            invites={inv.code: InviteType.model_validate(inv) for inv in (user_data.invites or [])},
+            mfa_enabled=user_data.mfa_verified,
+            referral_code=user_data.referral_code or None,
+            referred_people=user_data.referred_count,
+            owned_tlds=user_data.owned_tlds,
+        )
 
     def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
         with self.session() as session:
@@ -811,7 +806,7 @@ class Users(Table):
                     user.last_login = 0
                 session.add(user)
 
-    def find_flagged_users(self, flagged_threshold: int) -> list[UserType]:
+    def find_flagged_users(self, flagged_threshold: int) -> list[User]:
         with self.session() as session:
             stmt = (
                 select(User)
@@ -823,8 +818,8 @@ class Users(Table):
                     ),
                 )
             )
-            rows = session.scalars(stmt).all()
-            return [self.perform_migrations(cast("UserType", row.to_dict())) for row in rows]
+            rows = list(session.scalars(stmt).all())
+        return [self.perform_migrations(row) for row in rows]
 
     def update_user_risk_fields(
         self,
@@ -942,15 +937,15 @@ class Users(Table):
             user.alt_links = new_links
             session.add(user)
 
-    def perform_migrations(self, user: UserType) -> UserType:
+    def perform_migrations(self, user: User) -> User:
         """Runs registered in-backend migrations for a user record."""
-        current_version = int(user.get("migration_version") or 0)
+        current_version = int(user.migration_version or 0)
         if current_version >= USER_MIGRATION_VERSION and not USER_MIGRATIONS:
             return user
 
         if current_version < USER_MIGRATION_VERSION:
             with self.session() as session:
-                user_row = session.get(User, user["_id"])
+                user_row = session.get(User, user.id)
                 if user_row is None:
                     return user
 
@@ -962,7 +957,7 @@ class Users(Table):
                 user_row.migration_version = USER_MIGRATION_VERSION
                 session.add(user_row)
                 session.flush()
-                return cast("UserType", user_row.to_dict())
+                return user_row
 
         return user
 
@@ -996,8 +991,8 @@ class Users(Table):
         for user_id in unmigrated_ids:
             try:
                 user_data = self.get_by_id(user_id)
-                if user_data:
-                    self.perform_migrations(cast("UserType", user_data))
+                if isinstance(user_data, User):
+                    self.perform_migrations(user_data)
                     count += 1
             except Exception:
                 logger.exception(f"Failed to migrate user {user_id}")

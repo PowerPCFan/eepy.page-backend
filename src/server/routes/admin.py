@@ -14,7 +14,7 @@ from config.env import Environment
 from database.exceptions import UserNotExistError
 from database.tables.sessions import Sessions
 from database.tables.status import Status
-from database.tables.users import Users, UserType
+from database.tables.users import Users
 from dns_.dns import sanitize
 from dns_.exceptions import DNSException
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
@@ -378,7 +378,7 @@ class Admin:
     @Session.requires_auth
     @Session.requires_permission(permission="account")
     def delete_user(self, body: BanUser, session: Session = Depends(converter.create)) -> None:
-        user_data: UserType | None = self.users.get_user(body.user_id)
+        user_data = self.users.get_user(body.user_id)
         if user_data is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -421,15 +421,15 @@ class Admin:
         if not target_user:
             raise HTTPException(status_code=404, detail="Couldnt find a user")
 
-        email: str = target_user["email"]
-        domain_data = self.admin_tools.domains.get_domain(target_user["domains"], domain)
+        email: str = target_user.email
+        domain_data = self.admin_tools.domains.get_domain(target_user.domains, domain)
         if domain_data is None:
             raise HTTPException(status_code=404, detail="Domain not found")
 
         normalized_domain = self.admin_tools.domains.canonical_domain_name(domain)
         dns_success = self.admin_tools.dns.delete_domain(
             normalized_domain,
-            domain_data["type"],
+            domain_data.type,
         )
 
         if dns_success:
@@ -460,11 +460,11 @@ class Admin:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        domain_data = self.admin_tools.domains.get_domain(user.get("domains"), domain, type)
+        domain_data = self.admin_tools.domains.get_domain(user.domains, domain, type)
         if domain_data is None:
             raise HTTPException(status_code=404, detail="Domain not found")
 
-        return {"user_id": user_id, "domain": domain_data}
+        return {"user_id": user_id, "domain": domain_data.model_dump()}
 
     @Session.requires_auth
     @Session.requires_permission(permission="dns")
@@ -485,12 +485,12 @@ class Admin:
         if not self.admin_tools.dns_validation.record_value_valid(values, body.type):
             raise HTTPException(status_code=412, detail=f"Invalid value in {values}")
 
-        domain_data = self.admin_tools.domains.get_domain(user.get("domains"), body.domain, body.old_type or body.type)
+        domain_data = self.admin_tools.domains.get_domain(user.domains, body.domain, body.old_type or body.type)
         if domain_data is None:
             raise HTTPException(status_code=404, detail="Domain not found")
         if (
-            body.type != domain_data["type"]
-            and self.admin_tools.domains.get_domain(user.get("domains"), body.domain, body.type) is not None
+            body.type != domain_data.type
+            and self.admin_tools.domains.get_domain(user.domains, body.domain, body.type) is not None
         ):
             raise HTTPException(status_code=409, detail="Domain is already registered with that type")
 
@@ -499,7 +499,7 @@ class Admin:
                 if not self.admin_tools.dns.modify_domain(
                     values=values,
                     type=body.type,
-                    old_type=domain_data["type"],
+                    old_type=domain_data.type,
                     domain=body.domain,
                     user_id=body.user_id,
                 ):
@@ -516,16 +516,15 @@ class Admin:
                     body.domain,
                     value=values,
                     type=body.type,
-                    old_type=domain_data["type"],
+                    old_type=domain_data.type,
                 )
             except ValueError as error:
                 logger.exception("Admin database domain edit failed")
                 if body.mode == "both":
                     try:
-                        raw: list[str] | str = domain_data["ip"]
                         self.admin_tools.dns.modify_domain(
-                            values=raw if isinstance(raw, list) else [raw],
-                            type=domain_data["type"],
+                            values=domain_data.ip,
+                            type=domain_data.type,
                             old_type=body.type,
                             domain=body.domain,
                             user_id=body.user_id,
@@ -710,7 +709,10 @@ class Admin:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        original_metadata = {field: user.get(field) for field in ("accessed_from", "last_login") if field in user}
+        original_metadata = {
+            "accessed_from": user.accessed_ips,
+            "last_login": user.last_login,
+        }
 
         status = Session.create(
             username=body.user_id,
@@ -753,7 +755,7 @@ class Admin:
             raise HTTPException(status_code=404, detail="Manual login session not found")
 
         session_data = self.sessions.get_session(refresh_id)
-        manual_login = session_data.get("manual_login") if session_data else None
+        manual_login = session_data.manual_login if session_data else None
         if not isinstance(manual_login, Mapping) or manual_login.get("user_id") != body.user_id:
             raise HTTPException(status_code=404, detail="Manual login session not found")
 
@@ -766,7 +768,7 @@ class Admin:
 
     @Session.requires_auth
     @Session.requires_permission(permission="dns")
-    def find_desync(  # noqa: C901, PLR0912, PLR0915
+    def find_desync(  # noqa: C901
         self,
         session: Session = Depends(converter.create),
     ) -> dict[str, object]:
@@ -777,24 +779,20 @@ class Admin:
 
         postgres_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
         owners: dict[tuple[str, str], set[str]] = defaultdict(set)
-        for user_id, domain in self.admin_tools.domains.get_all_domain_records():
-            name = domain.get("name")
-            record_type = domain.get("type")
-            if not isinstance(name, str) or not isinstance(record_type, str):
-                continue
-            record_type = record_type.upper()
+        for domain in self.admin_tools.domains.get_all_domain_records():
+            record_type = domain.type.upper()
             if record_type not in ALLOWED_TYPES:
                 continue
-            raw_values = domain.get("ip", [])
+            raw_values = domain.ip or []
             values = [raw_values] if isinstance(raw_values, str) else raw_values
             if not isinstance(values, Iterable) or isinstance(values, (bytes, Mapping)):
                 continue
             normalized = tuple(
                 sorted(sanitize(value, record_type) for value in values if isinstance(value, str)),
             )
-            key = (self.admin_tools.domains.canonical_full_domain_name(name), record_type)
+            key = (self.admin_tools.domains.canonical_full_domain_name(domain.name), record_type)
             postgres_records[key].append(normalized)
-            owners[key].add(str(user_id))
+            owners[key].add(str(domain.user_id))
 
         powerdns_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
         server_url = f"{powerdns_url}/api/v1/servers/localhost"
@@ -909,17 +907,17 @@ class Admin:
         for migrated_user in self.users.find_flagged_users(FLAGGED_THRESHOLD):
             try:
                 user_details = self.admin_tools.get_user_details_by_id(
-                    migrated_user["_id"],
+                    migrated_user.id,
                     migrated_user,
                 )
                 if user_details:
                     results.append(user_details)
             except Exception:
-                logger.exception(f"Failed to load flagged user {migrated_user.get('_id')}")
+                logger.exception(f"Failed to load flagged user {migrated_user.id}")
         results.sort(
             key=lambda item: (
-                -int(item.get("risk", {}).get("score", 0)),
-                (item.get("username") or "").lower(),
+                -int(item.risk.get("score", 0)),
+                (item.username or "").lower(),
             ),
         )
         return results
@@ -963,14 +961,14 @@ class Admin:
             reason=body.reason,
         )
 
-        if body.send_email and user.get("email"):
+        if body.send_email and user.email:
             if body.disabled:
                 action_text = "Your account has been temporarily disabled. If you believe this was done in error, please contact support@eepy.page."  # noqa: E501
             else:
                 action_text = "Your account has been re-enabled. You may now log in to your account."
 
             try:
-                decrypted_email = self.users.encryption.decrypt(user["email"])
+                decrypted_email = self.users.encryption.decrypt(user.email)
                 self.admin_tools.send_nonblocking_action_email(decrypted_email, action_text)
             except Exception:
                 logger.exception(f"Failed to send action email for user {body.user_id}")

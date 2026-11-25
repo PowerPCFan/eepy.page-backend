@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -25,12 +25,6 @@ class Invite(Base):
         back_populates="invites",
         foreign_keys="[Invite.creator_id]",
         default=None,
+        repr=False,
+        compare=False,
     )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "used": self.used,
-            "used_by": self.used_by,
-            "used_at": self.used_at,
-            "created": self.created,
-        }

@@ -11,10 +11,11 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 from database.exceptions import UserNotExistError
+from database.models import User
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
+from database.tables.users import USER_MIGRATION_VERSION, Users
 from dns_.dns import DNS
 from mail.email import Email
 from security.encryption import Encryption
@@ -32,9 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 class TestCreation:
-    def test_creation(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_creation(self, test_user: User, users: Users, sessions: Sessions) -> None:
         assert Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -54,9 +55,9 @@ class TestCreation:
                 session_table=sessions,
             )["success"]
 
-    def test_mfa_setup(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_mfa_setup(self, test_user: User, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -74,7 +75,7 @@ class TestCreation:
         url = mfa_result["url"]
         backup = mfa_result["codes"]
 
-        refreshed_user = users.get_user(test_user["_id"])
+        refreshed_user = users.get_user(test_user.id)
         assert refreshed_user is not None
         session.user_cache_data = refreshed_user
 
@@ -85,26 +86,26 @@ class TestCreation:
 
     def test_refresh(
         self,
-        test_user: UserType,
+        test_user: User,
         test_session: Session,
         test_session_refresh: str,
         sessions: Sessions,
         users: Users,
     ) -> None:
-        logger.info(test_user["country"])
+        logger.info(test_user.country)
         old_access_token = test_session.token
         assert not Session.refresh(
             old_access_token,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
         result = Session.refresh(
             test_session_refresh,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
         if not result:
@@ -118,21 +119,22 @@ class TestCreation:
             test_session_refresh,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
-    def test_object(self, test_session: Session, test_user: UserType, users: Users) -> None:
-        assert test_session.user_id == test_session.user_cache_data["_id"]
+    def test_object(self, test_session: Session, test_user: User, users: Users) -> None:
+        assert test_session.user_cache_data is not None
+        assert test_session.user_id == test_session.user_cache_data.id
         assert test_session.token_result != InvalidToken
 
-        user = users.get_user(test_user["_id"])
+        user = users.get_user(test_user.id)
         assert user is not None
 
         assert test_session.user_cache_data == user
 
-    def test_logging_out(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_logging_out(self, test_user: User, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -328,7 +330,8 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
 
     access_2_doc = sessions.get_session(session_2.data["jti"])
     assert access_2_doc is not None
-    refresh_2_id = access_2_doc["parent"]  # pyright: ignore[reportGeneralTypeIssues]
+    refresh_2_id = access_2_doc.parent
+    assert refresh_2_id is not None
 
     invites = Invites(db_engine)
     dns = DNS(domains)
@@ -360,4 +363,4 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
     assert sessions.find_all(owner=user_id) == []
     logout_rows = users.recent_logouts.find_all(user_id=user_id)
     assert len(logout_rows) == 1
-    assert logout_rows[0]["user_id"] == user_id
+    assert logout_rows[0].user_id == user_id

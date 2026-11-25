@@ -8,12 +8,13 @@ from starlette.requests import Request
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+from database.models import User
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
 from database.tables.sessions import Sessions
-from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
+from database.tables.users import USER_MIGRATION_VERSION, Users
 from dns_.dns import DNS
 from mail.email import Email, normalize_email_address
 from server.models.user import LoginRequest, MfaRecovery
@@ -96,13 +97,13 @@ class TestCaseInsensitiveUsernameLogin:
     def test_case_insensitive_username_finds_user(
         self,
         users: Users,
-        test_user: UserType,
+        test_user: User,
         username_variant: str,
     ) -> None:
-        matched_user: UserType | None = users.find_user_by_identifier(username_variant)
+        matched_user = users.find_user_by_identifier(username_variant)
 
         assert matched_user is not None
-        assert matched_user["_id"] == test_user["_id"]
+        assert matched_user.id == test_user.id
 
     @pytest.mark.parametrize(
         "username_variant",
@@ -119,9 +120,9 @@ class TestCaseInsensitiveUsernameLogin:
         encryption: Encryption,
         username_variant: str,
     ) -> None:
-        matched_user: UserType | None = users.find_user_by_identifier(username_variant)
+        matched_user = users.find_user_by_identifier(username_variant)
         assert matched_user is not None
-        pw = matched_user.get("password")
+        pw = matched_user.password
         assert pw is not None
         assert encryption.check_password("testing", pw) is True
 
@@ -141,13 +142,13 @@ class TestCaseInsensitiveEmailLogin:
     def test_case_insensitive_email_finds_user(
         self,
         users: Users,
-        test_user: UserType,
+        test_user: User,
         email_variant: str,
     ) -> None:
-        matched_user: UserType | None = users.find_user_by_identifier(email_variant)
+        matched_user = users.find_user_by_identifier(email_variant)
 
         assert matched_user is not None
-        assert matched_user["_id"] == test_user["_id"]
+        assert matched_user.id == test_user.id
 
     @pytest.mark.parametrize(
         "email_variant",
@@ -164,9 +165,9 @@ class TestCaseInsensitiveEmailLogin:
         encryption: Encryption,
         email_variant: str,
     ) -> None:
-        matched_user: UserType | None = users.find_user_by_identifier(email_variant)
+        matched_user = users.find_user_by_identifier(email_variant)
         assert matched_user is not None
-        pw = matched_user.get("password")
+        pw = matched_user.password
         assert pw is not None
         assert encryption.check_password("testing", pw) is True
 
@@ -187,7 +188,7 @@ class TestInvalidLoginIdentifiers:
         users: Users,
         nonexistent_identifier: str,
     ) -> None:
-        matched_user: UserType | None = users.find_user_by_identifier(nonexistent_identifier)
+        matched_user = users.find_user_by_identifier(nonexistent_identifier)
         assert matched_user is None
 
     def test_valid_identifier_with_wrong_password_fails(
@@ -197,13 +198,13 @@ class TestInvalidLoginIdentifiers:
     ) -> None:
         matched_user = users.find_user_by_identifier("testing")
         assert matched_user is not None
-        assert matched_user["password"] is not None
-        assert encryption.check_password("wrong_password", matched_user["password"]) is False
+        assert matched_user.password is not None
+        assert encryption.check_password("wrong_password", matched_user.password) is False
 
         matched_email_user = users.find_user_by_identifier("testing@email.com")
         assert matched_email_user is not None
-        assert matched_email_user["password"] is not None
-        assert encryption.check_password("wrong_password", matched_email_user["password"]) is False
+        assert matched_email_user.password is not None
+        assert encryption.check_password("wrong_password", matched_email_user.password) is False
 
 
 def test_username_case_collision_migration_and_exact_id_precedence(
@@ -254,19 +255,19 @@ def test_username_case_collision_migration_and_exact_id_precedence(
 
     stored_upper_before = users.get_by_id(user_upper["_id"])
     assert stored_upper_before is not None
-    migrated_upper = users.perform_migrations(stored_upper_before)  # pyright: ignore[reportArgumentType]
-    assert "username" not in migrated_upper
+    migrated_upper = users.perform_migrations(stored_upper_before)
+    assert migrated_upper.username is None
     stored_upper_after = users.get_by_id(user_upper["_id"])
     assert stored_upper_after is not None
-    assert "username" not in stored_upper_after
+    assert stored_upper_after.username is None
 
     found_upper = users.find_user_by_identifier("Alice")
     assert found_upper is not None
-    assert found_upper["_id"] == user_upper["_id"]
+    assert found_upper.id == user_upper["_id"]
 
     found_lower = users.find_user_by_identifier("alice")
     assert found_lower is not None
-    assert found_lower["_id"] == user_lower["_id"]
+    assert found_lower.id == user_lower["_id"]
 
 
 def test_login_route_ordering_email_login_and_mfa_gate(
@@ -387,7 +388,7 @@ def test_login_route_ordering_email_login_and_mfa_gate(
     assert users.ip_activity.find_all() == []
     stored_mfa = users.get_by_id(mfa_user["_id"])
     assert stored_mfa is not None
-    assert stored_mfa["risk"].get("device_id") is None
+    assert stored_mfa.risk_dict().get("device_id") is None
 
     resp = auth.login(
         req,
@@ -399,7 +400,13 @@ def test_login_route_ordering_email_login_and_mfa_gate(
     assert users.ip_activity.get_by_id(f"198.51.100.77_{active_user['_id']}") is not None
     stored_active = users.get_by_id(active_user["_id"])
     assert stored_active is not None
-    assert stored_active["risk"]["device_id"] == "dev-active-01"
+
+    try:
+        comparison = stored_active.risk_dict()["device_id"] == "dev-active-01"  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    except Exception:
+        comparison = False
+
+    assert comparison
 
 
 def test_password_and_mfa_recovery_by_username_and_email_and_password_first_order(
@@ -536,4 +543,4 @@ def test_password_and_mfa_recovery_by_username_and_email_and_password_first_orde
     )
     updated_mfa_user = users.get_by_id(mfa_user["_id"])
     assert updated_mfa_user is not None
-    assert "totp" not in updated_mfa_user
+    assert updated_mfa_user.mfa is None

@@ -1,11 +1,12 @@
 import re
-from typing import TypedDict
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ServeoRecord(TypedDict):
-    _id: str
+class ServeoRecord(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
     user_id: str
     serveo_auth_record: str
     ssh_fingerprint: str

@@ -28,16 +28,16 @@ class SessionModel(Base):
     parent: Mapped[str | None] = mapped_column(default=None, index=True)
     manual_login: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_public_dict(self) -> dict[str, Any]:
         expires_dt = self.expires
-        if expires_dt is not None and expires_dt.tzinfo is None:
+        if expires_dt.tzinfo is None:
             expires_dt = expires_dt.replace(tzinfo=UTC)
         payload: dict[str, Any] = {
             "_id": self.id,
             "owner": self.owner,
             "type": self.type,
             "created": self.created,
-            "expires": expires_dt,
+            "expires": round(expires_dt.timestamp()),
             "agent": self.agent,
             "ip": self.ip,
         }
@@ -63,15 +63,3 @@ class VerificationCode(Base):
         default_factory=lambda: datetime.now(UTC),
         index=True,
     )
-
-    def to_dict(self) -> dict[str, Any]:
-        exp_after = self.expires_after
-        if exp_after is not None and exp_after.tzinfo is None:
-            exp_after = exp_after.replace(tzinfo=UTC)
-        return {
-            "_id": self.id,
-            "type": self.type,
-            "account": self.account,
-            "expire": self.expire,
-            "expires_after": exp_after,
-        }

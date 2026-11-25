@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
     from database.models.domain import Domain
     from database.models.invite import Invite
     from database.models.serveo import ServeoTunnel
+    from security.risk import RiskFlag, UserRisk
 
 
 class User(Base):
@@ -136,8 +136,34 @@ class User(Base):
         default_factory=list,
     )
 
-    def _build_risk_dict(self) -> dict[str, Any]:
-        flags: dict[str, dict[str, Any]] = {}
+    @property
+    def owned_tlds(self) -> list[str]:
+        return [row.tld for row in (self.owned_tlds_rel or [])]
+
+    @property
+    def is_disabled(self) -> bool:
+        return bool(self.risk_profile and self.risk_profile.disabled)
+
+    @property
+    def is_admin(self) -> bool:
+        return bool(self.permissions_rel and self.permissions_rel.admin_enabled)
+
+    @property
+    def mfa_verified(self) -> bool:
+        return bool(self.mfa and self.mfa.verified)
+
+    @property
+    def accessed_ips(self) -> list[str]:
+        sorted_ips = sorted(self.ips or [], key=lambda r: (r.first_seen, r.ip))
+        return [row.ip for row in sorted_ips]
+
+    def permissions_dict(self) -> dict[str, Any]:
+        if self.permissions_rel is not None:
+            return self.permissions_rel.to_dict()
+        return UserPermissions.default_dict()
+
+    def risk_dict(self) -> UserRisk:
+        flags: dict[str, RiskFlag] = {}
         for link in sorted(self.alt_links or [], key=lambda item: (item.detected_at, item.score)):
             flags[link.signal_type] = link.to_flag_dict()
 
@@ -163,62 +189,6 @@ class User(Base):
             "device_id": latest_device_id,
         }
 
-    def to_dict(self) -> dict[str, Any]:  # noqa: C901
-        perms_dict = (
-            self.permissions_rel.to_dict() if self.permissions_rel is not None else UserPermissions.default_dict()
-        )
-        sorted_ips = sorted(self.ips or [], key=lambda r: (r.first_seen, r.ip))
-        owned_tlds = [row.tld for row in (self.owned_tlds_rel or [])]
-
-        result: dict[str, Any] = {
-            "_id": self.id,
-            "email": self.email,
-            "password": self.password,
-            "display_name": self.display_name,
-            "lang": self.lang,
-            "country": dict(self.country) if isinstance(self.country, Mapping) else {},
-            "accessed_from": [row.ip for row in sorted_ips],
-            "created": self.created,
-            "last_login": self.last_login,
-            "permissions": perms_dict,
-            "feature_flags": dict(self.feature_flags) if isinstance(self.feature_flags, Mapping) else {},
-            "verified": self.verified,
-            "domains": [d.to_record() for d in (self.domains or [])],
-            "api_keys": {k.id: k.to_dict() for k in (self.api_keys or [])},
-            "credits": self.credits,
-            "beta_enroll": self.beta_enroll,
-            "beta_updated": self.beta_updated,
-            "invites": {inv.code: inv.to_dict() for inv in (self.invites or [])},
-            "invite_code": self.invite_code,
-            "banned": self.banned,
-            "ban_reasons": list(self.ban_reasons or []),
-            "referral_code": self.referral_code,
-            "referred_by": self.referred_by,
-            "referred_count": self.referred_count,
-            "owned_tlds": owned_tlds,
-            "risk": self._build_risk_dict(),
-            "migration_version": self.migration_version,
-        }
-        if self.mfa is not None:
-            result["totp"] = self.mfa.to_dict()
-        if self.username:
-            result["username"] = self.username
-        if self.email_hash:
-            result["email_hash"] = self.email_hash
-        if self.normalized_email_hash:
-            result["normalized_email_hash"] = self.normalized_email_hash
-        if self.tunnels:
-            result["tunnels"] = [t.to_embedded_dict() for t in self.tunnels]
-        if self.unbanned is not None:
-            result["unbanned"] = self.unbanned
-        if self.deleted_in is not None:
-            result["deleted_in"] = self.deleted_in
-        if isinstance(self.extra_data, Mapping):
-            for k, v in self.extra_data.items():
-                if k not in result:
-                    result[k] = v
-        return result
-
 
 class UserPermissions(Base):
     __tablename__ = "user_permissions"
@@ -235,7 +205,12 @@ class UserPermissions(Base):
     admin_userdetails: Mapped[bool] = mapped_column(default=False)
     admin_wildcards: Mapped[bool] = mapped_column(default=False)
 
-    user: Mapped[User | None] = relationship(back_populates="permissions_rel", default=None)
+    user: Mapped[User | None] = relationship(
+        back_populates="permissions_rel",
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @staticmethod
     def default_dict() -> dict[str, Any]:
@@ -276,29 +251,6 @@ class UserPermissions(Base):
             },
         }
 
-    def apply_dict(self, data: Mapping[str, Any]) -> None:
-        limits = data.get("limits")
-        if isinstance(limits, Mapping):
-            if limits.get("max_domains") is not None:
-                self.max_domains = int(limits["max_domains"])
-            if limits.get("max_subdomains") is not None:
-                self.max_subdomains = int(limits["max_subdomains"])
-        features = data.get("features")
-        if isinstance(features, Mapping) and "invite" in features:
-            self.feature_invite = bool(features["invite"])
-        admin = data.get("admin")
-        if isinstance(admin, Mapping):
-            if "enabled" in admin:
-                self.admin_enabled = bool(admin["enabled"])
-            perms = admin.get("permissions")
-            if isinstance(perms, Mapping):
-                self.admin_account = bool(perms.get("account", False))
-                self.admin_dns = bool(perms.get("dns", False))
-                self.admin_manage_permissions = bool(perms.get("manage_permissions", False))
-                self.admin_reports = bool(perms.get("reports", False))
-                self.admin_userdetails = bool(perms.get("userdetails", False))
-                self.admin_wildcards = bool(perms.get("wildcards", False))
-
 
 class UserMFA(Base):
     __tablename__ = "user_mfa"
@@ -308,14 +260,7 @@ class UserMFA(Base):
     secret_key: Mapped[str] = mapped_column(default="")
     recovery_codes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default_factory=list, server_default="[]")
 
-    user: Mapped[User | None] = relationship(back_populates="mfa", default=None)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "verified": self.verified,
-            "key": self.secret_key,
-            "recovery": list(self.recovery_codes or []),
-        }
+    user: Mapped[User | None] = relationship(back_populates="mfa", default=None, repr=False, compare=False)
 
 
 class UserIP(Base):
@@ -326,7 +271,7 @@ class UserIP(Base):
     first_seen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     last_seen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
-    user: Mapped[User | None] = relationship(back_populates="ips", default=None)
+    user: Mapped[User | None] = relationship(back_populates="ips", default=None, repr=False, compare=False)
 
 
 class UserOwnedTLD(Base):
@@ -335,7 +280,12 @@ class UserOwnedTLD(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     tld: Mapped[str] = mapped_column(primary_key=True, index=True)
 
-    user: Mapped[User | None] = relationship(back_populates="owned_tlds_rel", default=None)
+    user: Mapped[User | None] = relationship(
+        back_populates="owned_tlds_rel",
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 class UserRiskProfile(Base):
@@ -347,7 +297,7 @@ class UserRiskProfile(Base):
     disabled: Mapped[bool] = mapped_column(default=False, index=True)
     disable_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False, default_factory=list, server_default="[]")
 
-    user: Mapped[User | None] = relationship(back_populates="risk_profile", default=None)
+    user: Mapped[User | None] = relationship(back_populates="risk_profile", default=None, repr=False, compare=False)
 
 
 class UserDevice(Base):
@@ -358,7 +308,7 @@ class UserDevice(Base):
     first_seen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     last_seen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0", index=True)
 
-    user: Mapped[User | None] = relationship(back_populates="devices", default=None)
+    user: Mapped[User | None] = relationship(back_populates="devices", default=None, repr=False, compare=False)
 
 
 class AltLink(Base):
@@ -386,15 +336,19 @@ class AltLink(Base):
         back_populates="alt_links",
         foreign_keys="[AltLink.user_id]",
         default=None,
+        repr=False,
+        compare=False,
     )
     related_user: Mapped[User | None] = relationship(
         back_populates="incoming_alt_links",
         foreign_keys="[AltLink.related_user_id]",
         default=None,
+        repr=False,
+        compare=False,
     )
 
-    def to_flag_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_flag_dict(self) -> RiskFlag:
+        payload: RiskFlag = {
             "score": self.score,
             "reason": self.reason,
             "detected_at": self.detected_at,

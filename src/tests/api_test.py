@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
+from database.models import User
+from database.tables.users import USER_MIGRATION_VERSION, Users
 from security.api import Api, ApiError, ApiKeyLimitError, ApiPermissionError, ApiRangeError
 from security.encryption import Encryption
 from security.session import Session
@@ -21,9 +22,9 @@ invalid_key.valid = False
 
 @pytest.mark.order(-1)
 class TestUserApi:
-    def test_creation(self, test_session: Session, users: Users, test_user: UserType) -> None:
+    def test_creation(self, test_session: Session, users: Users, test_user: User) -> None:
         Api.create(
-            test_user["_id"],
+            test_user.id,
             users,
             "test key",
             ["register", "modify"],
@@ -32,7 +33,7 @@ class TestUserApi:
 
         with pytest.raises(ApiKeyLimitError):
             Api.create(
-                test_user["_id"],
+                test_user.id,
                 users,
                 "second key",
                 ["register"],
@@ -41,22 +42,18 @@ class TestUserApi:
 
         with pytest.raises(PermissionError):
             Api.create(
-                test_user["_id"],
+                test_user.id,
                 users,
                 "test key",
                 ["register"],
                 domains=["domain-that-isnt-owned.eepy.page"],
             )
 
-        users.set_field(
-            test_user["_id"],
-            "api_keys",
-            {},
-        )
+        users.clear_api_keys(test_user.id)
 
-    def test_key_permissions(self, test_user: UserType, users: Users) -> None:
+    def test_key_permissions(self, test_user: User, users: Users) -> None:
         key = Api.create(
-            test_user["_id"],
+            test_user.id,
             users,
             "test key",
             ["register", "modify"],

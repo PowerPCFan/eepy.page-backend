@@ -161,7 +161,7 @@ class RiskManager:
         other_ip_activity = self.ip_activity.find_recent_shared_ip(ctx.ip, ctx.user_id, seven_days_ago)
         if not other_ip_activity:
             return
-        other_user_id = str(other_ip_activity["user_id"])
+        other_user_id = other_ip_activity.user_id
         if ctx.users_table.is_non_admin_user(other_user_id):
             ctx.flags["shared_recent_ip"] = {
                 "score": 25,
@@ -183,7 +183,7 @@ class RiskManager:
             since_timestamp,
         )
         for recent_switch in recent_switches:
-            other_user_id = str(recent_switch["user_id"])
+            other_user_id = recent_switch.user_id
             if ctx.users_table.is_non_admin_user(other_user_id):
                 ctx.flags["rapid_switch"] = {
                     "score": 25,
@@ -224,8 +224,8 @@ class RiskManager:
         if not user:
             return create_default_risk(clean_device)
 
-        is_admin = bool(user.get("permissions", {}).get("admin", {}).get("enabled", False))
-        risk_data: UserRisk = user.get("risk") or create_default_risk(clean_device, is_admin=is_admin)
+        is_admin = user.is_admin
+        risk_data: UserRisk = user.risk_dict()
 
         if is_admin:
             risk_data["score"] = 0

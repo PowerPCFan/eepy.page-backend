@@ -1,7 +1,8 @@
 import logging
 
+from database.models import User
 from database.tables.reward_codes import Rewards
-from database.tables.users import Users, UserType
+from database.tables.users import Users
 
 logger = logging.getLogger(__name__)
 
@@ -11,13 +12,13 @@ class TestRedeeming:
         self,
         rewards: Rewards,
         users: Users,
-        test_user: UserType,
+        test_user: User,
     ) -> None:
         code = rewards.create("wolf@gang.de", {"fields": {"affected": True}})
-        assert not rewards.use(test_user["_id"], code.upper())
-        assert rewards.use(test_user["_id"], code)
-        assert not rewards.use(test_user["_id"], code), "Code can be used twice!"
+        assert not rewards.use(test_user.id, code.upper())
+        assert rewards.use(test_user.id, code)
+        assert not rewards.use(test_user.id, code), "Code can be used twice!"
 
-        new_user = users.get_user(test_user["_id"])
+        new_user = users.get_user(test_user.id)
         assert new_user
-        assert new_user.get("affected")
+        assert new_user.extra_data.get("affected")

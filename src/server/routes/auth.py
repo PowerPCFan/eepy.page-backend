@@ -12,7 +12,7 @@ from config.env import Environment
 from database.exceptions import EmailException, UsernameException
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import Users, UserType
+from database.tables.users import Users
 from dns_.dns import DNS
 from mail.email import Email, is_disposable
 from security.captcha import Captcha
@@ -192,42 +192,42 @@ class Auth:
         if not self.captcha.verify(x_captcha_code, ip):
             raise HTTPException(422, detail="Invalid captcha")
 
-        user_data: UserType | None = self.table.find_user_by_identifier(body.username)
+        user_data = self.table.find_user_by_identifier(body.username)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
-        stored_password = user_data.get("password")
+        stored_password = user_data.password
         if stored_password is None:
             raise HTTPException(status_code=400, detail="Account does not support password login")
 
         if not Encryption().check_password(body.password, stored_password):
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        if user_data.get("risk", {}).get("disabled"):
+        if user_data.is_disabled:
             raise HTTPException(
                 status_code=403,
                 detail="Account is disabled. Please contact support@eepy.page.",
                 headers={"X-Auth-Error": "account_disabled"},
             )
 
-        if not user_data["verified"]:
+        if not user_data.verified:
             raise HTTPException(
                 status_code=403,
                 detail="Verification required",
                 headers={"X-Auth-Error": "verification_required"},
             )
 
-        logger.info(f"Login attempt from {user_data['_id']}")
+        logger.info(f"Login attempt from {user_data.id}")
 
         real_username: str = (
-            self.encryption.decrypt(user_data["display_name"])
-            if user_data.get("display_name")
+            self.encryption.decrypt(user_data.display_name)
+            if user_data.display_name
             else (body.username if "@" not in body.username else "")
         )
 
         session_status: SessionCreateStatus = Session.create(
-            username=user_data["_id"],
+            username=user_data.id,
             real_username=real_username,
             mfa_code=x_mfa_code,
             ip=ip,
@@ -242,13 +242,13 @@ class Auth:
 
         if session_status["success"]:
             updated_risk = self.table.risk_manager.evaluate_and_update_risk(
-                user_id=user_data["_id"],
+                user_id=user_data.id,
                 ip=ip,
                 device_id=x_device_id,
                 users_table=self.table,
             )
             if updated_risk.get("disabled"):
-                Session.clear_sessions(user_data["_id"], self.session_table)
+                Session.clear_sessions(user_data.id, self.session_table)
                 raise HTTPException(
                     status_code=403,
                     detail="Account is disabled. Please contact support@eepy.page.",

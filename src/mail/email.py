@@ -12,7 +12,7 @@ from security.encryption import Encryption
 
 if TYPE_CHECKING:
     from database.tables.codes import Codes
-    from database.tables.users import Users, UserType
+    from database.tables.users import Users
 
 
 template_path: Path = Path("src") / "mail" / "templates"
@@ -164,14 +164,14 @@ class Email:
         return True
 
     def send_password_code(self, username: str) -> bool:
-        user_data: UserType | None = self.users.find_user_by_identifier(username)
+        user_data = self.users.find_user_by_identifier(username)
 
         if user_data is None:
             logger.debug(f"User {username} does not exist")
             return False
 
-        user_email = self.encryption.decrypt(user_data["email"])
-        code = self.codes.create_code("recovery", user_data["_id"])
+        user_email = self.encryption.decrypt(user_data.email)
+        code = self.codes.create_code("recovery", user_data.id)
 
         try:
             resend.Emails.send(

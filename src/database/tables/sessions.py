@@ -1,7 +1,7 @@
 import logging
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import delete, or_, select
 
@@ -14,22 +14,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("eepy.page")
 
 
-class NewSessionType(TypedDict):
-    _id: str
-    type: Literal["access", "refresh"]
-    created: int
-    expires: datetime
-    agent: str
-    ip: str
-
-
-class AccessTokenType(NewSessionType):
-    parent: str
-
-
-class Sessions(Table):
+class Sessions(Table[SessionModel]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "sessions")
+        super().__init__(db_engine, SessionModel)
 
     def add_session(  # noqa: PLR0913
         self,
@@ -60,7 +47,7 @@ class Sessions(Table):
         exp = expires.replace(tzinfo=UTC) if expires.tzinfo is None else expires
         return exp <= datetime.now(UTC)
 
-    def get_session(self, uid: str) -> NewSessionType | AccessTokenType | dict[str, Any] | None:
+    def get_session(self, uid: str) -> SessionModel | None:
         with self.session() as session:
             row = session.get(SessionModel, uid)
             if row is None:
@@ -68,7 +55,7 @@ class Sessions(Table):
             if self._is_expired(row.expires):
                 session.delete(row)
                 return None
-            return row.to_dict()
+            return row
 
     def set_manual_login(self, refresh_uid: str, user_id: str, metadata: dict[str, Any]) -> None:
         with self.session() as session:
@@ -104,7 +91,7 @@ class Sessions(Table):
             logger.info(f"Deleted {len(rows)} sessions")
             return True
 
-    def consume_refresh_session(self, refresh_uid: str) -> NewSessionType | dict[str, Any] | None:
+    def consume_refresh_session(self, refresh_uid: str) -> SessionModel | None:
         if len(refresh_uid) < 30:  # noqa: PLR2004
             logger.error(f"Small refresh token passed {len(refresh_uid)}")
             return None
@@ -119,11 +106,10 @@ class Sessions(Table):
                 return None
 
             expired = self._is_expired(target.expires)
-            session_dict = target.to_dict()
             session.delete(target)
             session.execute(
                 delete(SessionModel).where(SessionModel.parent == refresh_uid),
             )
             if expired:
                 return None
-            return session_dict
+            return target

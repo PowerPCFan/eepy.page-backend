@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,18 +23,6 @@ class IPActivityModel(Base):
         index=True,
     )
 
-    def to_dict(self) -> dict[str, Any]:
-        exp_after = self.expires_after
-        if exp_after is not None and exp_after.tzinfo is None:
-            exp_after = exp_after.replace(tzinfo=UTC)
-        return {
-            "_id": self.id,
-            "ip": self.ip,
-            "user_id": self.user_id,
-            "last_seen": self.last_seen,
-            "expires_after": exp_after,
-        }
-
 
 class RecentLogoutModel(Base):
     __tablename__ = "recent_logouts"
@@ -51,16 +38,3 @@ class RecentLogoutModel(Base):
         default_factory=lambda: datetime.now(UTC),
         index=True,
     )
-
-    def to_dict(self) -> dict[str, Any]:
-        exp_after = self.expires_after
-        if exp_after is not None and exp_after.tzinfo is None:
-            exp_after = exp_after.replace(tzinfo=UTC)
-        return {
-            "_id": self.id,
-            "user_id": self.user_id,
-            "ip": self.ip,
-            "device_id": self.device_id,
-            "time": self.time,
-            "expires_after": exp_after,
-        }

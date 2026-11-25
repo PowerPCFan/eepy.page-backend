@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Mapping, Sequence
 from itertools import starmap
-from typing import TYPE_CHECKING, cast, get_args
+from typing import TYPE_CHECKING, get_args
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm.attributes import flag_modified
@@ -9,25 +10,25 @@ from database.exceptions import UserNotExistError
 from database.models import Domain, User
 from database.table import Table
 from dns_.types import AVAILABLE_TLDS, TYPES, get_record_type
-from server.models.domain import DomainFormat, DomainRecord, RepairFormat
+from server.models.domain import DomainFormat, DomainRecord
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from server.models.user import UserType
-
 logger: logging.Logger = logging.getLogger("eepy.page")
 
-__all__ = ["DomainFormat", "DomainRecord", "Domains", "RepairFormat"]
+type DomainInput = Sequence[Domain | DomainRecord] | Mapping[str, DomainFormat] | None
+
+__all__ = ["DomainFormat", "DomainInput", "DomainRecord", "Domains"]
 
 
-class Domains(Table):
+class Domains(Table[Domain]):
     """Modifies domains in database.
     Please make sure to validate the domain BEFORE you use any functions here!
     """
 
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "domains")
+        super().__init__(db_engine, Domain)
 
     @staticmethod
     def canonical_domain_name(domain: str) -> str:
@@ -59,37 +60,43 @@ class Domains(Table):
 
     @staticmethod
     def normalize_domain_record(domain: str, domain_data: DomainFormat) -> DomainRecord:
-        return {
-            "name": Domains.canonical_full_domain_name(domain),
-            "type": get_record_type(domain_data["type"].upper()),
-            "ip": domain_data["ip"] if isinstance(domain_data["ip"], list) else [domain_data["ip"]],
-            "registered": domain_data["registered"],
-        }
+        ip_val = domain_data["ip"]
+        return DomainRecord(
+            name=Domains.canonical_full_domain_name(domain),
+            type=get_record_type(domain_data["type"].upper()),
+            ip=list(ip_val) if isinstance(ip_val, list) else [ip_val],
+            registered=domain_data["registered"],
+        )
 
     @staticmethod
-    def normalize_domains(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> list[DomainRecord]:
+    def normalize_domains(domains: DomainInput) -> list[DomainRecord]:
         if not domains:
             return []
 
-        if isinstance(domains, list):
-            normalized_domains: list[DomainRecord] = []
-            for domain in domains:
-                if not domain.get("name"):
-                    continue
-                normalized_domains.append(Domains.normalize_domain_record(domain["name"], domain))
-            return normalized_domains
+        if isinstance(domains, Mapping):
+            return list(starmap(Domains.normalize_domain_record, domains.items()))
 
-        return list(starmap(Domains.normalize_domain_record, domains.items()))
+        normalized_domains: list[DomainRecord] = []
+        for domain in domains:
+            if not domain.name:
+                continue
+            normalized_domains.append(
+                DomainRecord(
+                    name=Domains.canonical_full_domain_name(domain.name),
+                    type=get_record_type(domain.type.upper()),
+                    ip=list(domain.ip) if isinstance(domain.ip, list) else [str(domain.ip)],
+                    registered=domain.registered,
+                ),
+            )
+        return normalized_domains
 
     @staticmethod
-    def domain_map(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> dict[str, DomainRecord]:
-        return {
-            Domains.record_key(domain["name"], domain["type"]): domain for domain in Domains.normalize_domains(domains)
-        }
+    def domain_map(domains: DomainInput) -> dict[str, DomainRecord]:
+        return {Domains.record_key(domain.name, domain.type): domain for domain in Domains.normalize_domains(domains)}
 
     @staticmethod
     def get_domain(
-        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domains: DomainInput,
         domain: str,
         type: str | None = None,
     ) -> DomainRecord | None:
@@ -99,26 +106,26 @@ class Domains(Table):
         if type is not None:
             type_upper = type.upper()
             for record in normalized_domains:
-                if record["name"] == canonical_domain and record["type"] == type_upper:
+                if record.name == canonical_domain and record.type == type_upper:
                     return record
             return None
 
-        matches = [record for record in normalized_domains if record["name"] == canonical_domain]
+        matches = [record for record in normalized_domains if record.name == canonical_domain]
         if len(matches) == 1:
             return matches[0]
         return None
 
     @staticmethod
-    def domain_names(domains: dict[str, DomainFormat] | list[DomainRecord] | None) -> list[str]:
+    def domain_names(domains: DomainInput) -> list[str]:
         names: list[str] = []
         for domain in Domains.normalize_domains(domains):
-            if domain["name"] not in names:
-                names.append(domain["name"])
+            if domain.name not in names:
+                names.append(domain.name)
         return names
 
     @staticmethod
     def has_domain(
-        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domains: DomainInput,
         domain: str,
         type: str | None = None,
     ) -> bool:
@@ -126,46 +133,45 @@ class Domains(Table):
 
     @staticmethod
     def get_child_subdomains(
-        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domains: DomainInput,
         parent_domain: str,
     ) -> list[str]:
         parent_canonical = Domains.canonical_full_domain_name(parent_domain)
         subdomains: list[str] = []
         for record in Domains.normalize_domains(domains):
-            name = record["name"]
+            name = record.name
             if name != parent_canonical and name.endswith(f".{parent_canonical}") and name not in subdomains:
                 subdomains.append(name)
         return subdomains
 
     @staticmethod
     def will_domain_be_removed(
-        domains: dict[str, DomainFormat] | list[DomainRecord] | None,
+        domains: DomainInput,
         domain: str,
         type: str | None = None,
     ) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
-        matching = [record for record in Domains.normalize_domains(domains) if record["name"] == canonical_domain]
+        matching = [record for record in Domains.normalize_domains(domains) if record.name == canonical_domain]
         if not matching:
             return False
         if type is None:
             return len(matching) == 1
-        remaining = [record for record in matching if record["type"] != type.upper()]
+        remaining = [record for record in matching if record.type != type.upper()]
         return len(remaining) == 0
 
-    def get_user(self, user_id: str, find_banned: bool = False) -> "UserType | None":
+    def get_user(self, user_id: str, find_banned: bool = False) -> User | None:
         with self.session() as session:
             user = session.get(User, user_id)
             if user is None or (user.banned and not find_banned):
                 return None
-            return cast("UserType", user.to_dict())
+            return user
 
-    def get_all_domain_records(self, exclude_user_id: str | None = None) -> list[tuple[str, DomainRecord]]:
+    def get_all_domain_records(self, exclude_user_id: str | None = None) -> list[Domain]:
         with self.session() as session:
             stmt = select(Domain)
             if exclude_user_id is not None:
                 stmt = stmt.where(Domain.user_id != exclude_user_id)
-            rows = session.scalars(stmt).all()
-            return [(row.user_id, row.to_record()) for row in rows]
+            return list(session.scalars(stmt).all())
 
     def find_overlapping_domain(self, domain: str, exclude_user_id: str | None = None) -> str | None:
         canonical_full = Domains.canonical_full_domain_name(domain)
@@ -195,33 +201,33 @@ class Domains(Table):
                 return
             stmt = select(Domain).where(
                 Domain.user_id == target_user,
-                Domain.name == domain_record["name"],
-                Domain.type == domain_record["type"],
+                Domain.name == domain_record.name,
+                Domain.type == domain_record.type,
             )
             existing = session.scalars(stmt).first()
             if existing is not None:
-                existing.ip = list(domain_record["ip"])
-                existing.registered = int(domain_record["registered"])
+                existing.ip = list(domain_record.ip)
+                existing.registered = int(domain_record.registered)
                 flag_modified(existing, "ip")
                 session.add(existing)
             else:
                 session.add(
                     Domain(
                         user_id=target_user,
-                        name=domain_record["name"],
-                        type=domain_record["type"],
-                        ip=list(domain_record["ip"]),
-                        registered=int(domain_record["registered"]),
+                        name=domain_record.name,
+                        type=domain_record.type,
+                        ip=list(domain_record.ip),
+                        registered=int(domain_record.registered),
                     ),
                 )
 
-    def get_domains(self, target_user: str) -> list[DomainRecord]:
+    def get_domains(self, target_user: str) -> list[Domain]:
         with self.session() as session:
             user = session.get(User, target_user)
             if user is None or user.banned:
                 msg = "User does not exist"
                 raise UserNotExistError(msg)
-            return [d.to_record() for d in (user.domains or [])]
+            return list(user.domains or [])
 
     def modify_domain(
         self,

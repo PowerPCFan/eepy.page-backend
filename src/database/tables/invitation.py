@@ -15,9 +15,9 @@ INVITE_LENGTH: int = 16
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class Invites(Table):
+class Invites(Table[Invite]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "invites")
+        super().__init__(db_engine, Invite)
 
     def is_valid(self, code: str) -> bool:
         logger.info(f"Checking invite {code}")

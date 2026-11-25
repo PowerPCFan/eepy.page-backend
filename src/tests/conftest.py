@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 import secrets
 import time
 from typing import TYPE_CHECKING, Any
@@ -7,16 +7,28 @@ from cryptography.fernet import Fernet
 import pytest
 
 from config.env import Environment
+from database.models import (
+    AltLink,
+    ApiKey,
+    Base,
+    Domain,
+    User,
+    UserDevice,
+    UserIP,
+    UserMFA,
+    UserOwnedTLD,
+    UserPermissions,
+    UserRiskProfile,
+)
 from database.session import create_db_engine, set_engine
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.reward_codes import Rewards
 from database.tables.sessions import Sessions
-from database.tables.users import Users, UserType
+from database.tables.users import USER_MIGRATION_VERSION, Users
 from dns_.dns import DNS
 from dns_.validation import Validation
 from mail.email import Email
-from database.models import Base
 from security.encryption import Encryption
 from security.session import Session
 
@@ -24,91 +36,141 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 
-def load_user() -> UserType:
-    mock_data: UserType = {
-        "_id": "ae5deb822e0d71992900471a7199d0d95b8e7c9d05c40a8245a281fd2c1d6684",
-        "email": "gAAAAABmRi2zhJO2MiZ31QY6zpGcrAADAaTgLXZ1AsHeXxCshXwFpelmR0t48PBs0K8EeElL2uZIWPEQd6gkwS81gwJ8o7s-hg49tuB5GctdFmFeEQ2z_H0=",
-        "email_hash": "52b13db7b7eec2f5bc592bb11159fbd76d1aa188c1d5bcedc5f993c415fc234e",
-        "password": Encryption().create_password("testing"),
-        "display_name": "gAAAAABmRi2zSvMOdm3RQWjRidbYB4sQe_qgQNNlnw_zOhttMUHPHowKDHgO3bDbW-5qAbrjWADM5YFimnj2RSb72AmSdhNkaW957Tv_0ZyM0JbO8dqGtj3H5Dt70YXIbalbLLo7AvZqbqvyKD7m4ofJTGkP-JPFKEecucq9eo-nQ_piAuPtieE=",
-        "lang": "fi",
-        "country": {
-            "ip": "176.93.136.59",
-            "hostname": "176-93-136-59.example.isp",
-            "city": "Helsinki",
-            "region": "Uusimaa",
-            "country": "FI",
-            "loc": "60.1695,24.9354",
-            "org": "AS16086 Example ISP",
-            "postal": "00100",
-            "timezone": "Europe/Helsinki",
-            "country_name": "Finland",
-            "isEU": True,
-            "country_flag_url": "https://cdn.ipinfo.io/static/images/countries-flags/FI.svg",
-            "country_flag": {"emoji": "\ud83c\uddeb\ud83c\uddee", "unicode": "U+1F1EB U+1F1EE"},
-            "country_currency": {"code": "EUR", "symbol": "\u20ac"},
-            "continent": {"code": "EU", "name": "Europe"},
-            "latitude": "60.1695",
-            "longitude": "24.9354",
-        },
-        "created": 1715875251,
-        "last_login": 1743929055,
-        "permissions": {
-            "admin": {"enabled": False, "permissions": {}},
-            "limits": {"max_domains": 3, "max_subdomains": 2},
-            "features": {"invite": False},
-        },
-        "verified": True,
-        "domains": {
-            "testing-domains": {
-                "type": "A",
-                "ip": "192.168.100.1",
-                "registered": 1744103140,
-            },
-            "testing-domain2": {
-                "type": "A",
-                "ip": "192.168.100.1",
-                "registered": 1744103140,
-            },
-            "testing-domain3": {
-                "type": "A",
-                "ip": "192.168.100.1",
-                "registered": 1744103140,
-            },
-            "test1.testing-domains": {
-                "type": "A",
-                "ip": "192.168.100.1",
-                "registered": 1744103140,
-            },
-            "test2.testing-domains": {
-                "type": "A",
-                "ip": "192.168.100.1",
-                "registered": 1744103140,
-            },
-        },
-        "beta_enroll": False,
-        "credits": 400,
-        "feature_flags": {"credits": True},
-        "api_keys": {
-            "00795e160f60a2c94731ceed8fcba87c3949e5d3aa7ccffc55eb7330ab731636": {
-                "string": "gAAAAABm4vb60u99B3l6mTZGccDAhfAe3BXqvfRhT5spLhS9LMraIfGVVVfsHZ1kQewtScDeQBuCl7cVgyJFo6Rjondeb_hp-du-UDfskX05gy7wuWGMT3_Qk2OFSBvJdNDLRkitdyBQ",
-                "perms": ["delete", "modify"],
-                "domains": ["testing-domain"],
-                "comment": "Example comment",
-            },
-        },
-        "accessed_from": ["176.93.129.231", "217.152.116.140"],
-        "invites": {
-            "6MY6Y1YE05Wfkex9": {
-                "used": True,
-                "used_by": "5350e01c2a017d2e0a3f4664750f4ca22ded5e0ee553a69ebafc246b28d99867",
-            },
-            "zc8qcUcMLNqE3Dbj": {"used": False},
-        },
-        "owned_tlds": [],
-    }  # pyright: ignore[reportAssignmentType]
+def _build_user_from_test_doc(doc: Mapping[str, Any]) -> User:
+    user_id = str(doc.get("_id") or doc.get("id"))
+    user = User(
+        id=user_id,
+        email=str(doc.get("email", "")),
+        email_hash=doc.get("email_hash"),
+        normalized_email_hash=doc.get("normalized_email_hash"),
+        password=doc.get("password"),
+        display_name=str(doc.get("display_name", "")),
+        username=doc.get("username"),
+        lang=str(doc.get("lang", "en")),
+        country=dict(doc.get("country") or {}),
+        created=int(doc.get("created", 0)),
+        last_login=int(doc.get("last_login", 0)),
+        feature_flags=dict(doc.get("feature_flags") or {}),
+        verified=bool(doc.get("verified", False)),
+        credits=int(doc.get("credits", 200)),
+        beta_enroll=bool(doc.get("beta_enroll", False)),
+        beta_updated=int(doc.get("beta_updated", 0)),
+        invite_code=str(doc.get("invite_code", "")),
+        banned=bool(doc.get("banned", False)),
+        ban_reasons=list(doc.get("ban_reasons") or []),
+        referral_code=str(doc.get("referral_code", "")),
+        referred_by=str(doc.get("referred_by", "")),
+        referred_count=int(doc.get("referred_count", 0)),
+        migration_version=int(doc.get("migration_version", USER_MIGRATION_VERSION)),
+    )
 
-    return mock_data
+    raw_perms = doc.get("permissions")
+    perms = UserPermissions(user_id=user_id)
+    if isinstance(raw_perms, Mapping):
+        limits = raw_perms.get("limits")
+        if isinstance(limits, Mapping):
+            if limits.get("max_domains") is not None:
+                perms.max_domains = int(limits["max_domains"])
+            if limits.get("max_subdomains") is not None:
+                perms.max_subdomains = int(limits["max_subdomains"])
+        features = raw_perms.get("features")
+        if isinstance(features, Mapping) and "invite" in features:
+            perms.feature_invite = bool(features["invite"])
+        admin = raw_perms.get("admin")
+        if isinstance(admin, Mapping):
+            if "enabled" in admin:
+                perms.admin_enabled = bool(admin["enabled"])
+            admin_perms = admin.get("permissions")
+            if isinstance(admin_perms, Mapping):
+                perms.admin_account = bool(admin_perms.get("account", False))
+                perms.admin_dns = bool(admin_perms.get("dns", False))
+                perms.admin_manage_permissions = bool(admin_perms.get("manage_permissions", False))
+                perms.admin_reports = bool(admin_perms.get("reports", False))
+                perms.admin_userdetails = bool(admin_perms.get("userdetails", False))
+                perms.admin_wildcards = bool(admin_perms.get("wildcards", False))
+    user.permissions_rel = perms
+
+    raw_totp = doc.get("totp")
+    if isinstance(raw_totp, Mapping) and (raw_totp.get("key") or raw_totp.get("verified")):
+        user.mfa = UserMFA(
+            user_id=user_id,
+            verified=bool(raw_totp.get("verified", False)),
+            secret_key=str(raw_totp.get("key") or ""),
+            recovery_codes=list(raw_totp.get("recovery") or []),
+        )
+
+    raw_tlds = doc.get("owned_tlds")
+    tlds = list(raw_tlds) if isinstance(raw_tlds, list) else ["eepy.page"]
+    user.owned_tlds_rel = [UserOwnedTLD(user_id=user_id, tld=str(tld)) for tld in tlds]
+
+    raw_ips = doc.get("accessed_from")
+    if isinstance(raw_ips, list):
+        user.ips = [
+            UserIP(user_id=user_id, ip=str(ip), first_seen=idx, last_seen=idx)
+            for idx, ip in enumerate(raw_ips)
+            if str(ip).strip()
+        ]
+
+    raw_domains = doc.get("domains")
+    if isinstance(raw_domains, list):
+        user.domains = [
+            Domain(
+                user_id=user_id,
+                name=Domains.canonical_full_domain_name(str(d["name"])),
+                type=str(d.get("type", "A")).upper(),
+                ip=list(d["ip"]) if isinstance(d.get("ip"), list) else [str(d.get("ip", ""))],
+                registered=int(d.get("registered", 0)),
+            )
+            for d in raw_domains
+            if isinstance(d, Mapping) and d.get("name")
+        ]
+
+    raw_keys = doc.get("api_keys")
+    if isinstance(raw_keys, Mapping):
+        user.api_keys = [
+            ApiKey(
+                id=str(key_id),
+                user_id=user_id,
+                string=str(kd.get("string", "")),
+                perms=list(kd.get("perms") or []),
+                domains=list(kd.get("domains") or []),
+                comment=str(kd.get("comment", "")),
+            )
+            for key_id, kd in raw_keys.items()
+            if isinstance(kd, Mapping)
+        ]
+
+    raw_risk = doc.get("risk")
+    rp = UserRiskProfile(user_id=user_id)
+    if isinstance(raw_risk, Mapping):
+        rp.score = int(raw_risk.get("score") or 0)
+        rp.locked = bool(raw_risk.get("locked", False))
+        rp.disabled = bool(raw_risk.get("disabled", False))
+        rp.disable_reasons = list(raw_risk.get("disable_reasons") or [])
+
+        raw_dev = raw_risk.get("device_id")
+        if isinstance(raw_dev, str) and raw_dev.strip():
+            now_ts = int(time.time())
+            user.devices = [UserDevice(user_id=user_id, device_id=raw_dev.strip(), first_seen=now_ts, last_seen=now_ts)]
+
+        raw_flags = raw_risk.get("flags")
+        if isinstance(raw_flags, Mapping):
+            user.alt_links = [
+                AltLink(
+                    user_id=user_id,
+                    related_user_id=str(fd["user_id"]) if fd.get("user_id") else None,
+                    signal_type=str(sig),
+                    score=int(fd.get("score") or 0),
+                    reason=str(fd.get("reason") or ""),
+                    detected_at=int(fd.get("detected_at") or 0),
+                    expires_at=int(fd["expires_at"]) if fd.get("expires_at") is not None else None,
+                    permanent=bool(fd.get("permanent", False)),
+                )
+                for sig, fd in raw_flags.items()
+                if isinstance(fd, Mapping)
+            ]
+    user.risk_profile = rp
+    return user
 
 
 def _resolve_test_db_engine() -> "Engine":
@@ -188,12 +250,7 @@ def create_first_user() -> None:
         dont_send_email=True,
     )
 
-    _users.set_field(
-        user_id,
-        "verified",
-        True,
-    )
-
+    _users.set_verified(user_id, verified=True)
     Environment.set_value("USER_ID", user_id)
 
 
@@ -201,7 +258,7 @@ create_first_user()
 _test_user = _users.get_user(_encryption.sha256("testing"))
 assert _test_user is not None
 _test_session = Session.create(
-    username=_test_user["_id"],
+    username=_test_user.id,
     real_username="testing",
     mfa_code=None,
     ip="192.168.1.1",
@@ -269,7 +326,7 @@ def test_session_refresh() -> str | None:
 
 
 @pytest.fixture(scope="session")
-def test_user() -> UserType | None:
+def test_user() -> User | None:
     return _test_user
 
 
@@ -284,9 +341,17 @@ def insert_test_user(
     users.recent_logouts.delete_where()
 
     def _insert(doc: dict[str, Any]) -> dict[str, Any]:
-        users.delete_by_id(doc["_id"])
-        users.insert_document(doc)
-        created_ids.append(doc["_id"])
+        uid = str(doc["_id"])
+        users.delete_by_id(uid)
+        user_obj = _build_user_from_test_doc(doc)
+        with users.session() as session:
+            user_obj.alt_links = [
+                link
+                for link in user_obj.alt_links
+                if link.related_user_id is None or session.get(User, link.related_user_id) is not None
+            ]
+            session.add(user_obj)
+        created_ids.append(uid)
         return doc
 
     yield _insert

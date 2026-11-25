@@ -29,9 +29,9 @@ class CodeStatus(TypedDict):
     account: NotRequired[str]
 
 
-class Codes(Table):
+class Codes(Table[VerificationCode]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "codes")
+        super().__init__(db_engine, VerificationCode)
 
         self.verification_codes: dict[str, GenericCodeFormat] = {}
         self.recovery_codes: dict[str, GenericCodeFormat] = {}

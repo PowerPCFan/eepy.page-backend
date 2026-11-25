@@ -6,11 +6,9 @@ from sqlalchemy import JSON, BigInteger, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.models.base import Base
-from dns_.types import get_record_type
 
 if TYPE_CHECKING:
     from database.models.user import User
-    from server.models.domain import DomainRecord
 
 
 class Domain(Base):
@@ -27,12 +25,4 @@ class Domain(Base):
     ip: Mapped[list[str]] = mapped_column(JSON, nullable=False, default_factory=list, server_default="[]")
     registered: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
-    user: Mapped[User | None] = relationship(back_populates="domains", default=None)
-
-    def to_record(self) -> DomainRecord:
-        return {
-            "name": self.name,
-            "type": get_record_type(self.type),
-            "ip": list(self.ip) if isinstance(self.ip, list) else [str(self.ip)],
-            "registered": self.registered,
-        }
+    user: Mapped[User | None] = relationship(back_populates="domains", default=None, repr=False, compare=False)

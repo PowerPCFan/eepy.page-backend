@@ -1,6 +1,6 @@
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from dns_.types import TYPES
 
@@ -11,15 +11,13 @@ class DomainFormat(TypedDict):
     type: TYPES
 
 
-class DomainRecord(DomainFormat):
+class DomainRecord(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     name: str
-
-
-class RepairFormat(TypedDict):
-    fixed: int
-    skipped: int
-    duplicates: int
-    broken_id: NotRequired[dict[str, DomainFormat]]
+    type: TYPES
+    ip: list[str]
+    registered: int | float
 
 
 class DomainType(BaseModel):

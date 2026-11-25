@@ -182,7 +182,7 @@ async def status() -> JSONResponse:
 
     current_status = v.status.get()
     if current_status is not None:
-        content["message"] = current_status["message"]
+        content["message"] = current_status.message
 
     return JSONResponse(status_code=200, content=content)
 

@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING
 
 from sqlalchemy import or_, select
 
@@ -30,29 +30,13 @@ def normalize_device_id(device_id: str | None) -> str | None:
     return cleaned
 
 
-class IPActivityType(TypedDict):
-    _id: str
-    ip: str
-    user_id: str
-    last_seen: int
-    expires_after: datetime
-
-
-class RecentLogoutType(TypedDict):
-    user_id: str
-    ip: str | None
-    device_id: str | None
-    time: int
-    expires_after: datetime
-
-
 def expiry_from_epoch(epoch_seconds: float, ttl_seconds: int) -> datetime:
     return datetime.fromtimestamp(epoch_seconds, UTC) + timedelta(seconds=ttl_seconds)
 
 
-class IPActivity(Table):
+class IPActivity(Table[IPActivityModel]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "ip_activity")
+        super().__init__(db_engine, IPActivityModel)
 
     def record_activity(self, ip: str, user_id: str, timestamp: int) -> None:
         if not ip:
@@ -81,7 +65,7 @@ class IPActivity(Table):
         except Exception:
             logger.exception("Failed to record activity in ip_activity table")
 
-    def find_recent_shared_ip(self, ip: str, user_id: str, since_timestamp: int) -> dict[str, Any] | None:
+    def find_recent_shared_ip(self, ip: str, user_id: str, since_timestamp: int) -> IPActivityModel | None:
         if not ip:
             return None
         with self.session() as session:
@@ -90,13 +74,12 @@ class IPActivity(Table):
                 IPActivityModel.user_id != user_id,
                 IPActivityModel.last_seen > since_timestamp,
             )
-            row = session.scalars(stmt).first()
-            return row.to_dict() if row is not None else None
+            return session.scalars(stmt).first()
 
 
-class RecentLogouts(Table):
+class RecentLogouts(Table[RecentLogoutModel]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
-        super().__init__(db_engine, "recent_logouts")
+        super().__init__(db_engine, RecentLogoutModel)
 
     def record_logout(self, user_id: str, ip: str | None, device_id: str | None, timestamp: int) -> None:
         clean_ip = ip.strip() if ip else None
@@ -124,7 +107,7 @@ class RecentLogouts(Table):
         device_id: str | None,
         since_timestamp: int,
         limit: int = 5,
-    ) -> list[dict[str, Any]]:
+    ) -> list[RecentLogoutModel]:
         clean_ip = ip.strip() if ip else ""
         clean_device = normalize_device_id(device_id)
         conditions = []
@@ -146,5 +129,4 @@ class RecentLogouts(Table):
                 .order_by(RecentLogoutModel.time.desc())
                 .limit(limit)
             )
-            rows = session.scalars(stmt).all()
-            return [row.to_dict() for row in rows]
+            return list(session.scalars(stmt).all())

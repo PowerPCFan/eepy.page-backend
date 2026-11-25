@@ -6,13 +6,13 @@ import string
 from typing import TYPE_CHECKING, NamedTuple, get_args
 
 from database.exceptions import SubdomainError, UserNotExistError
-from database.tables.domains import DomainFormat, Domains
-from database.tables.users import UserType
+from database.tables.domains import DomainInput, Domains
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 from security.admin_permissions import get_account_limits
 
 if TYPE_CHECKING:
+    from database.models import User
     from dns_.dns import DNS
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -1236,7 +1236,7 @@ class Validation:
         self,
         name: str,
         type: str,
-        domains: dict[str, DomainFormat],
+        domains: DomainInput,
         *,
         user_id: str | None = None,
         user_is_admin: bool = False,
@@ -1297,9 +1297,9 @@ class Validation:
         existing_records = [
             record
             for record in Domains.normalize_domains(domains)
-            if record["name"] == Domains.canonical_full_domain_name(canonical_domain)
+            if record.name == Domains.canonical_full_domain_name(canonical_domain)
         ]
-        if type.upper() == "CNAME" or any(record["type"] == "CNAME" for record in existing_records):  # noqa: SIM102
+        if type.upper() == "CNAME" or any(record.type == "CNAME" for record in existing_records):  # noqa: SIM102
             if existing_records:
                 logger.info(f"Record type {type} conflicts at {canonical_domain}")
                 if raise_exceptions:
@@ -1336,7 +1336,7 @@ class Validation:
         user_id: str,
         domain: str,
         type: str | None = None,
-        user: UserType | None = None,
+        user: "User | None" = None,
     ) -> bool:
         """Returns whether user has a specfic domain owned. Can bee passed a user_id or user. If user_id is passed, a database lookup occurs.
 
@@ -1345,29 +1345,26 @@ class Validation:
         :param domain: the full domain name
         :type domain: str
         :param user: the user object, if provided, no database lookup occusr, defaults to None
-        :type user: UserType | None, optional
+        :type user: User | None, optional
         :raises UserNotExistError: if the user does not exist
         :return: whether user owns domain
         :rtype: bool
         """  # noqa: E501
-        if not user:
-            user_data: UserType | None = self.table.get_user(user_id)
-        else:
-            user_data = user
+        user_data = user if user is not None else self.table.get_user(user_id)
         if user_data is None:
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        return Domains.get_domain(user_data["domains"], domain, type) is not None
+        return Domains.get_domain(user_data.domains, domain, type) is not None
 
     @staticmethod
-    def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:
+    def can_user_register(domain: str, user: "User") -> UserCanRegisterResult:
         """Checks whether users domain limit allows them to register a domain
 
         :param domain: a beautified domain, eg a.b.eepy.page
         :type domain: str
         :param user: the user who is registering
-        :type user: UserType
+        :type user: User
         :return: whether the user can register
         :rtype: UserCanRegisterResult
         """
@@ -1377,7 +1374,7 @@ class Validation:
         user_domain_amount = 0
         subdomain_amount = 0
 
-        for user_domain in Domains.domain_names(user["domains"]):
+        for user_domain in Domains.domain_names(user.domains):
             if Validation.find_required_domain(user_domain):
                 subdomain_amount += 1
             else:

@@ -202,7 +202,7 @@ def test_evaluate_risk_signals_and_threshold(
 
     stored_b_doc = users.get_by_id(user_b["_id"])
     assert stored_b_doc is not None
-    stored_b = stored_b_doc["risk"]
+    stored_b = stored_b_doc.risk_dict()
     assert stored_b["score"] == 75
     assert stored_b["disabled"] is False
     assert stored_b["flags"]["shared_device"]["user_id"] == user_a["_id"]
@@ -221,7 +221,7 @@ def test_evaluate_risk_signals_and_threshold(
 
     stored_b_after_doc = users.get_by_id(user_b["_id"])
     assert stored_b_after_doc is not None
-    stored_b_after = stored_b_after_doc["risk"]
+    stored_b_after = stored_b_after_doc.risk_dict()
     assert stored_b_after["score"] == 100
     assert stored_b_after["disabled"] is True
     assert stored_b_after["flags"]["rapid_switch"]["user_id"] == user_a["_id"]
@@ -336,12 +336,12 @@ def test_ip_activity_and_recent_logouts_recording_and_datetime_ttl(
         ip_table.record_activity("203.0.113.5", "user_1", now)
         recorded_ip = ip_table.get_by_id("203.0.113.5_user_1")
         assert recorded_ip is not None
-        assert isinstance(recorded_ip[EXPIRES_FIELD], datetime)
+        assert isinstance(getattr(recorded_ip, EXPIRES_FIELD), datetime)
 
         logout_table.record_logout("user_1", "203.0.113.5", "dev_1234", now)
         recorded_logout = logout_table.find_one(user_id="user_1")
         assert recorded_logout is not None
-        assert isinstance(recorded_logout[EXPIRES_FIELD], datetime)
+        assert isinstance(getattr(recorded_logout, EXPIRES_FIELD), datetime)
     finally:
         ip_table.delete_where()
         logout_table.delete_where()
@@ -395,8 +395,9 @@ def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
 
     stored_b = users.get_by_id(user_b["_id"])
     assert stored_b is not None
-    assert stored_b["risk"]["score"] == 25
-    assert "shared_device" not in stored_b["risk"]["flags"]
+    stored_b_risk = stored_b.risk_dict()
+    assert stored_b_risk["score"] == 25
+    assert "shared_device" not in stored_b_risk["flags"]
 
 
 def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
@@ -462,17 +463,17 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
         UserDisabledBody(user_id=flagged_user["_id"], disabled=False),
         session=admin_session,
     )
-    assert profile["disabled"] is False
-    assert profile["risk"]["score"] == 0
-    assert profile["risk"]["flags"] == {}
-    assert profile["risk"]["locked"] is True
-    assert profile["risk"]["disable_reasons"] == []
+    assert profile.disabled is False
+    assert profile.risk["score"] == 0
+    assert profile.risk["flags"] == {}
+    assert profile.risk["locked"] is True
+    assert profile.risk["disable_reasons"] == []
 
     disabled_profile = admin_routes.toggle_user_disabled(
         UserDisabledBody(user_id=flagged_user["_id"], disabled=True, reason=None),
         session=admin_session,
     )
-    assert disabled_profile["disabled"] is True
+    assert disabled_profile.disabled is True
 
     admin_routes.toggle_user_disabled(
         UserDisabledBody(user_id=flagged_user["_id"], disabled=False),
@@ -491,8 +492,9 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
     )
     stored_after = users.get_by_id(flagged_user["_id"])
     assert stored_after is not None
-    assert stored_after["risk"]["score"] == 0
-    assert stored_after["risk"]["disabled"] is False
+    stored_after_risk = stored_after.risk_dict()
+    assert stored_after_risk["score"] == 0
+    assert stored_after_risk["disabled"] is False
 
 
 def test_get_flagged_users_sorts_by_score_then_username_without_limit(
@@ -554,7 +556,7 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
     )
 
     flagged = admin_routes.get_flagged_users(session=admin_session)
-    assert [u["username"] for u in flagged] == [
+    assert [u.username for u in flagged] == [
         "Bravo",
         "alpha",
         "charlie",

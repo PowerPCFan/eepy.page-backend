@@ -4,8 +4,9 @@ import time
 
 import pytest
 
+from database.models import User
 from database.tables.domains import DomainFormat, DomainRecord, Domains
-from database.tables.users import Users, UserType
+from database.tables.users import Users
 from dns_.dns import sanitize
 from dns_.validation import Validation
 
@@ -133,91 +134,91 @@ class TestDomainValidation:
 
 
 class TestDomainUser:
-    def test_register(self, domains: Domains, users: Users, test_user: UserType) -> None:
+    def test_register(self, domains: Domains, users: Users, test_user: User) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "TEST.eepy.page",
             {"ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
-        )  # type: ignore
-        updated_user_data: UserType | None = users.get_user(test_user["_id"])
+        )
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert Domains.get_domain(updated_user_data.get("domains", []), "TEST.eepy.page") is not None
-        assert Domains.get_domain(updated_user_data.get("domains", []), "test.eepy.page") is not None
+        assert Domains.get_domain(updated_user_data.domains, "TEST.eepy.page") is not None
+        assert Domains.get_domain(updated_user_data.domains, "test.eepy.page") is not None
 
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "TEST3.eepy.page",
             {"ip": "0.0.0.0", "type": "A", "registered": time.time()},
         )
 
-        updated_user_data = users.get_user(test_user["_id"])
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert Domains.get_domain(updated_user_data.get("domains", []), "TEST3.eepy.page") is not None
-        assert Domains.get_domain(updated_user_data.get("domains", []), "test3.eepy.page") is not None
-        domains.delete_domain(test_user["_id"], "test3.eepy.page")
+        assert Domains.get_domain(updated_user_data.domains, "TEST3.eepy.page") is not None
+        assert Domains.get_domain(updated_user_data.domains, "test3.eepy.page") is not None
+        domains.delete_domain(test_user.id, "test3.eepy.page")
 
-    def test_multi_type_record_support(self, domains: Domains, users: Users, test_user: UserType) -> None:
+    def test_multi_type_record_support(self, domains: Domains, users: Users, test_user: User) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "multi-record.eepy.page",
             {"ip": "1.2.3.4", "registered": round(time.time()), "type": "A"},
         )
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "multi-record.eepy.page",
             {"ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
         )
 
-        updated_user_data: UserType | None = users.get_user(test_user["_id"])
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page", "A") is not None
-        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page", "AAAA") is not None
-        assert Domains.get_domain(updated_user_data.get("domains", []), "multi-record.eepy.page") is None
+        assert Domains.get_domain(updated_user_data.domains, "multi-record.eepy.page", "A") is not None
+        assert Domains.get_domain(updated_user_data.domains, "multi-record.eepy.page", "AAAA") is not None
+        assert Domains.get_domain(updated_user_data.domains, "multi-record.eepy.page") is None
 
-        domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "A")
-        domains.delete_domain(test_user["_id"], "multi-record.eepy.page", "AAAA")
+        domains.delete_domain(test_user.id, "multi-record.eepy.page", "A")
+        domains.delete_domain(test_user.id, "multi-record.eepy.page", "AAAA")
 
-    def test_re_registering_record_does_not_create_duplicate(self, domains: Domains, users: Users, test_user: UserType) -> None:
+    def test_re_registering_record_does_not_create_duplicate(self, domains: Domains, users: Users, test_user: User) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "duplicate-check.eepy.page",
             {"ip": "sample-value", "registered": round(time.time()), "type": "TXT"},
         )
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "duplicate-check.eepy.page",
             {"ip": "updated-value", "registered": round(time.time()), "type": "TXT"},
         )
 
-        updated_user_data = users.get_user(test_user["_id"])
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        normalized_domains = Domains.normalize_domains(updated_user_data["domains"])
+        normalized_domains = Domains.normalize_domains(updated_user_data.domains)
         records: list[DomainRecord] = [
             record
             for record in normalized_domains
-            if record["name"] == "duplicate-check.eepy.page" and record["type"] == "TXT"
+            if record.name == "duplicate-check.eepy.page" and record.type == "TXT"
         ]
         assert len(records) == 1
-        assert records[0]["ip"] == ["updated-value"]
+        assert records[0].ip == ["updated-value"]
 
-        domains.delete_domain(test_user["_id"], "duplicate-check.eepy.page", "TXT")
+        domains.delete_domain(test_user.id, "duplicate-check.eepy.page", "TXT")
 
     def test_cname_conflicts_with_other_record_types(
         self,
         validation: Validation,
         domains: Domains,
-        test_user: UserType,
+        test_user: User,
     ) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "cname-conflict.eepy.page",
             {"ip": "0.0.0.0", "registered": round(time.time()), "type": "A"},
         )
@@ -225,74 +226,74 @@ class TestDomainUser:
         assert not validation.is_free(
             "cname-conflict.eepy.page",
             "CNAME",
-            domains.get_domains(test_user["_id"]),  # pyright: ignore[reportArgumentType]
-            user_id=test_user["_id"],
+            domains.get_domains(test_user.id),
+            user_id=test_user.id,
             raise_exceptions=False,
         )
 
-        domains.delete_domain(test_user["_id"], "cname-conflict.eepy.page", "A")
+        domains.delete_domain(test_user.id, "cname-conflict.eepy.page", "A")
 
-    def test_modify_domain_replaces_original_record(self, domains: Domains, users: Users, test_user: UserType) -> None:
+    def test_modify_domain_replaces_original_record(self, domains: Domains, users: Users, test_user: User) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "modified-record.eepy.page",
             {"ip": "0.0.0.0", "registered": round(time.time()), "type": "A"},
         )
 
         domains.modify_domain(
-            test_user["_id"],
+            test_user.id,
             "modified-record.eepy.page",
             value=["target.example.com"],
             type="CNAME",
             old_type="A",
         )
 
-        updated_user_data = users.get_user(test_user["_id"])
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert Domains.get_domain(updated_user_data["domains"], "modified-record.eepy.page", "A") is None
-        modified_record = Domains.get_domain(updated_user_data["domains"], "modified-record.eepy.page", "CNAME")
+        assert Domains.get_domain(updated_user_data.domains, "modified-record.eepy.page", "A") is None
+        modified_record = Domains.get_domain(updated_user_data.domains, "modified-record.eepy.page", "CNAME")
         assert modified_record is not None
-        assert modified_record["ip"] == ["target.example.com"]
+        assert modified_record.ip == ["target.example.com"]
 
-        domains.delete_domain(test_user["_id"], "modified-record.eepy.page", "CNAME")
+        domains.delete_domain(test_user.id, "modified-record.eepy.page", "CNAME")
 
     def test_modify_domain_updates_matching_type_when_name_has_multiple_records(
         self,
         domains: Domains,
         users: Users,
-        test_user: UserType,
+        test_user: User,
     ) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "multi-modify.eepy.page",
             {"ip": "0.0.0.0", "registered": round(time.time()), "type": "A"},
         )
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "multi-modify.eepy.page",
             {"ip": "2001:db8::1", "registered": round(time.time()), "type": "AAAA"},
         )
 
         domains.modify_domain(
-            test_user["_id"],
+            test_user.id,
             "multi-modify.eepy.page",
             value=["target.example.com"],
             type="CNAME",
             old_type="AAAA",
         )
 
-        updated_user_data = users.get_user(test_user["_id"])
+        updated_user_data = users.get_user(test_user.id)
         if updated_user_data is None:
             pytest.fail("Could not retrieve new user data")
 
-        assert Domains.get_domain(updated_user_data["domains"], "multi-modify.eepy.page", "A") is not None
-        assert Domains.get_domain(updated_user_data["domains"], "multi-modify.eepy.page", "AAAA") is None
-        assert Domains.get_domain(updated_user_data["domains"], "multi-modify.eepy.page", "CNAME") is not None
+        assert Domains.get_domain(updated_user_data.domains, "multi-modify.eepy.page", "A") is not None
+        assert Domains.get_domain(updated_user_data.domains, "multi-modify.eepy.page", "AAAA") is None
+        assert Domains.get_domain(updated_user_data.domains, "multi-modify.eepy.page", "CNAME") is not None
 
-        domains.delete_domain(test_user["_id"], "multi-modify.eepy.page", "A")
-        domains.delete_domain(test_user["_id"], "multi-modify.eepy.page", "CNAME")
+        domains.delete_domain(test_user.id, "multi-modify.eepy.page", "A")
+        domains.delete_domain(test_user.id, "multi-modify.eepy.page", "CNAME")
 
     def test_domain_not_free(self, validation: Validation, domains: Domains) -> None:
         assert not validation.is_free("test.eepy.page", "A", {}, raise_exceptions=False)
@@ -309,28 +310,28 @@ class TestDomainUser:
         self,
         validation: Validation,
         domains: Domains,
-        test_user: UserType,
+        test_user: User,
     ) -> None:
         domains.add_domain(
-            test_user["_id"],
+            test_user.id,
             "testing-domains.eepy.page",
             {"ip": "192.168.100.1", "registered": time.time(), "type": "A"},
         )
-        user_domains = domains.get_domains(test_user["_id"])
+        user_domains = domains.get_domains(test_user.id)
 
         assert validation.is_free(
             "testing-domains.eepy.page",
             "AAAA",
-            user_domains,  # pyright: ignore[reportArgumentType]
-            user_id=test_user["_id"],
+            user_domains,
+            user_id=test_user.id,
             raise_exceptions=False,
         )
 
         assert not validation.is_free(
             "testing-domains.eepy.page",
             "A",
-            user_domains,  # pyright: ignore[reportArgumentType]
-            user_id=test_user["_id"],
+            user_domains,
+            user_id=test_user.id,
             raise_exceptions=False,
         )
 
@@ -346,19 +347,15 @@ class TestDomainUser:
         assert Validation.find_required_domain("a.b.eepy.page") == "b.eepy.page"
         assert Validation.find_required_domain("a.eepy.page") is None
 
-    def test_domain_limits(self, test_user: UserType, users: Users) -> None:
+    def test_domain_limits(self, test_user: User, users: Users) -> None:
         # First test the default domain limit
         assert Validation.can_user_register("test2.eepy.page", test_user)[0]
         assert Validation.can_user_register("subdomain.test2.eepy.page", test_user)[0]
 
         # Change domain limit to be 0. This stops the user from creating new domains, but still allows them to create subdomains
-        users.set_field(
-            test_user["_id"],
-            "permissions.limits.max_domains",
-            0,
-        )
+        users.set_permission(test_user.id, "max_domains", 0)
 
-        modified_user = users.get_user(test_user["_id"])
+        modified_user = users.get_user(test_user.id)
         if not modified_user:
             logger.critical("Failed to get testing account")
             sys.exit()
@@ -367,13 +364,9 @@ class TestDomainUser:
         assert Validation.can_user_register("subdomain.test2.eepy.page", modified_user)[0]
 
         # Disable subdomain registration too
-        users.set_field(
-            test_user["_id"],
-            "permissions.limits.max_subdomains",
-            0,
-        )
+        users.set_permission(test_user.id, "max_subdomains", 0)
 
-        modified_user = users.get_user(test_user["_id"])
+        modified_user = users.get_user(test_user.id)
         if not modified_user:
             logger.critical("Failed to get testing account")
             sys.exit()
@@ -383,14 +376,5 @@ class TestDomainUser:
             modified_user,
         )[0]
 
-        users.set_field(
-            test_user["_id"],
-            "permissions.limits.max_subdomains",
-            50,
-        )
-
-        users.set_field(
-            test_user["_id"],
-            "permissions.limits.max_domains",
-            3,
-        )
+        users.set_permission(test_user.id, "max_subdomains", 50)
+        users.set_permission(test_user.id, "max_domains", 3)

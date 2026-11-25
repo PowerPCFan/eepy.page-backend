@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import BigInteger, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,14 +20,6 @@ class Referral(Base):
         default_factory=list,
     )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "_id": self.id,
-            "owner": self.owner,
-            "users": [r.referred_user_id for r in (self.redemptions or [])],
-            "created": self.created,
-        }
-
 
 class ReferralRedemption(Base):
     __tablename__ = "referral_redemptions"
@@ -39,4 +29,9 @@ class ReferralRedemption(Base):
     referred_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
-    referral: Mapped[Referral | None] = relationship(back_populates="redemptions", default=None)
+    referral: Mapped[Referral | None] = relationship(
+        back_populates="redemptions",
+        default=None,
+        repr=False,
+        compare=False,
+    )

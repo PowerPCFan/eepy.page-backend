@@ -1,10 +1,12 @@
 import logging
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
+
+from sqlalchemy.orm.attributes import flag_modified
 
 from database.models import Reward, User, UserOwnedTLD
-from database.table import Table, populate_user_fields_from_dict
+from database.table import Table
 from database.tables.users import Users
 from security.encryption import Encryption
 
@@ -14,21 +16,11 @@ if TYPE_CHECKING:
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class RewardType(TypedDict):
-    _id: str
-    created: int
-    mappings: dict
-    associated_email: str
-    email_hash: str
-    used: bool
-    used_by: str | None
-
-
-class Rewards(Table):
+class Rewards(Table[Reward]):
     def __init__(self, db_engine: "Engine | None", users: Users) -> None:
         self.encryption: Encryption = users.encryption
         self.users: Users = users
-        super().__init__(db_engine, "rewards")
+        super().__init__(db_engine, Reward)
 
     def create(self, email: str, rewards: dict) -> str:
         """Creates a new reward code"""
@@ -47,6 +39,18 @@ class Rewards(Table):
             session.add(reward_obj)
 
         return code_id
+
+    @staticmethod
+    def _apply_extra_fields(user: User, extra_fields: Mapping[object, object]) -> None:
+        extra = dict(user.extra_data or {})
+        for key, value in extra_fields.items():
+            key_str = str(key)
+            if hasattr(user, key_str) and key_str not in {"id", "extra_data"}:
+                setattr(user, key_str, value)
+            else:
+                extra[key_str] = value
+        user.extra_data = extra
+        flag_modified(user, "extra_data")
 
     def use(self, user_id: str, code: str) -> bool:
         with self.session() as session:
@@ -75,9 +79,7 @@ class Rewards(Table):
 
                 extra_fields = mappings.get("fields")
                 if isinstance(extra_fields, Mapping) and extra_fields:
-                    merged = user.to_dict()
-                    merged.update(extra_fields)
-                    populate_user_fields_from_dict(user, merged)
+                    self._apply_extra_fields(user, extra_fields)
 
                 session.add(user)
 

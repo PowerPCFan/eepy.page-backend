@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,34 +26,4 @@ class ServeoTunnel(Base):
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
-    user: Mapped[User | None] = relationship(back_populates="tunnels", default=None)
-
-    def to_record(self) -> dict[str, Any]:
-        return {
-            "_id": self.id,
-            "id": self.id,
-            "user_id": self.user_id,
-            "serveo_auth_record": self.serveo_auth_record,
-            "ssh_fingerprint": self.ssh_fingerprint,
-            "subdomain": self.subdomain,
-            "hostname": self.hostname,
-            "service": self.service,
-            "local_port": self.local_port,
-            "command": self.command,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-    def to_embedded_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "serveo_auth_record": self.serveo_auth_record,
-            "ssh_fingerprint": self.ssh_fingerprint,
-            "subdomain": self.subdomain,
-            "hostname": self.hostname,
-            "service": self.service,
-            "local_port": self.local_port,
-            "command": self.command,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
+    user: Mapped[User | None] = relationship(back_populates="tunnels", default=None, repr=False, compare=False)

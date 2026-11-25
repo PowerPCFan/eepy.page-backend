@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -12,25 +12,15 @@ from database.table import Table
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from database.tables.users import Users, UserType
+    from database.tables.users import Users
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class ReferralType(TypedDict):
-    _id: str
-    owner: str
-    users: list[str]
-    created: int
-
-
-class Referrals(Table):
+class Referrals(Table[Referral]):
     def __init__(self, db_engine: "Engine | None", users: "Users") -> None:
-        super().__init__(db_engine, "referrals")
+        super().__init__(db_engine, Referral)
         self.users: Users = users
-
-    def insert(self, document: ReferralType) -> None:
-        return super().insert_document(document)
 
     def create(self, user_id: str, requested_code: str) -> None:
         requested_code = requested_code.lower()
@@ -76,7 +66,7 @@ class Referrals(Table):
         with self.session() as session:
             return session.get(Referral, lookup_request_code) is not None
 
-    def use(self, user: "UserType", referral_code: str) -> None:
+    def use(self, user: User, referral_code: str) -> None:
         referral_code = referral_code.lower()
         logger.info(f"Using referral {referral_code}")
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
@@ -109,15 +99,14 @@ class Referrals(Table):
             session.add(
                 ReferralRedemption(
                     referral_id=referral.id,
-                    referred_user_id=user["_id"],
+                    referred_user_id=user.id,
                     created_at=round(time.time()),
                 ),
             )
 
             session.add(owner)
 
-    def get_users(self, referral_code: str) -> list["UserType"]:
+    def get_users(self, referral_code: str) -> list[User]:
         referral_code = referral_code.lower()
         with self.session() as session:
-            rows = session.scalars(select(User).where(User.referred_by == referral_code)).all()
-            return [cast("UserType", row.to_dict()) for row in rows]
+            return list(session.scalars(select(User).where(User.referred_by == referral_code)).all())
