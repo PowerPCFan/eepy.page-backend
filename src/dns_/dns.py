@@ -2,7 +2,12 @@ import json
 import logging
 from collections.abc import Mapping
 
+import dns.exception
+import dns.rdataclass
+import dns.rdatatype
+import dns.tokenizer
 import requests  # type: ignore[import-untyped]
+from dns.rdtypes.ANY.TXT import TXT
 
 from config.env import Environment
 from database.tables.domains import DomainFormat, Domains
@@ -16,15 +21,43 @@ class ConflictingDomain(Exception):
     pass
 
 
+_TXT_CHUNK_SIZE = 255
+
+
+def _format_txt_content(content: str) -> str:
+    raw_bytes: bytes | None = None
+    if len(content) >= 2 and content.startswith('"') and content.endswith('"'):  # noqa: PLR2004
+        try:
+            tokenizer = dns.tokenizer.Tokenizer(content)
+            parts: list[bytes] = []
+            while True:
+                token = tokenizer.get()
+                if token.is_eof():
+                    break
+                if not token.is_quoted_string():
+                    parts = []
+                    break
+                parts.append(token.unescape_to_bytes().value)
+            if parts:
+                raw_bytes = b"".join(parts)
+        except (dns.exception.DNSException, ValueError):
+            raw_bytes = None
+
+    if raw_bytes is None:
+        raw_bytes = content.encode("utf-8")
+
+    chunks = [raw_bytes[i : i + _TXT_CHUNK_SIZE] for i in range(0, len(raw_bytes), _TXT_CHUNK_SIZE)] or [b""]
+    return TXT(dns.rdataclass.IN, dns.rdatatype.TXT, chunks).to_text()
+
+
 def sanitize(content: str, type: str) -> str:
     content = content.strip()
+    record_type = type.upper()
 
-    if (type == "CNAME") and not content.endswith("."):
+    if record_type == "CNAME" and not content.endswith("."):
         content += "."
-    if type == "TXT" and not content.startswith('"'):
-        content = '"' + content
-    if type == "TXT" and not content.endswith('"'):
-        content += '"'
+    elif record_type == "TXT":
+        return _format_txt_content(content)
 
     return content
 

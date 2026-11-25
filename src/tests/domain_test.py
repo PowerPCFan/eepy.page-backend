@@ -73,6 +73,33 @@ class TestDomainValidation:
     def test_sanitization(self) -> None:
         assert sanitize("test.com", "CNAME") == "test.com."
         assert sanitize("test", "TXT") == '"test"'
+        assert sanitize('"test"', "TXT") == '"test"'
+        assert sanitize("", "TXT") == '""'
+        assert sanitize('""', "TXT") == '""'
+
+        assert sanitize("äää", "TXT") == '"\\195\\164\\195\\164\\195\\164"'
+        assert sanitize('"äää"', "TXT") == '"\\195\\164\\195\\164\\195\\164"'
+        varietee = "Niin loppui se kaunis varietee, johon sain mä aitiopaikan sen ensinäytökseen, niin loppui se kaunis varietee, jota ei kai enää esitetä koskaan uudelleen"
+        sanitized = sanitize(varietee, "TXT")
+        assert all(0x20 <= ord(c) <= 0x7E for c in sanitized)
+        assert "\\195\\164" in sanitized
+        assert "\\195\\182" in sanitized
+        assert sanitize(sanitized, "TXT") == sanitized
+        assert sanitize('say "hi"', "TXT") == '"say \\"hi\\""'
+        assert sanitize(sanitize('say "hi"', "TXT"), "TXT") == '"say \\"hi\\""'
+        assert sanitize("foo\\bar", "TXT") == '"foo\\\\bar"'
+        assert sanitize(sanitize("foo\\bar", "TXT"), "TXT") == '"foo\\\\bar"'
+        assert sanitize("line1\nline2", "TXT") == '"line1\\010line2"'
+
+        long_val = "a" * 300
+        chunked = sanitize(long_val, "TXT")
+        assert chunked == f'"{"a" * 255}" "{"a" * 45}"'
+        assert sanitize(chunked, "TXT") == chunked
+
+        long_utf8 = "ä" * 130
+        chunked_utf8 = sanitize(long_utf8, "TXT")
+        assert '" "' in chunked_utf8
+        assert sanitize(chunked_utf8, "TXT") == chunked_utf8
 
     def test_reserved_domains(self, validation: Validation) -> None:
         assert Validation.is_reserved_domain("eepy.page")

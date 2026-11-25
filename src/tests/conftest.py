@@ -20,7 +20,7 @@ from database.models import (
     UserPermissions,
     UserRiskProfile,
 )
-from database.session import create_db_engine, set_engine
+from database.session import create_db_engine, normalize_postgres_url, set_engine
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.reward_codes import Rewards
@@ -30,7 +30,7 @@ from dns_.dns import DNS
 from dns_.validation import Validation
 from mail.email import Email
 from security.encryption import Encryption
-from security.session import Session
+from security.session import Session, SessionCreateStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -53,8 +53,6 @@ def _build_user_from_test_doc(doc: Mapping[str, Any]) -> User:
         feature_flags=dict(doc.get("feature_flags") or {}),
         verified=bool(doc.get("verified", False)),
         credits=int(doc.get("credits", 200)),
-        beta_enroll=bool(doc.get("beta_enroll", False)),
-        beta_updated=int(doc.get("beta_updated", 0)),
         invite_code=str(doc.get("invite_code", "")),
         banned=bool(doc.get("banned", False)),
         ban_reasons=list(doc.get("ban_reasons") or []),
@@ -174,9 +172,18 @@ def _build_user_from_test_doc(doc: Mapping[str, Any]) -> User:
 
 
 def _resolve_test_db_engine() -> "Engine":
-    raw_url = Environment.postgres_test_url()
+    raw_url = (Environment.postgres_test_url() or "").strip()
+    if not raw_url:
+        msg = "POSTGRES_TEST_URL must be set to run tests; refusing to fall back to POSTGRES_URL"
+        raise RuntimeError(msg)
+
+    prod_url = (Environment.postgres_url() or "").strip()
+    if prod_url and normalize_postgres_url(raw_url) == normalize_postgres_url(prod_url):
+        msg = "POSTGRES_TEST_URL must not point to the same database as POSTGRES_URL"
+        raise RuntimeError(msg)
+
     candidate = create_db_engine(raw_url, init_tables=False)
-    if raw_url and "localhost" in raw_url:
+    if "localhost" in raw_url:
         try:
             with candidate.connect():
                 pass
@@ -186,9 +193,6 @@ def _resolve_test_db_engine() -> "Engine":
             candidate = create_db_engine(service_url, init_tables=False)
     return candidate
 
-
-engine: "Engine" = _resolve_test_db_engine()
-set_engine(engine)
 
 country_data: dict[str, Any] = {
     "ip": "176.92.136.59",
@@ -214,120 +218,109 @@ country_data: dict[str, Any] = {
 }
 
 
-def init_env() -> None:
+@pytest.fixture(scope="session")
+def db_engine() -> Generator["Engine"]:
     print("Initializing environment vars")
     Environment.set_value("ENC_KEY", Fernet.generate_key().decode("utf-8"))
     Environment.set_value("JWT_KEY", secrets.token_urlsafe(64))
     Environment.set_value("EMAIL_PEPPER", secrets.token_urlsafe(64))
 
+    engine = _resolve_test_db_engine()
+    set_engine(engine)
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
 
 
-init_env()
-
-_users = Users(engine)
-_codes = Codes(engine)
-_encryption = Encryption(Environment.enc_key())
-_email = Email(_codes, _users, _encryption)
-_domains = Domains(engine)
-_dns = DNS(_domains)
-_validation = Validation(_domains, _dns)
-_sessions = Sessions(engine)
-_rewards = Rewards(engine, _users)
+@pytest.fixture(scope="session")
+def users(db_engine: "Engine") -> Users:
+    return Users(db_engine)
 
 
-def create_first_user() -> None:
-    user_id = _users.create_user(
+@pytest.fixture(scope="session")
+def codes(db_engine: "Engine") -> Codes:
+    return Codes(db_engine)
+
+
+@pytest.fixture(scope="session")
+def encryption(db_engine: "Engine") -> Encryption:
+    _ = db_engine
+    return Encryption(Environment.enc_key())
+
+
+@pytest.fixture(scope="session")
+def email(codes: Codes, users: Users, encryption: Encryption) -> Email:
+    return Email(codes, users, encryption)
+
+
+@pytest.fixture(scope="session")
+def domains(db_engine: "Engine") -> Domains:
+    return Domains(db_engine)
+
+
+@pytest.fixture(scope="session")
+def validation(domains: Domains) -> Validation:
+    return Validation(domains, DNS(domains))
+
+
+@pytest.fixture(scope="session")
+def sessions(db_engine: "Engine") -> Sessions:
+    return Sessions(db_engine)
+
+
+@pytest.fixture(scope="session")
+def rewards(db_engine: "Engine", users: Users) -> Rewards:
+    return Rewards(db_engine, users)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def test_user(users: Users, email: Email, encryption: Encryption) -> User:
+    user_id = users.create_user(
         username="testing",
         password="testing",
         email="testing@email.com",
         language="en-US",
         country=country_data,
         time_signed_up=round(time.time()),
-        email_instance=_email,
+        email_instance=email,
         target_url="TESTING_ENV",
         dont_send_email=True,
     )
-
-    _users.set_verified(user_id, verified=True)
+    users.set_verified(user_id, verified=True)
     Environment.set_value("USER_ID", user_id)
 
-
-create_first_user()
-_test_user = _users.get_user(_encryption.sha256("testing"))
-assert _test_user is not None
-_test_session = Session.create(
-    username=_test_user.id,
-    real_username="testing",
-    mfa_code=None,
-    ip="192.168.1.1",
-    user_agent="eepy.page-pytest-suite",
-    users=_users,
-    session_table=_sessions,
-)
+    created_user = users.get_user(encryption.sha256("testing"))
+    assert created_user is not None
+    return created_user
 
 
 @pytest.fixture(scope="session")
-def db_engine() -> Generator["Engine"]:
-    yield engine
-    engine.dispose()
+def _test_session_tokens(test_user: User, users: Users, sessions: Sessions) -> SessionCreateStatus:
+    return Session.create(
+        username=test_user.id,
+        real_username="testing",
+        mfa_code=None,
+        ip="192.168.1.1",
+        user_agent="eepy.page-pytest-suite",
+        users=users,
+        session_table=sessions,
+    )
 
 
 @pytest.fixture(scope="session")
-def users() -> Users:
-    return _users
+def test_session(
+    _test_session_tokens: SessionCreateStatus,
+    users: Users,
+    sessions: Sessions,
+) -> Session:
+    assert _test_session_tokens["access_token"]
+    return Session(_test_session_tokens["access_token"], users, sessions)
 
 
 @pytest.fixture(scope="session")
-def email() -> Email:
-    return _email
-
-
-@pytest.fixture(scope="session")
-def encryption() -> Encryption:
-    return _encryption
-
-
-@pytest.fixture(scope="session")
-def codes() -> Codes:
-    return _codes
-
-
-@pytest.fixture(scope="session")
-def domains() -> Domains:
-    return _domains
-
-
-@pytest.fixture(scope="session")
-def validation() -> Validation:
-    return _validation
-
-
-@pytest.fixture(scope="session")
-def sessions() -> Sessions:
-    return _sessions
-
-
-@pytest.fixture(scope="session")
-def rewards() -> Rewards:
-    return _rewards
-
-
-@pytest.fixture(scope="session")
-def test_session() -> Session:
-    assert _test_session["access_token"]
-    return Session(_test_session["access_token"], _users, _sessions)
-
-
-@pytest.fixture(scope="session")
-def test_session_refresh() -> str | None:
-    return _test_session["refresh_token"]
-
-
-@pytest.fixture(scope="session")
-def test_user() -> User | None:
-    return _test_user
+def test_session_refresh(_test_session_tokens: SessionCreateStatus) -> str | None:
+    return _test_session_tokens["refresh_token"]
 
 
 @pytest.fixture

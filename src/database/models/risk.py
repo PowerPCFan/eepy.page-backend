@@ -27,7 +27,7 @@ class IPActivityModel(Base):
 class RecentLogoutModel(Base):
     __tablename__ = "recent_logouts"
 
-    id: Mapped[int | None] = mapped_column(primary_key=True, autoincrement=True, init=False, default=None)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
     user_id: Mapped[str] = mapped_column(default="", index=True)
     ip: Mapped[str | None] = mapped_column(default=None, index=True)
     device_id: Mapped[str | None] = mapped_column(default=None, index=True)

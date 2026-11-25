@@ -39,8 +39,6 @@ class User(Base):
     )
     verified: Mapped[bool] = mapped_column(default=False, index=True)
     credits: Mapped[int] = mapped_column(default=200)
-    beta_enroll: Mapped[bool] = mapped_column(default=False)
-    beta_updated: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     invite_code: Mapped[str] = mapped_column(default="")
     banned: Mapped[bool] = mapped_column(default=False, index=True)
     ban_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False, default_factory=list, server_default="[]")
@@ -318,7 +316,7 @@ class AltLink(Base):
         Index("ix_alt_links_user_related", "user_id", "related_user_id"),
     )
 
-    id: Mapped[int | None] = mapped_column(primary_key=True, autoincrement=True, init=False, default=None)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     signal_type: Mapped[str] = mapped_column(index=True)
     related_user_id: Mapped[str | None] = mapped_column(

@@ -70,7 +70,6 @@ class UserPageType(BaseModel):
     verified: bool
     permissions: dict[str, Any]
     domains: list[DomainRecord]
-    beta_enroll: bool
     sessions: list[dict[str, Any]]
     invites: dict[str, InviteType]
     mfa_enabled: bool

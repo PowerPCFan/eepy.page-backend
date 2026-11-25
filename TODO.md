@@ -49,3 +49,5 @@
     - could self-host ntfy, i've used their public instance and it's quite good
 - remove caddy from everything- that should be my own internal setup, not something that's part of the backend and in the backend .env and stuff
 - set up a password vault for eepy.page-related passwords
+- set up alembic
+- make sure everything is compliant with DNS spec

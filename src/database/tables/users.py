@@ -533,8 +533,6 @@ class Users(Table[User]):
                 feature_flags={},
                 verified=bool(skip_verification),
                 credits=200,
-                beta_enroll=False,
-                beta_updated=0,
                 invite_code="",
                 banned=False,
                 ban_reasons=[],
@@ -693,7 +691,6 @@ class Users(Table[User]):
             verified=user_data.verified,
             permissions=user_data.permissions_dict(),
             domains=Domains.normalize_domains(user_data.domains),
-            beta_enroll=user_data.beta_enroll,
             sessions=session_data,
             invites={inv.code: InviteType.model_validate(inv) for inv in (user_data.invites or [])},
             mfa_enabled=user_data.mfa_verified,
@@ -701,14 +698,6 @@ class Users(Table[User]):
             referred_people=user_data.referred_count,
             owned_tlds=user_data.owned_tlds,
         )
-
-    def change_beta_enrollment(self, user_id: str, mode: bool = False) -> None:
-        with self.session() as session:
-            user = session.get(User, user_id)
-            if user is not None:
-                user.beta_enroll = mode
-                user.beta_updated = round(time.time())
-                session.add(user)
 
     def mark_deletion_pending(self, userid: str, reasons: list[str]) -> None:
         with self.session() as session:

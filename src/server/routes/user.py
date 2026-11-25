@@ -579,7 +579,6 @@ class User:
             "verified": user_data.verified,
             "domains": [d.model_dump() for d in Domains.normalize_domains(user_data.domains)],
             "feature_flags": dict(user_data.feature_flags or {}),
-            "beta_enroll": user_data.beta_enroll,
         }
 
     @Session.requires_auth

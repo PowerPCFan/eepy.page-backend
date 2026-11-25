@@ -24,7 +24,7 @@ class Referral(Base):
 class ReferralRedemption(Base):
     __tablename__ = "referral_redemptions"
 
-    id: Mapped[int | None] = mapped_column(primary_key=True, autoincrement=True, init=False, default=None)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
     referral_id: Mapped[str] = mapped_column(ForeignKey("referrals.id", ondelete="CASCADE"), index=True)
     referred_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")

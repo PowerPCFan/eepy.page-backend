@@ -380,8 +380,6 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
         feature_flags=feature_flags,
         verified=bool(doc.get("verified", False)),
         credits=int(doc.get("credits", 200)),
-        beta_enroll=bool(doc.get("beta-enroll") or doc.get("beta_enroll") or False),
-        beta_updated=int(doc.get("beta-updated") or doc.get("beta_updated") or 0),
         invite_code=str(doc.get("invite-code") or doc.get("invite_code") or ""),
         banned=bool(doc.get("banned", False)),
         ban_reasons=ban_reasons,

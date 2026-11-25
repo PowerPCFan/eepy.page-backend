@@ -18,7 +18,7 @@ class Domain(Base):
         Index("ix_domains_name_type", "name", "type"),
     )
 
-    id: Mapped[int | None] = mapped_column(primary_key=True, autoincrement=True, init=False, default=None)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(index=True)
     type: Mapped[str] = mapped_column(index=True)
