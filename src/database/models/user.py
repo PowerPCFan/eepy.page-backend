@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index
@@ -9,8 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database.models.base import Base
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from database.models.api import ApiKey
     from database.models.domain import Domain
     from database.models.invite import Invite
