@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 import requests
-from sqlmodel import select
+from sqlalchemy import select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
 backend_dir = scripts_dir.parent
@@ -24,13 +24,13 @@ if TYPE_CHECKING:
     from src.database.tables.domains import Domains
     from src.dns_.dns import sanitize
     from src.dns_.types import ALLOWED_TYPES
-    from src.models.tables import Domain
+    from src.database.models import Domain
 else:
     from database.session import create_db_engine, session_scope
     from database.tables.domains import Domains
     from dns_.dns import sanitize
     from dns_.types import ALLOWED_TYPES
-    from models.tables import Domain
+    from database.models import Domain
 
 load_dotenv(backend_dir / ".env")
 
@@ -57,7 +57,7 @@ def db_records(postgres_url: str) -> tuple[dict[RecordKey, list[tuple[str, ...]]
 
     engine = create_db_engine(postgres_url)
     with session_scope(engine) as session:
-        for dom in session.exec(select(Domain)).all():
+        for dom in session.scalars(select(Domain)).all():
             record_type = dom.type.upper()
             if record_type not in ALLOWED_TYPES:
                 continue

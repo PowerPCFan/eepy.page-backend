@@ -5,13 +5,12 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import Session, delete, select
 
 from database.exceptions import FilterMatchError
-from database.session import create_db_engine, get_engine, session_scope
-from dns_.types import get_record_type
-from models.tables import (
+from database.models import (
     AltLink,
     ApiKey,
     Domain,
@@ -33,6 +32,8 @@ from models.tables import (
     UserRiskProfile,
     VerificationCode,
 )
+from database.session import create_db_engine, get_engine, rowcount, session_scope
+from dns_.types import get_record_type
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -573,7 +574,7 @@ class Table:
             stmt = select(self.model_cls)
             for clause in self._build_where_clauses(where):
                 stmt = stmt.where(clause)
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             return row.to_dict() if row is not None else None
 
     def find_all(self, **where: object) -> list[dict[str, Any]]:
@@ -581,7 +582,7 @@ class Table:
             stmt = select(self.model_cls)
             for clause in self._build_where_clauses(where):
                 stmt = stmt.where(clause)
-            rows = session.exec(stmt).all()
+            rows = session.scalars(stmt).all()
             return [row.to_dict() for row in rows]
 
     def get_table(self) -> list[dict[str, Any]]:
@@ -633,5 +634,5 @@ class Table:
             stmt = delete(self.model_cls)
             for clause in self._build_where_clauses(where):
                 stmt = stmt.where(clause)
-            result = session.exec(stmt)
-            return int(result.rowcount or 0)  # pyright: ignore[reportAttributeAccessIssue]
+            result = session.execute(stmt)
+            return rowcount(result)

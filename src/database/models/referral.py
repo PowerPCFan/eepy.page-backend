@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import BigInteger, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from database.models.base import Base
+
+
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    owner: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+
+    redemptions: Mapped[list[ReferralRedemption]] = relationship(
+        back_populates="referral",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        default_factory=list,
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "_id": self.id,
+            "owner": self.owner,
+            "users": [r.referred_user_id for r in (self.redemptions or [])],
+            "created": self.created,
+        }
+
+
+class ReferralRedemption(Base):
+    __tablename__ = "referral_redemptions"
+
+    id: Mapped[int | None] = mapped_column(primary_key=True, autoincrement=True, init=False, default=None)
+    referral_id: Mapped[str] = mapped_column(ForeignKey("referrals.id", ondelete="CASCADE"), index=True)
+    referred_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+
+    referral: Mapped[Referral | None] = relationship(back_populates="redemptions", default=None)

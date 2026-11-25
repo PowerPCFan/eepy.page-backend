@@ -11,10 +11,10 @@ from database.tables.sessions import Sessions
 from dns_.dns import DNS
 from dns_.exceptions import DNSException
 from dns_.validation import Validation
-from models.domain import DomainType
-from models.serveo import TunnelCreate, TunnelUpdate
 from security.convert import Convert
 from security.session import Session
+from server.models.domain import DomainType
+from server.models.serveo import TunnelCreate, TunnelUpdate
 from server.routes.domain import register_domain_record
 
 logger = logging.getLogger("eepy.page")

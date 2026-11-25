@@ -19,7 +19,13 @@ from dns_.dns import sanitize
 from dns_.exceptions import DNSException
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 from mail.email import normalize_email_address
-from models.admin import (
+from security.admin import AccountData, DomainDeletionError
+from security.admin import Admin as AdminTools
+from security.admin_permissions import admin_is_enabled
+from security.convert import Convert
+from security.risk import FLAGGED_THRESHOLD
+from security.session import Session
+from server.models.admin import (
     AdminDomainEdit,
     AdminPermissionChange,
     AdminStatusMessage,
@@ -30,12 +36,6 @@ from models.admin import (
     UserAction,
     UserDisabledBody,
 )
-from security.admin import AccountData, DomainDeletionError
-from security.admin import Admin as AdminTools
-from security.admin_permissions import admin_is_enabled
-from security.convert import Convert
-from security.risk import FLAGGED_THRESHOLD
-from security.session import Session
 
 MAX_SAFE_32BIT_INT = 2**31 - 1
 

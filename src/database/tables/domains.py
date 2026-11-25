@@ -2,20 +2,19 @@ import logging
 from itertools import starmap
 from typing import TYPE_CHECKING, cast, get_args
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import col, select
 
 from database.exceptions import UserNotExistError
+from database.models import Domain, User
 from database.table import Table
 from dns_.types import AVAILABLE_TLDS, TYPES, get_record_type
-from models.domain import DomainFormat, DomainRecord, RepairFormat
-from models.tables import Domain, User
+from server.models.domain import DomainFormat, DomainRecord, RepairFormat
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from models.user import UserType
+    from server.models.user import UserType
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
@@ -164,8 +163,8 @@ class Domains(Table):
         with self.session() as session:
             stmt = select(Domain)
             if exclude_user_id is not None:
-                stmt = stmt.where(col(Domain.user_id) != exclude_user_id)
-            rows = session.exec(stmt).all()
+                stmt = stmt.where(Domain.user_id != exclude_user_id)
+            rows = session.scalars(stmt).all()
             return [(row.user_id, row.to_record()) for row in rows]
 
     def find_overlapping_domain(self, domain: str, exclude_user_id: str | None = None) -> str | None:
@@ -175,13 +174,13 @@ class Domains(Table):
         with self.session() as session:
             stmt = select(Domain.name).where(
                 or_(
-                    col(Domain.name).in_(candidates),
-                    col(Domain.name).endswith(f".{canonical_full}", autoescape=True),
+                    Domain.name.in_(candidates),
+                    Domain.name.endswith(f".{canonical_full}", autoescape=True),
                 ),
             )
             if exclude_user_id is not None:
                 stmt = stmt.where(Domain.user_id != exclude_user_id)
-            return session.exec(stmt).first()
+            return session.scalars(stmt).first()
 
     def add_domain(
         self,
@@ -199,7 +198,7 @@ class Domains(Table):
                 Domain.name == domain_record["name"],
                 Domain.type == domain_record["type"],
             )
-            existing = session.exec(stmt).first()
+            existing = session.scalars(stmt).first()
             if existing is not None:
                 existing.ip = list(domain_record["ip"])
                 existing.registered = int(domain_record["registered"])
@@ -246,7 +245,7 @@ class Domains(Table):
                 Domain.user_id == target_user,
                 Domain.name == canonical_domain,
             )
-            matches = list(session.exec(stmt).all())
+            matches = list(session.scalars(stmt).all())
 
             target_row: Domain | None = None
             if old_type is not None:
@@ -289,7 +288,7 @@ class Domains(Table):
                 Domain.user_id == target_user,
                 Domain.name == canonical_domain,
             )
-            matches = list(session.exec(stmt).all())
+            matches = list(session.scalars(stmt).all())
             if not matches:
                 return False
 

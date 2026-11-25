@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from database.tables.users import Users, UserType
 from mail.email import Email, is_disposable
-from models.user import SignUp
+from server.models.user import SignUp
 from security.encryption import Encryption
 
 logger = logging.getLogger(__name__)

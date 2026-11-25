@@ -13,10 +13,10 @@ from database.tables.users import Users as UsersTable
 from dns_.dns import DNS
 from dns_.exceptions import DNSException, DomainExistsError
 from dns_.validation import Validation
-from models.domain import DomainType
 from security.admin_permissions import admin_is_enabled
 from security.api import Api, ApiPermission
 from security.convert import ConvertAPI
+from server.models.domain import DomainType
 
 converter: ConvertAPI = ConvertAPI()
 logger: logging.Logger = logging.getLogger("eepy.page")

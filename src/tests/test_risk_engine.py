@@ -17,7 +17,7 @@ from database.tables.status import Status
 from database.tables.users import USER_MIGRATION_VERSION, Users
 from dns_.dns import DNS
 from mail.email import Email
-from models.admin import UserDisabledBody
+from server.models.admin import UserDisabledBody
 from security.admin import Admin as AdminTools
 from security.encryption import Encryption
 from security.risk import (

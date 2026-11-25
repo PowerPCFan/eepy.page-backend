@@ -15,10 +15,10 @@ from dns_.dns import DNS, ConflictingDomain
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import AVAILABLE_TLDS
 from dns_.validation import Validation
-from models.domain import DomainRetrieve, DomainType
 from security.admin_permissions import admin_is_enabled
 from security.convert import Convert
 from security.session import Session
+from server.models.domain import DomainRetrieve, DomainType
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")

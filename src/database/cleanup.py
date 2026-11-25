@@ -3,10 +3,9 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlmodel import col, delete
+from sqlalchemy import delete
 
-from database.session import session_scope
-from models.tables import (
+from database.models import (
     AltLink,
     IPActivityModel,
     RecentLogoutModel,
@@ -14,6 +13,7 @@ from models.tables import (
     User,
     VerificationCode,
 )
+from database.session import rowcount, session_scope
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -27,37 +27,33 @@ def purge_expired_records(engine: "Engine | None" = None) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     with session_scope(engine) as session:
-        counts["sessions"] = int(
-            session.exec(delete(SessionModel).where(col(SessionModel.expires) <= now)).rowcount or 0,  # pyright: ignore[reportAttributeAccessIssue]
+        counts["sessions"] = rowcount(session.execute(delete(SessionModel).where(SessionModel.expires <= now)))
+        counts["codes"] = rowcount(
+            session.execute(delete(VerificationCode).where(VerificationCode.expires_after <= now)),
         )
-        counts["codes"] = int(
-            session.exec(delete(VerificationCode).where(col(VerificationCode.expires_after) <= now)).rowcount or 0,  # pyright: ignore[reportAttributeAccessIssue]
+        counts["ip_activity"] = rowcount(
+            session.execute(delete(IPActivityModel).where(IPActivityModel.expires_after <= now)),
         )
-        counts["ip_activity"] = int(
-            session.exec(delete(IPActivityModel).where(col(IPActivityModel.expires_after) <= now)).rowcount or 0,  # pyright: ignore[reportAttributeAccessIssue]
+        counts["recent_logouts"] = rowcount(
+            session.execute(delete(RecentLogoutModel).where(RecentLogoutModel.expires_after <= now)),
         )
-        counts["recent_logouts"] = int(
-            session.exec(delete(RecentLogoutModel).where(col(RecentLogoutModel.expires_after) <= now)).rowcount or 0,  # pyright: ignore[reportAttributeAccessIssue]
-        )
-        counts["alt_links"] = int(
-            session.exec(
+        counts["alt_links"] = rowcount(
+            session.execute(
                 delete(AltLink).where(
-                    col(AltLink.permanent) == False,
-                    col(AltLink.expires_at).is_not(None),
-                    col(AltLink.expires_at) <= now_epoch,
+                    AltLink.permanent.is_(False),
+                    AltLink.expires_at.is_not(None),
+                    AltLink.expires_at <= now_epoch,
                 ),
-            ).rowcount
-            or 0,  # pyright: ignore[reportAttributeAccessIssue]
+            ),
         )
-        counts["deleted_banned_users"] = int(
-            session.exec(
+        counts["deleted_banned_users"] = rowcount(
+            session.execute(
                 delete(User).where(
-                    col(User.banned) == True,
-                    col(User.deleted_in).is_not(None),
-                    col(User.deleted_in) <= now,
+                    User.banned.is_(True),
+                    User.deleted_in.is_not(None),
+                    User.deleted_in <= now,
                 ),
-            ).rowcount
-            or 0,  # pyright: ignore[reportAttributeAccessIssue]
+            ),
         )
 
     total = sum(counts.values())

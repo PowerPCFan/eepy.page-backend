@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import select
+from sqlalchemy import select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
 backend_dir = scripts_dir.parent
@@ -25,13 +25,13 @@ sys.path.insert(0, str(scripts_dir))
 from simple_python_dotenv import load_dotenv  # noqa: E402
 
 if TYPE_CHECKING:
-    from sqlmodel import Session
+    from sqlalchemy.orm import Session
 
     from src.database.session import create_db_engine, session_scope
-    from src.models.tables import Reward, User, VerificationCode
+    from src.database.models import Reward, User, VerificationCode
 else:
     from database.session import create_db_engine, session_scope
-    from models.tables import Reward, User, VerificationCode
+    from database.models import Reward, User, VerificationCode
 
 load_dotenv(dotenv)
 
@@ -72,7 +72,7 @@ def rotate_users(  # noqa: C901, PLR0912, PLR0915
 ) -> RotationStats:
     stats = RotationStats()
 
-    for user in session.exec(select(User)).all():
+    for user in session.scalars(select(User)).all():
         stats.documents_seen += 1
         user_id = user.id
         changed = False
@@ -175,7 +175,7 @@ def rotate_codes(
     apply: bool,
 ) -> RotationStats:
     stats = RotationStats()
-    for code_row in session.exec(select(VerificationCode)).all():
+    for code_row in session.scalars(select(VerificationCode)).all():
         stats.documents_seen += 1
         try:
             rotated = rotate_value(code_row.account, decrypt_old, encrypt_new, path=f"codes.{code_row.id}.account")
@@ -200,7 +200,7 @@ def rotate_rewards(
     apply: bool,
 ) -> RotationStats:
     stats = RotationStats()
-    for reward_row in session.exec(select(Reward)).all():
+    for reward_row in session.scalars(select(Reward)).all():
         stats.documents_seen += 1
         try:
             rotated = rotate_value(

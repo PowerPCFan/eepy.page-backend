@@ -3,11 +3,10 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from sqlalchemy import or_
-from sqlmodel import col, delete, select
+from sqlalchemy import delete, or_, select
 
+from database.models import SessionModel
 from database.table import Table
-from models.tables import SessionModel
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -89,11 +88,11 @@ class Sessions(Table):
         with self.session() as session:
             stmt = select(SessionModel).where(
                 or_(
-                    col(SessionModel.id) == refresh_uid,
-                    col(SessionModel.parent) == refresh_uid,
+                    SessionModel.id == refresh_uid,
+                    SessionModel.parent == refresh_uid,
                 ),
             )
-            rows = list(session.exec(stmt).all())
+            rows = list(session.scalars(stmt).all())
             if not rows:
                 logger.warning("Failed to delete session as there werent any matches")
                 logger.debug(refresh_uid)
@@ -115,15 +114,15 @@ class Sessions(Table):
                 SessionModel.id == refresh_uid,
                 SessionModel.type == "refresh",
             )
-            target = session.exec(stmt).first()
+            target = session.scalars(stmt).first()
             if target is None:
                 return None
 
             expired = self._is_expired(target.expires)
             session_dict = target.to_dict()
             session.delete(target)
-            session.exec(
-                delete(SessionModel).where(col(SessionModel.parent) == refresh_uid),
+            session.execute(
+                delete(SessionModel).where(SessionModel.parent == refresh_uid),
             )
             if expired:
                 return None

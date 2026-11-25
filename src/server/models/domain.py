@@ -1,6 +1,6 @@
 from typing import NotRequired, TypedDict
 
-from sqlmodel import SQLModel
+from pydantic import BaseModel
 
 from dns_.types import TYPES
 
@@ -22,13 +22,13 @@ class RepairFormat(TypedDict):
     broken_id: NotRequired[dict[str, DomainFormat]]
 
 
-class DomainType(SQLModel):
+class DomainType(BaseModel):
     domain: str
     values: list[str]
     type: TYPES
     old_type: TYPES | None = None
 
 
-class DomainRetrieve(SQLModel):
+class DomainRetrieve(BaseModel):
     domains: list[DomainRecord]
     owned_tlds: list[str]

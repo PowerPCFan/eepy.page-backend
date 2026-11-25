@@ -8,7 +8,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import requests
-from sqlmodel import select
+from sqlalchemy import select
 
 scripts_dir = pathlib.Path(__file__).resolve().parent
 backend_dir = scripts_dir.parent
@@ -20,10 +20,10 @@ from simple_python_dotenv import load_dotenv  # noqa: E402
 
 if TYPE_CHECKING:
     from src.database.session import create_db_engine, session_scope
-    from src.models.tables import Domain
+    from src.database.models import Domain
 else:
     from database.session import create_db_engine, session_scope
-    from models.tables import Domain
+    from database.models import Domain
 
 load_dotenv(dotenv)
 
@@ -39,7 +39,7 @@ def owned_names(postgres_url: str) -> set[str]:
     names: set[str] = set()
     engine = create_db_engine(postgres_url)
     with session_scope(engine) as session:
-        for domain_name in session.exec(select(Domain.name)).all():
+        for domain_name in session.scalars(select(Domain.name)).all():
             if domain_name:
                 fqdn = (
                     domain_name

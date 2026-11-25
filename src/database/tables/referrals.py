@@ -3,11 +3,11 @@ import re
 import time
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from sqlmodel import select
+from sqlalchemy import select
 
 from database.exceptions import ConflictingReferralCode, UserNotExistError
+from database.models import Referral, ReferralRedemption, User, UserPermissions
 from database.table import Table
-from models.tables import Referral, ReferralRedemption, User, UserPermissions
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -119,5 +119,5 @@ class Referrals(Table):
     def get_users(self, referral_code: str) -> list["UserType"]:
         referral_code = referral_code.lower()
         with self.session() as session:
-            rows = session.exec(select(User).where(User.referred_by == referral_code)).all()
+            rows = session.scalars(select(User).where(User.referred_by == referral_code)).all()
             return [cast("UserType", row.to_dict()) for row in rows]

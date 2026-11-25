@@ -1,11 +1,11 @@
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlmodel import select
+from sqlalchemy import select
 
+from database.models import ServeoTunnel
 from database.table import Table
-from models.serveo import ServeoRecord
-from models.tables import ServeoTunnel
+from server.models.serveo import ServeoRecord
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -33,7 +33,7 @@ class ServeoTable(Table):
                 ServeoTunnel.id == tunnel_id,
                 ServeoTunnel.user_id == user_id,
             )
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             if row is None:
                 return None
             return cast("ServeoRecord", row.to_record())
@@ -67,7 +67,7 @@ class ServeoTable(Table):
                 ServeoTunnel.id == tunnel_id,
                 ServeoTunnel.user_id == user_id,
             )
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             if row is None:
                 return
             row.serveo_auth_record = str(tunnel.get("serveo_auth_record", row.serveo_auth_record))
@@ -87,12 +87,12 @@ class ServeoTable(Table):
                 ServeoTunnel.id == tunnel_id,
                 ServeoTunnel.user_id == user_id,
             )
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             if row is not None:
                 session.delete(row)
 
     def tunnels(self, user_id: str) -> list[ServeoRecord]:
         with self.session() as session:
             stmt = select(ServeoTunnel).where(ServeoTunnel.user_id == user_id)
-            rows = session.exec(stmt).all()
+            rows = session.scalars(stmt).all()
             return [cast("ServeoRecord", row.to_record()) for row in rows]

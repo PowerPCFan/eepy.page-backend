@@ -6,9 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import requests
-from sqlalchemy import func, or_
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import col, delete, select
 
 from config.env import Environment
 from database.exceptions import (
@@ -18,11 +17,7 @@ from database.exceptions import (
     UsernameException,
     UserNotExistError,
 )
-from database.table import Table
-from database.tables.ip_activity import IPActivity, RecentLogouts
-from database.tables.referrals import Referrals
-from mail.email import Email, normalize_email_address
-from models.tables import (
+from database.models import (
     AltLink,
     ApiKey,
     Domain,
@@ -36,7 +31,14 @@ from models.tables import (
     UserPermissions,
     UserRiskProfile,
 )
-from models.user import (
+from database.session import rowcount
+from database.table import Table
+from database.tables.ip_activity import IPActivity, RecentLogouts
+from database.tables.referrals import Referrals
+from mail.email import Email, normalize_email_address
+from security.encryption import Encryption
+from security.risk import RiskManager, UserRisk, normalize_device_id
+from server.models.user import (
     MFA,
     CountryType,
     EncryptedString,
@@ -44,8 +46,6 @@ from models.user import (
     UserPageType,
     UserType,
 )
-from security.encryption import Encryption
-from security.risk import RiskManager, UserRisk, normalize_device_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -120,13 +120,13 @@ class Users(Table):
                 row = None
 
             if row is None:
-                conditions = [col(User.username) == lower_username_hash]
+                conditions = [User.username == lower_username_hash]
                 if "@" in clean_id:
-                    conditions.append(col(User.email_hash) == self.encryption.hash_email(clean_id))
+                    conditions.append(User.email_hash == self.encryption.hash_email(clean_id))
                 stmt = select(User).where(or_(*conditions))
                 if not find_banned:
-                    stmt = stmt.where(col(User.banned) == False)
-                row = session.exec(stmt).first()
+                    stmt = stmt.where(User.banned.is_(False))
+                row = session.scalars(stmt).first()
 
             if row is None:
                 return None
@@ -143,11 +143,11 @@ class Users(Table):
         with self.session() as session:
             stmt = select(User).where(
                 or_(
-                    col(User.id) == exact_hash,
-                    col(User.username) == lower_hash,
+                    User.id == exact_hash,
+                    User.username == lower_hash,
                 ),
             )
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             if row is None:
                 return None
             user_dict = cast("UserType", row.to_dict())
@@ -161,13 +161,8 @@ class Users(Table):
         if not clean_ips:
             return []
         with self.session() as session:
-            stmt = (
-                select(User)
-                .join(UserIP, col(UserIP.user_id) == col(User.id))
-                .where(col(UserIP.ip).in_(clean_ips))
-                .distinct()
-            )
-            rows = session.exec(stmt).all()
+            stmt = select(User).join(UserIP, UserIP.user_id == User.id).where(UserIP.ip.in_(clean_ips)).distinct()
+            rows = session.scalars(stmt).all()
             return [cast("UserType", row.to_dict()) for row in rows]
 
     def find_shared_device_user(self, user_id: str, device_id: str) -> str | None:
@@ -177,32 +172,32 @@ class Users(Table):
         with self.session() as session:
             stmt = (
                 select(UserDevice.user_id)
-                .outerjoin(UserPermissions, col(UserPermissions.user_id) == col(UserDevice.user_id))
+                .outerjoin(UserPermissions, UserPermissions.user_id == UserDevice.user_id)
                 .where(
-                    col(UserDevice.device_id) == clean_dev,
-                    col(UserDevice.user_id) != user_id,
+                    UserDevice.device_id == clean_dev,
+                    UserDevice.user_id != user_id,
                     or_(
-                        col(UserPermissions.admin_enabled).is_(None),
-                        col(UserPermissions.admin_enabled) == False,
+                        UserPermissions.admin_enabled.is_(None),
+                        UserPermissions.admin_enabled.is_(False),
                     ),
                 )
             )
-            return session.exec(stmt).first()
+            return session.scalars(stmt).first()
 
     def is_non_admin_user(self, user_id: str) -> bool:
         with self.session() as session:
             stmt = (
                 select(User.id)
-                .outerjoin(UserPermissions, col(UserPermissions.user_id) == col(User.id))
+                .outerjoin(UserPermissions, UserPermissions.user_id == User.id)
                 .where(
-                    col(User.id) == user_id,
+                    User.id == user_id,
                     or_(
-                        col(UserPermissions.admin_enabled).is_(None),
-                        col(UserPermissions.admin_enabled) == False,
+                        UserPermissions.admin_enabled.is_(None),
+                        UserPermissions.admin_enabled.is_(False),
                     ),
                 )
             )
-            return session.exec(stmt).first() is not None
+            return session.scalars(stmt).first() is not None
 
     def record_device(self, user_id: str, device_id: str, timestamp: int | None = None) -> None:
         clean_dev = normalize_device_id(device_id)
@@ -231,11 +226,11 @@ class Users(Table):
         with self.session() as session:
             stmt = select(AltLink).where(
                 or_(
-                    col(AltLink.user_id) == user_id,
-                    col(AltLink.related_user_id) == user_id,
+                    AltLink.user_id == user_id,
+                    AltLink.related_user_id == user_id,
                 ),
             )
-            rows = session.exec(stmt).all()
+            rows = session.scalars(stmt).all()
             return [
                 {
                     "id": row.id,
@@ -388,22 +383,18 @@ class Users(Table):
                 select(User.id)
                 .where(
                     or_(
-                        col(User.email_hash).in_(list(email_hashes)),
-                        col(User.normalized_email_hash) == normalized_hash,
+                        User.email_hash.in_(list(email_hashes)),
+                        User.normalized_email_hash == normalized_hash,
                     ),
                 )
                 .limit(limit)
             )
-            return list(session.exec(stmt).all())
+            return list(session.scalars(stmt).all())
 
     def find_user_by_domain_name(self, canonical_domain: str, find_banned: bool = True) -> UserType | None:
         with self.session() as session:
-            stmt = (
-                select(User)
-                .join(Domain, col(Domain.user_id) == col(User.id))
-                .where(col(Domain.name) == canonical_domain)
-            )
-            row = session.exec(stmt).first()
+            stmt = select(User).join(Domain, Domain.user_id == User.id).where(Domain.name == canonical_domain)
+            row = session.scalars(stmt).first()
             if row is None:
                 return None
             if row.banned and not find_banned:
@@ -426,7 +417,7 @@ class Users(Table):
     def delete_api_key(self, user_id: str, key_hash: str) -> bool:
         with self.session() as session:
             stmt = select(ApiKey).where(ApiKey.id == key_hash, ApiKey.user_id == user_id)
-            ak = session.exec(stmt).first()
+            ak = session.scalars(stmt).first()
             if ak is None:
                 return False
             session.delete(ak)
@@ -435,12 +426,12 @@ class Users(Table):
     def count_users_created_after(self, created_timestamp: int) -> int:
         with self.session() as session:
             stmt = select(func.count()).select_from(User).where(User.created > created_timestamp)
-            return int(session.exec(stmt).one() or 0)
+            return int(session.scalar(stmt) or 0)
 
     def count_total_users(self) -> int:
         with self.session() as session:
             stmt = select(func.count()).select_from(User)
-            return int(session.exec(stmt).one() or 0)
+            return int(session.scalar(stmt) or 0)
 
     def send_discord_analytic_webhook(
         self,
@@ -498,11 +489,11 @@ class Users(Table):
             raise EmailException(msg)
 
         with self.session() as session:
-            existing = session.exec(
+            existing = session.scalars(
                 select(User).where(
                     or_(
-                        col(User.id) == hashed_username,
-                        col(User.username) == lowercase_hashed_username,
+                        User.id == hashed_username,
+                        User.username == lowercase_hashed_username,
                     ),
                 ),
             ).first()
@@ -684,13 +675,13 @@ class Users(Table):
         owner_hash_target = Encryption.sha256(user_id + "eepy.page")
         with session_table.session() as db_sess:
             stmt = select(SessionModel).where(
-                col(SessionModel.expires) > now_utc,
+                SessionModel.expires > now_utc,
                 or_(
-                    col(SessionModel.owner_hash) == owner_hash_target,
-                    (col(SessionModel.owner) == user_id) & (col(SessionModel.type) == "refresh"),
+                    SessionModel.owner_hash == owner_hash_target,
+                    (SessionModel.owner == user_id) & (SessionModel.type == "refresh"),
                 ),
             )
-            session_rows = db_sess.exec(stmt).all()
+            session_rows = db_sess.scalars(stmt).all()
             session_data = [row.to_dict() for row in session_rows]
 
         for session in session_data:
@@ -824,15 +815,15 @@ class Users(Table):
         with self.session() as session:
             stmt = (
                 select(User)
-                .join(UserRiskProfile, col(UserRiskProfile.user_id) == col(User.id))
+                .join(UserRiskProfile, UserRiskProfile.user_id == User.id)
                 .where(
                     or_(
-                        col(UserRiskProfile.score) >= flagged_threshold,
-                        col(UserRiskProfile.disabled) == True,
+                        UserRiskProfile.score >= flagged_threshold,
+                        UserRiskProfile.disabled.is_(True),
                     ),
                 )
             )
-            rows = session.exec(stmt).all()
+            rows = session.scalars(stmt).all()
             return [self.perform_migrations(cast("UserType", row.to_dict())) for row in rows]
 
     def update_user_risk_fields(
@@ -978,7 +969,7 @@ class Users(Table):
     def find_username_case_collisions(self) -> dict[str, list[str]]:
         by_lower_hash: dict[str, list[str]] = {}
         with self.session() as session:
-            for user in session.exec(select(User)).all():
+            for user in session.scalars(select(User)).all():
                 lower_hash = user.username
                 if not lower_hash and user.display_name:
                     try:
@@ -997,7 +988,7 @@ class Users(Table):
         count = 0
         with self.session() as session:
             unmigrated_ids = list(
-                session.exec(
+                session.scalars(
                     select(User.id).where(User.migration_version != USER_MIGRATION_VERSION),
                 ).all(),
             )
@@ -1017,11 +1008,11 @@ class Users(Table):
         cutoff = int(time.time()) - (days * 86400)
         with self.session() as session:
             stmt = delete(User).where(
-                col(User.verified) == False,
-                col(User.created) < cutoff,
+                User.verified.is_(False),
+                User.created < cutoff,
             )
-            result = session.exec(stmt)
-            deleted = int(result.rowcount or 0)  # pyright: ignore[reportAttributeAccessIssue]
+            result = session.execute(stmt)
+            deleted = rowcount(result)
 
         if deleted > 0:
             logger.info(f"Deleted {deleted} accounts that have been unverified for >={days} days")

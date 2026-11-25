@@ -16,7 +16,7 @@ from database.tables.sessions import Sessions
 from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
 from dns_.dns import DNS
 from mail.email import Email, normalize_email_address
-from models.user import LoginRequest, MfaRecovery
+from server.models.user import LoginRequest, MfaRecovery
 from security.encryption import Encryption
 from security.risk import create_default_risk
 from server.routes.auth import Auth, username_regex

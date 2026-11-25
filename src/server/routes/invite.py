@@ -7,9 +7,9 @@ from database.exceptions import InviteException, UserNotExistError
 from database.tables.invitation import Invites as InviteTable
 from database.tables.sessions import Sessions as SessionTable
 from database.tables.users import Users as UsersTable
-from models.invite import InviteCreate
 from security.convert import Convert
 from security.session import Session
+from server.models.invite import InviteCreate
 
 converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")

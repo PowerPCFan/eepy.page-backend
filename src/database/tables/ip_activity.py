@@ -3,11 +3,10 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from sqlalchemy import or_
-from sqlmodel import col, select
+from sqlalchemy import or_, select
 
+from database.models import IPActivityModel, RecentLogoutModel
 from database.table import Table
-from models.tables import IPActivityModel, RecentLogoutModel
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -91,7 +90,7 @@ class IPActivity(Table):
                 IPActivityModel.user_id != user_id,
                 IPActivityModel.last_seen > since_timestamp,
             )
-            row = session.exec(stmt).first()
+            row = session.scalars(stmt).first()
             return row.to_dict() if row is not None else None
 
 
@@ -130,9 +129,9 @@ class RecentLogouts(Table):
         clean_device = normalize_device_id(device_id)
         conditions = []
         if clean_ip:
-            conditions.append(col(RecentLogoutModel.ip) == clean_ip)
+            conditions.append(RecentLogoutModel.ip == clean_ip)
         if clean_device:
-            conditions.append(col(RecentLogoutModel.device_id) == clean_device)
+            conditions.append(RecentLogoutModel.device_id == clean_device)
         if not conditions:
             return []
 
@@ -141,11 +140,11 @@ class RecentLogouts(Table):
                 select(RecentLogoutModel)
                 .where(
                     or_(*conditions),
-                    col(RecentLogoutModel.user_id) != user_id,
-                    col(RecentLogoutModel.time) >= since_timestamp,
+                    RecentLogoutModel.user_id != user_id,
+                    RecentLogoutModel.time >= since_timestamp,
                 )
-                .order_by(col(RecentLogoutModel.time).desc())
+                .order_by(RecentLogoutModel.time.desc())
                 .limit(limit)
             )
-            rows = session.exec(stmt).all()
+            rows = session.scalars(stmt).all()
             return [row.to_dict() for row in rows]

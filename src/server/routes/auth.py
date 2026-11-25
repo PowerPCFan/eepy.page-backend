@@ -15,10 +15,6 @@ from database.tables.sessions import Sessions
 from database.tables.users import Users, UserType
 from dns_.dns import DNS
 from mail.email import Email, is_disposable
-from models.user import (
-    LoginRequest,
-    SignUp,
-)
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
@@ -29,6 +25,10 @@ from security.session import (
     SessionCreateStatus,
     SessionError,
     SessionPermissonError,
+)
+from server.models.user import (
+    LoginRequest,
+    SignUp,
 )
 
 converter: Convert = Convert()

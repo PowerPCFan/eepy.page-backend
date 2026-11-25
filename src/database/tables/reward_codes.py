@@ -3,9 +3,9 @@ import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypedDict
 
+from database.models import Reward, User, UserOwnedTLD
 from database.table import Table, populate_user_fields_from_dict
 from database.tables.users import Users
-from models.tables import Reward, User, UserOwnedTLD
 from security.encryption import Encryption
 
 if TYPE_CHECKING:

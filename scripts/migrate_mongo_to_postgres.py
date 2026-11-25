@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     )
     from src.database.tables.users import USER_MIGRATION_VERSION
     from src.mail.email import normalize_email_address
-    from src.models.tables import (
+    from src.database.models import (
         AltLink,
         ApiKey,
         Domain,
@@ -76,7 +76,7 @@ else:
     )
     from database.tables.users import USER_MIGRATION_VERSION
     from mail.email import normalize_email_address
-    from models.tables import (
+    from database.models import (
         AltLink,
         ApiKey,
         Domain,

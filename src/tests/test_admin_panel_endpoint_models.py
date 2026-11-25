@@ -1,6 +1,6 @@
 import pytest
 
-from models.admin import (
+from server.models.admin import (
     AdminPermissionChange,
     BanUser,
     IpFind,

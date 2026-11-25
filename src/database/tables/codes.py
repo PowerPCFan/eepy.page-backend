@@ -4,11 +4,11 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from sqlmodel import select
+from sqlalchemy import select
 
 from config.env import Environment
+from database.models import VerificationCode
 from database.table import Table
-from models.tables import VerificationCode
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ class Codes(Table):
         logger.info("Syncing codes...")
         codes_found: int = 0
         with self.session() as session:
-            rows = session.exec(select(VerificationCode)).all()
+            rows = session.scalars(select(VerificationCode)).all()
             for row in rows:
                 target_cache = getattr(self, f"{row.type}_codes", None)
                 if target_cache is None:

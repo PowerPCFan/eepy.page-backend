@@ -21,20 +21,20 @@ from database.tables.sessions import Sessions
 from database.tables.users import UserPageType, Users, UserType
 from dns_.dns import DNS
 from mail.email import Email
-from models.user import (
-    ApiCreationBody,
-    ApiDeletion,
-    MFACreation,
-    MfaRecovery,
-    PasswordReset,
-    YearWrapped,
-)
 from security.api import Api, ApiKeyLimitError, ApiType
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
 from security.session import (
     Session,
+)
+from server.models.user import (
+    ApiCreationBody,
+    ApiDeletion,
+    MFACreation,
+    MfaRecovery,
+    PasswordReset,
+    YearWrapped,
 )
 
 if TYPE_CHECKING:

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet
 import pytest
-from sqlmodel import SQLModel
 
+from config.env import Environment
 from database.session import create_db_engine, set_engine
 from database.tables.codes import Codes
 from database.tables.domains import Domains
@@ -15,8 +15,8 @@ from database.tables.sessions import Sessions
 from database.tables.users import Users, UserType
 from dns_.dns import DNS
 from dns_.validation import Validation
-from config.env import Environment
 from mail.email import Email
+from database.models import Base
 from security.encryption import Encryption
 from security.session import Session
 
@@ -158,8 +158,8 @@ def init_env() -> None:
     Environment.set_value("JWT_KEY", secrets.token_urlsafe(64))
     Environment.set_value("EMAIL_PEPPER", secrets.token_urlsafe(64))
 
-    SQLModel.metadata.drop_all(engine)
-    SQLModel.metadata.create_all(engine)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
 
 
 init_env()

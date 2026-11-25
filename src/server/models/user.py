@@ -1,12 +1,11 @@
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 from email_validator import EmailNotValidError, validate_email
-from pydantic import field_validator
-from sqlmodel import SQLModel
+from pydantic import BaseModel, field_validator
 
 if TYPE_CHECKING:
-    from models.domain import DomainFormat, DomainRecord
     from security.risk import UserRisk
+    from server.models.domain import DomainFormat, DomainRecord
 
 
 type ApiPermission = Literal["register", "modify", "delete", "list", "userdetails"]
@@ -110,7 +109,7 @@ class UserType(TypedDict):
     migration_version: NotRequired[int]
 
 
-class SignUp(SQLModel):
+class SignUp(BaseModel):
     username: str
     password: str
     email: str
@@ -125,44 +124,44 @@ class SignUp(SQLModel):
             raise ValueError(str(e)) from e
 
 
-class LoginRequest(SQLModel):
+class LoginRequest(BaseModel):
     username: str
     password: str
 
 
-class PasswordReset(SQLModel):
+class PasswordReset(BaseModel):
     code: str
     password: str
 
 
-class MfaRecovery(SQLModel):
+class MfaRecovery(BaseModel):
     username: str
     password: str
 
 
-class MFACreation(SQLModel):
+class MFACreation(BaseModel):
     backup_codes: list[str]
     app_link: str
 
 
-class ApiCreationBody(SQLModel):
+class ApiCreationBody(BaseModel):
     permissions: list[ApiPermission]
     domains: list[str]
     comment: str
 
 
-class ApiGetKeys(SQLModel):
+class ApiGetKeys(BaseModel):
     key: str
     domains: list[str]
     perms: list[ApiPermission]
     comment: str
 
 
-class ApiDeletion(SQLModel):
+class ApiDeletion(BaseModel):
     hash: str
 
 
-class YearWrapped(SQLModel):
+class YearWrapped(BaseModel):
     account_created: int
     domains_registered: int
     unique_ips: int

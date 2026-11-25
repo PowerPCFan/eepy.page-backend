@@ -1,12 +1,14 @@
 import logging
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy import create_engine
+from sqlalchemy.engine import CursorResult, Result
+from sqlalchemy.orm import Session
 
-import models.tables  # noqa: F401
 from config.env import Environment
+from database.models import Base
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -51,7 +53,7 @@ def create_db_engine(
 
 def init_db(engine: "Engine") -> None:
     try:
-        SQLModel.metadata.create_all(engine)
+        Base.metadata.create_all(engine)
     except Exception:
         logger.exception("Failed to initialize database schema")
 
@@ -83,3 +85,7 @@ def session_scope(engine: "Engine | None" = None) -> Iterator[Session]:
 def get_session() -> Generator[Session]:
     with Session(get_engine(), expire_on_commit=False) as session:
         yield session
+
+
+def rowcount(result: Result[Any], fallback: int = 0) -> int:
+    return int(getattr(result, "rowcount", fallback) or fallback) if isinstance(result, CursorResult) else fallback

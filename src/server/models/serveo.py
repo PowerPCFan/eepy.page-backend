@@ -1,8 +1,7 @@
 import re
 from typing import TypedDict
 
-from pydantic import Field, field_validator
-from sqlmodel import SQLModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class ServeoRecord(TypedDict):
@@ -19,7 +18,7 @@ class ServeoRecord(TypedDict):
     updated_at: int
 
 
-class TunnelCreate(SQLModel):
+class TunnelCreate(BaseModel):
     subdomain: str
     local_port: int = Field(ge=1, le=65535)
     ssh_fingerprint: str = Field(min_length=10, max_length=200)
@@ -39,5 +38,5 @@ class TunnelCreate(SQLModel):
         return match.group(0)
 
 
-class TunnelUpdate(SQLModel):
+class TunnelUpdate(BaseModel):
     local_port: int = Field(ge=1, le=65535)

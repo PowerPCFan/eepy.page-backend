@@ -6,8 +6,8 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from database.tables.domains import Domains
-from models.user import ApiPermission, ApiType
 from security.encryption import Encryption
+from server.models.user import ApiPermission, ApiType
 
 if TYPE_CHECKING:
     from database.tables.users import Users, UserType

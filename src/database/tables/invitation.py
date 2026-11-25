@@ -3,8 +3,8 @@ import time
 from typing import TYPE_CHECKING
 
 from database.exceptions import InviteException, UserNotExistError
+from database.models import Invite, User
 from database.table import Table
-from models.tables import Invite, User
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
