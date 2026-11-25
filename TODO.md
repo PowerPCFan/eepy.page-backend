@@ -40,11 +40,12 @@
 - Custom status page (Atlassian Statuspage / Uptime Kuma style)
 - Write how-to guides on docs.eepy.page
 - Modernize and streamline all infrastructure
-- Migrate from MongoDB to PostgreSQL and use SQLModel
 - Improve GDPR export system
 - Figure out wtf I'm doing with git. Like I need to stop doing 100000-line commits that get instantly pushed to main with me crossing my fingers that it works in prod. That just can't be happening anymore bro what are we doinggg. like it's not really a big deal since eepy.page doesn't have many users but i need to learn how to actually work on public, production systems because i do a shit ton of breaking changes out of nowhere as well. so i need proper versioning, release workflows, checklists/reminders, more incremental commits, semantic commit messages, more organization overall, using dev branches and pull requests, etc.
 - Fix turnstile! Not sure why it broke suddenly
 - make it so unverified accounts cannot be included in alt checking (for example- this just happened in production, a user got flagged as an alt because they misspelled their email, so then they created a 2nd account with a properly spelled email which was then flagged. also weirdly enough the first account was not flagged. i also need to set up the whole "Alt groups" system/page in the admin panel the whole alt system needs a lot of work)
 - discord integration into admin panel? or some sort of other admin panel notification system for flagged accounts / other things that need attention?
+  - i should actually probably move away from discord and 1. use a dedicated notification system and 2. move the signup notifs to that system as well
+    - could self-host ntfy, i've used their public instance and it's quite good
 - remove caddy from everything- that should be my own internal setup, not something that's part of the backend and in the backend .env and stuff
 - set up a password vault for eepy.page-related passwords

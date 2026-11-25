@@ -53,7 +53,10 @@ def main() -> int:
         print(f"no user with id {user_id}")
         return 1
 
-    original_metadata = {field: user_obj.get(field) for field in ("accessed_from", "last_login") if field in user_obj}
+    original_metadata = {
+        "accessed_from": user_obj.accessed_ips,
+        "last_login": user_obj.last_login,
+    }
 
     session = Session.create(
         username=user_id,

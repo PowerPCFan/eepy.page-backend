@@ -205,7 +205,7 @@ def test_evaluate_risk_signals_and_threshold(
     stored_b = stored_b_doc.risk_dict()
     assert stored_b["score"] == 75
     assert stored_b["disabled"] is False
-    assert stored_b["flags"]["shared_device"]["user_id"] == user_a["_id"]
+    assert stored_b["flags"]["shared_device"].get("user_id") == user_a["_id"]
 
     users.recent_logouts.record_logout(user_a["_id"], "203.0.113.10", "device-shared-01", now - 30)
     risk_b_after = users.risk_manager.evaluate_and_update_risk(
@@ -224,7 +224,7 @@ def test_evaluate_risk_signals_and_threshold(
     stored_b_after = stored_b_after_doc.risk_dict()
     assert stored_b_after["score"] == 100
     assert stored_b_after["disabled"] is True
-    assert stored_b_after["flags"]["rapid_switch"]["user_id"] == user_a["_id"]
+    assert stored_b_after["flags"]["rapid_switch"].get("user_id") == user_a["_id"]
 
 
 def test_rapid_switch_outside_window_and_empty_ip(

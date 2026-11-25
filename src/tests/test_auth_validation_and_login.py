@@ -400,13 +400,7 @@ def test_login_route_ordering_email_login_and_mfa_gate(
     assert users.ip_activity.get_by_id(f"198.51.100.77_{active_user['_id']}") is not None
     stored_active = users.get_by_id(active_user["_id"])
     assert stored_active is not None
-
-    try:
-        comparison = stored_active.risk_dict()["device_id"] == "dev-active-01"  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    except Exception:
-        comparison = False
-
-    assert comparison
+    assert stored_active.risk_dict().get("device_id") == "dev-active-01"
 
 
 def test_password_and_mfa_recovery_by_username_and_email_and_password_first_order(

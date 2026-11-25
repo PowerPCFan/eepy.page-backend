@@ -320,7 +320,11 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
             pass
 
     accessed_raw = doc.get("accessed-from") if "accessed-from" in doc else doc.get("accessed_from", [])
-    accessed_from = list(dict.fromkeys(str(ip).strip() for ip in accessed_raw if str(ip).strip())) if isinstance(accessed_raw, list) else []
+    accessed_from = (
+        list(dict.fromkeys(str(ip).strip() for ip in accessed_raw if str(ip).strip()))
+        if isinstance(accessed_raw, list)
+        else []
+    )
 
     owned_tlds_raw = doc.get("owned-tlds") if "owned-tlds" in doc else doc.get("owned_tlds")
     owned_tlds = (
@@ -390,9 +394,31 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
         extra_data=extra_data,
     )
 
-    # Normalized permissions
-    perms_model = UserPermissions(user_id=user_id)
-    perms_model.apply_dict(permissions)
+    limits = permissions.get("limits") if isinstance(permissions, Mapping) else None
+    features = permissions.get("features") if isinstance(permissions, Mapping) else None
+    admin_cfg = permissions.get("admin") if isinstance(permissions, Mapping) else None
+    admin_perms = admin_cfg.get("permissions") if isinstance(admin_cfg, Mapping) else None
+    perms_model = UserPermissions(
+        user_id=user_id,
+        max_domains=int(limits["max_domains"])
+        if isinstance(limits, Mapping) and limits.get("max_domains") is not None
+        else 3,
+        max_subdomains=(
+            int(limits["max_subdomains"])
+            if isinstance(limits, Mapping) and limits.get("max_subdomains") is not None
+            else 5
+        ),
+        feature_invite=bool(features.get("invite", False)) if isinstance(features, Mapping) else False,
+        admin_enabled=bool(admin_cfg.get("enabled", False)) if isinstance(admin_cfg, Mapping) else False,
+        admin_account=bool(admin_perms.get("account", False)) if isinstance(admin_perms, Mapping) else False,
+        admin_dns=bool(admin_perms.get("dns", False)) if isinstance(admin_perms, Mapping) else False,
+        admin_manage_permissions=(
+            bool(admin_perms.get("manage_permissions", False)) if isinstance(admin_perms, Mapping) else False
+        ),
+        admin_reports=bool(admin_perms.get("reports", False)) if isinstance(admin_perms, Mapping) else False,
+        admin_userdetails=bool(admin_perms.get("userdetails", False)) if isinstance(admin_perms, Mapping) else False,
+        admin_wildcards=bool(admin_perms.get("wildcards", False)) if isinstance(admin_perms, Mapping) else False,
+    )
 
     # Normalized MFA
     raw_totp = doc.get("totp")
@@ -467,21 +493,34 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
             )
 
     # Normalized domains
-    normalized_domains = Domains.normalize_domains(doc.get("domains"))
+    raw_domains = doc.get("domains")
+    raw_domain_entries: list[tuple[str, Mapping[str, Any]]] = []
+    if isinstance(raw_domains, list):
+        for item in raw_domains:
+            if isinstance(item, Mapping) and item.get("name"):
+                raw_domain_entries.append((str(item["name"]), item))
+    elif isinstance(raw_domains, Mapping):
+        for dom_name, item in raw_domains.items():
+            if isinstance(item, Mapping):
+                raw_domain_entries.append((str(dom_name), item))
+
     seen_domain_keys: set[tuple[str, str]] = set()
     domain_models: list[Domain] = []
-    for d_rec in normalized_domains:
-        key = (d_rec["name"], d_rec["type"])
+    for dom_name, item in raw_domain_entries:
+        canonical_name = Domains.canonical_full_domain_name(dom_name)
+        record_type = str(item.get("type", "A")).upper()
+        key = (canonical_name, record_type)
         if key in seen_domain_keys:
             continue
         seen_domain_keys.add(key)
+        raw_ip = item.get("ip", [])
         domain_models.append(
             Domain(
                 user_id=user_id,
-                name=d_rec["name"],
-                type=d_rec["type"],
-                ip=list(d_rec["ip"]) if isinstance(d_rec["ip"], list) else [str(d_rec["ip"])],
-                registered=int(d_rec["registered"]),
+                name=canonical_name,
+                type=record_type,
+                ip=list(raw_ip) if isinstance(raw_ip, list) else [str(raw_ip)],
+                registered=int(item.get("registered", 0)),
             ),
         )
 
