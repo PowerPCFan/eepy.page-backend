@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 import time
 from typing import Annotated
@@ -9,10 +8,11 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 
+from config.env import Environment
 from database.exceptions import EmailException, UsernameException
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import Users, UserType
+from database.tables.users import Users
 from dns_.dns import DNS
 from mail.email import Email, is_disposable
 from security.captcha import Captcha
@@ -26,7 +26,7 @@ from security.session import (
     SessionError,
     SessionPermissonError,
 )
-from server.routes.models.user import (
+from server.models.user import (
     LoginRequest,
     SignUp,
 )
@@ -36,7 +36,7 @@ logger: logging.Logger = logging.getLogger("eepy.page")
 
 username_regex: re.Pattern[str] = re.compile(r"\A[a-zA-Z0-9_-]{3,32}\Z")
 
-is_debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
+
 ERROR_RESPONSE = {
     "content": {
         "application/json": {
@@ -66,13 +66,13 @@ class Auth:
         self.invites: Invites = invite_table
         self.email: Email = email
         self.dns: DNS = dns
-        self.captcha: Captcha = Captcha(os.getenv("TURNSTILE_KEY") or "")
+        self.captcha: Captcha = Captcha(Environment.turnstile_key())
 
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))  # type: ignore[arg-type]
+        self.encryption: Encryption = Encryption(Environment.enc_key())
 
-        self.handler: ipinfo.Handler = ipinfo.getHandler(os.getenv("IPINFO_KEY"))
+        self.handler: ipinfo.Handler = ipinfo.getHandler(Environment.ipinfo_key())
 
-        self.router = APIRouter()
+        self.router: APIRouter = APIRouter()
 
         self.router.add_api_route(
             "/login",
@@ -95,12 +95,12 @@ class Auth:
                             "schema": {
                                 "type": "object",
                                 "properties": {
-                                    "auth-token": {
+                                    "auth_token": {
                                         "type": "string",
                                         "description": "Access token used for authentication.",
                                     },
                                 },
-                                "required": ["auth-token"],
+                                "required": ["auth_token"],
                             },
                         },
                     },
@@ -135,12 +135,12 @@ class Auth:
                             "schema": {
                                 "type": "object",
                                 "properties": {
-                                    "auth-token": {
+                                    "auth_token": {
                                         "type": "string",
                                         "description": "Access token used for authentication.",
                                     },
                                 },
-                                "required": ["auth-token"],
+                                "required": ["auth_token"],
                             },
                         },
                     },
@@ -192,41 +192,42 @@ class Auth:
         if not self.captcha.verify(x_captcha_code, ip):
             raise HTTPException(422, detail="Invalid captcha")
 
-        user_data: UserType | None = self.table.find_user_by_identifier(body.username)
+        user_data = self.table.find_user_by_identifier(body.username)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
-        if user_data.get("password") is None:
+        stored_password = user_data.password
+        if stored_password is None:
             raise HTTPException(status_code=400, detail="Account does not support password login")
 
-        if not Encryption().check_password(body.password, user_data["password"]):  # pyright: ignore[reportArgumentType]
+        if not Encryption().check_password(body.password, stored_password):
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        if user_data.get("risk", {}).get("disabled"):
+        if user_data.is_disabled:
             raise HTTPException(
                 status_code=403,
                 detail="Account is disabled. Please contact support@eepy.page.",
                 headers={"X-Auth-Error": "account_disabled"},
             )
 
-        if not user_data["verified"]:
+        if not user_data.verified:
             raise HTTPException(
                 status_code=403,
                 detail="Verification required",
                 headers={"X-Auth-Error": "verification_required"},
             )
 
-        logger.info(f"Login attempt from {user_data['_id']}")
+        logger.info(f"Login attempt from {user_data.id}")
 
         real_username: str = (
-            self.encryption.decrypt(user_data["display-name"])
-            if user_data.get("display-name")
+            self.encryption.decrypt(user_data.display_name)
+            if user_data.display_name
             else (body.username if "@" not in body.username else "")
         )
 
         session_status: SessionCreateStatus = Session.create(
-            username=user_data["_id"],
+            username=user_data.id,
             real_username=real_username,
             mfa_code=x_mfa_code,
             ip=ip,
@@ -241,20 +242,21 @@ class Auth:
 
         if session_status["success"]:
             updated_risk = self.table.risk_manager.evaluate_and_update_risk(
-                user_id=user_data["_id"],
+                user_id=user_data.id,
                 ip=ip,
                 device_id=x_device_id,
                 users_table=self.table,
             )
             if updated_risk.get("disabled"):
-                Session.clear_sessions(user_data["_id"], self.session_table)
+                Session.clear_sessions(user_data.id, self.session_table)
                 raise HTTPException(
                     status_code=403,
                     detail="Account is disabled. Please contact support@eepy.page.",
                     headers={"X-Auth-Error": "account_disabled"},
                 )
 
-            resp = JSONResponse({"auth-token": session_status["access_token"]})
+            is_debug = Environment.debug_mode()
+            resp = JSONResponse({"auth_token": session_status["access_token"]})
             cookie_name = "refresh-token" if is_debug else "__Host-refresh-token"
 
             resp.set_cookie(
@@ -271,6 +273,7 @@ class Auth:
         raise HTTPException(status_code=500, detail="Failed to create session")
 
     def refresh(self, request: Request) -> JSONResponse:
+        is_debug = Environment.debug_mode()
         origin = request.headers.get("origin")
         if origin and not is_debug:
             safe_domains = getattr(request.app.state, "safe_domains", [])
@@ -303,7 +306,7 @@ class Auth:
             raise HTTPException(status_code=465, detail="Failed to refresh token")
 
         access_token, refresh_token = session_data
-        resp = JSONResponse({"auth-token": access_token})
+        resp = JSONResponse({"auth_token": access_token})
         cookie_name = "refresh-token" if is_debug else "__Host-refresh-token"
 
         resp.set_cookie(
@@ -342,7 +345,9 @@ class Auth:
             raise HTTPException(422, detail="Invalid captcha")
 
         country = self.handler.getDetails(ip or None).all
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
+        origin = request.headers.get("Origin", "").strip()
+        safe_domains: list[str] = getattr(request.app.state, "safe_domains", [])
+        from_url: str = origin if origin and origin in safe_domains else "https://www.eepy.page"
 
         refer = request.headers.get("x-refer-code")
         if refer:

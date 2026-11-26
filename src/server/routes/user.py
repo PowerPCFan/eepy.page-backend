@@ -1,15 +1,14 @@
 # ruff: noqa: ARG002
 
 import logging
-import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import ipinfo
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
 
+from config.env import Environment
 from database.exceptions import (
     ConflictingReferralCode,
     FilterMatchError,
@@ -19,17 +18,17 @@ from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.reward_codes import Rewards
 from database.tables.sessions import Sessions
-from database.tables.users import UserPageType, Users, UserType
+from database.tables.users import UserPageType, Users
 from dns_.dns import DNS
 from mail.email import Email
-from security.api import Api, ApiKeyLimitError, ApiType
+from security.api import Api, ApiKeyLimitError, ApiPermission, ApiType
 from security.captcha import Captcha
 from security.convert import Convert
 from security.encryption import Encryption
 from security.session import (
     Session,
 )
-from server.routes.models.user import (
+from server.models.user import (
     ApiCreationBody,
     ApiDeletion,
     MFACreation,
@@ -66,11 +65,11 @@ class User:
         self.codes: Codes = codes
         self.dns: DNS = dns
         self.rewards: Rewards = rewards
-        self.captcha: Captcha = Captcha(os.getenv("TURNSTILE_KEY") or "")
+        self.captcha: Captcha = Captcha(Environment.turnstile_key())
 
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))  # type: ignore[arg-type]
+        self.encryption: Encryption = Encryption(Environment.enc_key())
 
-        self.handler: ipinfo.Handler = ipinfo.getHandler(os.getenv("IPINFO_KEY"))
+        self.handler: ipinfo.Handler = ipinfo.getHandler(Environment.ipinfo_key())
 
         self.router = APIRouter()
 
@@ -315,10 +314,10 @@ class User:
         _request: Request,
         session: Session = Depends(converter.create),
     ) -> MFACreation:
-        if session.user_cache_data.get("totp", {}).get("verified"):
+        if session.user.mfa_verified:
             raise HTTPException(status_code=409, detail="MFA code already exists!")
         status = session.create_2fa()
-        return {"app_link": status["url"], "backup_codes": status["codes"]}  # type: ignore[return-value]
+        return MFACreation(app_link=status["url"], backup_codes=status["codes"])
 
     def verify_mfa_setup(
         self,
@@ -326,7 +325,7 @@ class User:
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
     ) -> None:
-        if session.user_cache_data.get("totp", {}).get("verified"):
+        if session.user.mfa_verified:
             raise HTTPException(status_code=409, detail="MFA code already exists!")
         if not session.verify_2fa(x_mfa_code):
             raise HTTPException(status_code=401, detail="Code is invalid")
@@ -355,24 +354,24 @@ class User:
         body: MfaRecovery,
         x_backup_code: Annotated[str, Header()],
     ) -> None:
-        user_data: UserType | None = self.table.find_user_by_identifier(body.username)
+        user_data = self.table.find_user_by_identifier(body.username)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="User does not exist")
 
-        stored_password = user_data.get("password")
+        stored_password = user_data.password
         if not stored_password or not Encryption().check_password(
             body.password,
             stored_password,
         ):
             raise HTTPException(status_code=401, detail="Invalid password")
 
-        if not user_data.get("totp", {}).get("verified"):
+        if not user_data.mfa_verified:
             raise HTTPException(412, detail="User does not have MFA")
 
         try:
             Session.remove_mfa_static(
-                user_data["_id"],
+                user_data.id,
                 self.table,
                 user_data,
                 x_backup_code,
@@ -385,22 +384,27 @@ class User:
         self,
         session: Session = Depends(converter.create),
     ) -> UserPageType:
-        return JSONResponse(self.table.get_user_profile(session.username, self.session_table))  # type: ignore[return-value]
+        return self.table.get_user_profile(session.user_id, self.session_table)
+
+    @staticmethod
+    def _safe_origin(request: Request) -> str:
+        origin = request.headers.get("Origin", "").strip()
+        safe_domains: list[str] = getattr(request.app.state, "safe_domains", [])
+        if origin and origin in safe_domains:
+            return origin
+        return "https://www.eepy.page"
 
     def resend_verification(self, request: Request, user_id: str) -> None:
-        self.codes.create_code("verification", user_id)
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
+        from_url: str = self._safe_origin(request)
 
-        user_data: UserType | None = self.table.find_user({"_id": user_id})
+        user_data = self.table.get_user(user_id)
 
-        if user_data is None:
-            logger.info(f"Could not find user with id {user_id}")
-            raise HTTPException(status_code=404, detail="User not found")
+        if user_data is None or user_data.verified:
+            # Return 200 silently so unauthenticated callers cannot enumerate accounts or verification state.
+            logger.info("Skipping verification resend for unknown or already-verified account")
+            return
 
-        if user_data["verified"]:
-            raise HTTPException(status_code=409, detail="Account already verified")
-
-        email: str = self.encryption.decrypt(user_data["email"])
+        email: str = self.encryption.decrypt(user_data.email)
 
         self.email.send_verification_code(from_url, user_id, email)
 
@@ -413,28 +417,27 @@ class User:
             raise HTTPException(status_code=400, detail="Code is not valid")
 
         if not code_status["valid"] and account is not None:
-            target: UserType | None = self.table.find_user({"_id": account})
+            target = self.table.get_user(account)
 
-            if target and target.get("verified"):
+            if target and target.verified:
                 logger.info("Account is already verified")
                 return
+            raise HTTPException(status_code=400, detail="Code is expired or invalid")
 
         try:
-            self.table.modify_document(
-                filter={"_id": code_status.get("account", None)},
-                operation="$set",
-                key="verified",
-                value=True,
-            )
+            target_account = code_status.get("account")
+            if not target_account or not self.table.set_verified(target_account, verified=True):
+                msg = "User not found"
+                raise FilterMatchError(msg)
 
-            user: UserType | None = self.table.find_user(
-                {"_id": code_status.get("account")},
+            user = self.table.get_user(
+                target_account,
             )
             if not user:
                 msg = "User not found"
                 raise FilterMatchError(msg)
 
-            referred_by: str | None = user.get("referred-by")
+            referred_by: str = user.referred_by
 
             if referred_by:
                 logger.info("Using referral code")
@@ -455,14 +458,12 @@ class User:
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
     ) -> None:
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
-        if session.user_cache_data.get("totp", {}).get(
-            "verified",
-        ) and not session.check_code(x_mfa_code):
+        from_url: str = self._safe_origin(request)
+        if session.user.mfa_verified and not session.check_code(x_mfa_code):
             raise HTTPException(status_code=412, detail="Invalid MFA code")
 
-        email: str = self.encryption.decrypt(session.user_cache_data["email"])
-        self.email.send_delete_code(from_url, session.username, email)
+        email: str = self.encryption.decrypt(session.user.email)
+        self.email.send_delete_code(from_url, session.user_id, email)
 
     @Session.requires_auth
     def year_wrapped(
@@ -470,7 +471,7 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> YearWrapped:
-        user: UserType | None = self.table.find_user({"_id": session.user_id})
+        user = self.table.get_user(session.user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="Account not found")
         this_year_timestamp = datetime(
@@ -479,20 +480,18 @@ class User:
             1,
             tzinfo=UTC,
         ).timestamp()
-        unique_ips: int = len(user.get("accessed-from", []))
+        unique_ips: int = len(user.accessed_ips)
 
-        accounts_made_after: int = self.table.table.count_documents(
-            {"created": {"$gt": user["created"]}},
-        )
+        accounts_made_after: int = self.table.count_users_created_after(user.created)
 
-        total_users: int = self.table.db.command("collstats", "eepy.page")["count"]
-        domains = Domains.normalize_domains(user["domains"])
+        total_users: int = self.table.count_total_users()
+        domains = Domains.normalize_domains(user.domains)
 
         return YearWrapped(
-            account_created=user["created"],
+            account_created=user.created,
             accounts_made_after=accounts_made_after,
             domains_registered=len(
-                [domain for domain in domains if domain["registered"] > this_year_timestamp],
+                [domain for domain in domains if domain.registered > this_year_timestamp],
             ),
             total_users=total_users,
             unique_ips=unique_ips,
@@ -508,7 +507,7 @@ class User:
         api_key: str
         try:
             api_key = Api.create(
-                session.username,
+                session.user_id,
                 self.table,
                 body.comment,
                 body.permissions,
@@ -527,16 +526,17 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> dict[str, ApiType]:
-        api_keys = session.user_cache_data.get("api-keys", {})
         return {
-            key: {
-                **value,
-                "domains": [
+            ak.id: ApiType(
+                string=ak.string,
+                perms=cast("list[ApiPermission]", list(ak.perms or [])),
+                domains=[
                     Domains.canonical_full_domain_name(domain) if domain != "*" else "*"
-                    for domain in value.get("domains", [])
+                    for domain in (ak.domains or [])
                 ],
-            }
-            for key, value in api_keys.items()
+                comment=ak.comment,
+            )
+            for ak in (session.user.api_keys or [])
         }
 
     @Session.requires_auth
@@ -546,15 +546,14 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> str:
-        api_keys = session.user_cache_data.get("api-keys", {})
-
-        if api_keys.get(hash) is None:
+        key_entry = next((ak for ak in (session.user.api_keys or []) if ak.id == hash), None)
+        if key_entry is None:
             raise HTTPException(status_code=404, detail="Key does not exist!")
 
-        if api_keys.get(hash, {}).get("string") is None:  # type: ignore [call-overload]
+        if not key_entry.string:
             raise HTTPException(status_code=412, detail="Wrong API key format!")
 
-        return self.encryption.decrypt(api_keys.get(hash, {}).get("string", ""))  # type: ignore [call-overload]
+        return self.encryption.decrypt(key_entry.string)
 
     @Session.requires_auth
     def delete_api_key(
@@ -563,15 +562,10 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> None:
-        api_keys = session.user_cache_data.get("api-keys", {})
-
-        if body.hash not in api_keys:
+        if not any(ak.id == body.hash for ak in (session.user.api_keys or [])):
             raise HTTPException(status_code=404, detail="Key does not exist")
 
-        self.table.remove_key(
-            {"_id": session.user_cache_data["_id"]},
-            f"api-keys.{body.hash}",
-        )
+        self.table.delete_api_key(session.user.id, body.hash)
 
     @Session.requires_auth
     def get_gdpr(
@@ -579,23 +573,19 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> dict[Any, Any]:
-        user_data: UserType = session.user_cache_data
-
-        gdpr_keys: list[str] = [
-            "_id",
-            "lang",
-            "country",
-            "created",
-            "credits",
-            "last-login",
-            "permissions",
-            "verified",
-            "domains",
-            "feature-flags",
-            "beta-enroll",
-        ]
-
-        return {k: v for k, v in user_data.items() if k in gdpr_keys}  # type: ignore[has-type, misc]
+        user_data = session.user
+        return {
+            "id": user_data.id,
+            "lang": user_data.lang,
+            "country": dict(user_data.country or {}),
+            "created": user_data.created,
+            "credits": user_data.credits,
+            "last_login": user_data.last_login,
+            "permissions": user_data.permissions_dict(),
+            "verified": user_data.verified,
+            "domains": [d.model_dump() for d in Domains.normalize_domains(user_data.domains)],
+            "feature_flags": dict(user_data.feature_flags or {}),
+        }
 
     @Session.requires_auth
     def create_referral(
@@ -604,7 +594,7 @@ class User:
         request: Request,
         session: Session = Depends(converter.create),
     ) -> None:
-        if session.user_cache_data.get("referral-code"):
+        if session.user.referral_code:
             raise HTTPException(
                 status_code=412,
                 detail="User already has referral code!",
@@ -634,14 +624,14 @@ class User:
             raise HTTPException(status_code=400, detail="Code is not valid")
 
         user_id: str = code_status.get("account", "")
-        user_data: UserType | None = self.table.find_user({"_id": user_id})
+        user_data = self.table.get_user(user_id)
 
         if user_data is None:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        domains: dict[str, TYPES] = {
-            domain["name"]: domain["type"] for domain in Domains.normalize_domains(user_data["domains"])
-        }
+        domains: list[tuple[str, TYPES]] = [
+            (domain.name, domain.type) for domain in Domains.normalize_domains(user_data.domains)
+        ]
 
         success = self.dns.delete_multiple(domains)
         if not success:
@@ -649,7 +639,10 @@ class User:
                 "Domain mass deletion failed! Continuing with account deletion.",
             )
 
-        self.table.delete_document({"_id": user_id})
+        # Clear legacy owner_hash sessions explicitly; Postgres ON DELETE CASCADE removes all other user-owned rows.
+        Session.clear_sessions(user_id, self.session_table)
+        self.table.delete_by_id(user_id)
+        self.codes.delete_code(code, "deletion")
 
     def send_recovery_link(self, username: str) -> None:  # username being a plaintext string
         try:
@@ -668,12 +661,7 @@ class User:
 
         Session.clear_sessions(username, self.session_table)
 
-        try:
-            self.table.modify_document(
-                filter={"_id": username},
-                operation="$set",
-                key="password",
-                value=password,
-            )
-        except FilterMatchError:
+        if not self.table.set_password(username, password):
             raise HTTPException(status_code=404, detail="Invalid user")
+
+        self.codes.delete_code(body.code, "recovery")

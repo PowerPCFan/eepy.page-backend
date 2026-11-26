@@ -67,7 +67,7 @@ Pylance will automatically check as you code and so will Ruff, but here are some
 ## How to run tests
 Tests will automatically be run when you open a pull request or push code, but you should still run them after writing code.
 
-I recommend using the VSCode extension `SanjulaGanepola.github-local-actions` and running tests via the GitHub action. This ensures that your code is tested in a clean, reproducible environment for consistency across developers' machines. Additionally, you don't have to worry about setting up a MongoDB instance for tests.
+I recommend using the VSCode extension `SanjulaGanepola.github-local-actions` and running tests via the GitHub action. This ensures that your code is tested in a clean, reproducible environment for consistency across developers' machines. Additionally, you don't have to worry about setting up a PostgreSQL instance for tests.
 
 How to use the extension:
 1. Install it.

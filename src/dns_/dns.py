@@ -1,10 +1,16 @@
 import json
 import logging
-import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any, cast
 
+import dns.exception
+import dns.rdataclass
+import dns.rdatatype
+import dns.tokenizer
 import requests  # type: ignore[import-untyped]
+from dns.rdtypes.ANY.TXT import TXT
 
+from config.env import Environment
 from database.tables.domains import DomainFormat, Domains
 from dns_.exceptions import DNSException
 from dns_.types import TYPES, RRSet
@@ -16,15 +22,43 @@ class ConflictingDomain(Exception):
     pass
 
 
+_TXT_CHUNK_SIZE = 255
+
+
+def _format_txt_content(content: str) -> str:
+    raw_bytes: bytes | None = None
+    if len(content) >= 2 and content.startswith('"') and content.endswith('"'):  # noqa: PLR2004
+        try:
+            tokenizer = dns.tokenizer.Tokenizer(content)
+            parts: list[bytes] = []
+            while True:
+                token = tokenizer.get()
+                if token.is_eof():
+                    break
+                if not token.is_quoted_string():
+                    parts = []
+                    break
+                parts.append(token.unescape_to_bytes().value)
+            if parts:
+                raw_bytes = b"".join(parts)
+        except (dns.exception.DNSException, ValueError):
+            raw_bytes = None
+
+    if raw_bytes is None:
+        raw_bytes = content.encode("utf-8")
+
+    chunks = [raw_bytes[i : i + _TXT_CHUNK_SIZE] for i in range(0, len(raw_bytes), _TXT_CHUNK_SIZE)] or [b""]
+    return TXT(dns.rdataclass.IN, dns.rdatatype.TXT, chunks).to_text()
+
+
 def sanitize(content: str, type: str) -> str:
     content = content.strip()
+    record_type = type.upper()
 
-    if (type == "CNAME") and not content.endswith("."):
+    if record_type == "CNAME" and not content.endswith("."):
         content += "."
-    if type == "TXT" and not content.startswith('"'):
-        content = '"' + content
-    if type == "TXT" and not content.endswith('"'):
-        content += '"'
+    elif record_type == "TXT":
+        return _format_txt_content(content)
 
     return content
 
@@ -32,8 +66,8 @@ def sanitize(content: str, type: str) -> str:
 class DNS:
     def __init__(self, domains: Domains) -> None:
         self.table = domains
-        self.key: str = os.getenv("PDNS_API_KEY") or ""
-        self.domain: str = os.getenv("PDNS_DOMAIN") or ""
+        self.key: str = Environment.pdns_api_key()
+        self.domain: str = Environment.pdns_domain()
 
     def record_exists(self, domain: str, type: str) -> bool:
         """Checks PowerDNS for an existing exact rrset before creating a user record."""
@@ -133,14 +167,14 @@ class DNS:
     def register_domain(
         self,
         domain: str,
-        content: str,
+        content: str | list[str],
         type: str,
         user_id: str,
     ) -> bool:
         """
         Registers a new DNS record for the specified domain.
         Args:
-            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b.eepy.page, NOT a[dot]b[dot]eepy[dot]page)
+            domain (str): The name of the DNS record (e.g., a.b.eepy.page).
             content (str): The content of the DNS record.
             type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
             user_id (str): ID of the user creating the record
@@ -149,9 +183,16 @@ class DNS:
         Raises:
             DNSException: If the request to register the domain fails.
             ValueError: If the ID of the newly created DNS record cannot be retrieved.
-        """  # noqa: E501
-
-        content = sanitize(content, type)
+        """
+        raw_values = content if isinstance(content, list) else [content]
+        records = [
+            {
+                "content": sanitize(value, type),
+                "disabled": False,
+                "comment": f"Created with Session based auth ({user_id})",
+            }
+            for value in raw_values
+        ]
 
         (name, tld) = Domains.separate_domain_into_parts(domain)
 
@@ -165,13 +206,7 @@ class DNS:
                             "type": type,
                             "ttl": 300,
                             "changetype": "REPLACE",
-                            "records": [
-                                {
-                                    "content": content,
-                                    "disabled": False,
-                                    "comment": f"Created with Session based auth ({user_id})",
-                                },
-                            ],
+                            "records": records,
                         },
                     ],
                 },
@@ -181,32 +216,31 @@ class DNS:
         )
 
         if not request.ok:
-            logger.error(f"Failed to register domain {domain}. {request.json()}")
+            err_payload = self._safe_json(request)
+            logger.error(f"Failed to register domain {domain}. {err_payload}")
 
             if not self.key:
                 logger.error("API key not defined!")
 
             msg = "Failed to register domain"
-            raise DNSException(msg, request.json())
+            raise DNSException(msg, err_payload)
 
         return True
 
+    @staticmethod
+    def _safe_json(response: requests.Response) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except ValueError:
+            return {"status_code": response.status_code, "text": response.text}
+        return data if isinstance(data, dict) else {"data": data}
+
     def register_multiple(self, domains: Mapping[str, DomainFormat], user_id: str) -> bool:
         """
-        Registers a new DNS record for the specified domain.
-        Args:
-            domain (str): The name of the DNS record. NOTE: Must use the normal DNS schema (aka a.b, NOT a[dot]b)
-            content (str): The content of the DNS record.
-            type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
-            user_id (str): ID of the user creating the record
-        Returns:
-            str: The ID of the newly created DNS record.
-        Raises:
-            DNSException: If the request to register the domain fails.
-            ValueError: If the ID of the newly created DNS record cannot be retrieved.
+        Registers multiple DNS records grouped by TLD.
         """
 
-        rrsets: list[RRSet] = []
+        rrsets_by_tld: dict[str, list[RRSet]] = {}
 
         for domain, values in domains.items():
             (name, tld) = Domains.separate_domain_into_parts(domain)
@@ -229,8 +263,9 @@ class DNS:
                     },
                 )
 
-            rrsets.append(rrset)
+            rrsets_by_tld.setdefault(tld, []).append(rrset)
 
+        for tld, rrsets in rrsets_by_tld.items():
             request = requests.patch(
                 f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": rrsets}),
@@ -239,15 +274,16 @@ class DNS:
             )
 
             if not request.ok:
+                err_payload = self._safe_json(request)
                 logger.error(
-                    f"Failed to register domains for TLD {tld}. {request.json()}",
+                    f"Failed to register domains for TLD {tld}. {err_payload}",
                 )
 
                 if not self.key:
                     logger.critical("API key not defined!")
 
                 msg = "Failed to register domain"
-                raise DNSException(msg, request.json())
+                raise DNSException(msg, err_payload)
 
         return True
 
@@ -288,26 +324,26 @@ class DNS:
             if not self.key:
                 logger.critical("DNS API key missing!")
 
-            logger.error(f"Could not delete domain {domain}. {request.json()}")
+            logger.error(f"Could not delete domain {domain}. {self._safe_json(request)}")
             return False
 
         return True
 
-    def delete_multiple(self, domains: dict[str, TYPES]) -> bool:
-        """Deleted multiple records at once
+    def delete_multiple(self, domains: Mapping[str, TYPES] | Iterable[tuple[str, TYPES]]) -> bool:
+        """Deletes multiple records at once.
 
         Args:
-            domains (dict[str, TYPES]): A set of keys {domain: type}
+            domains: Mapping of ``{domain: type}`` or iterable of ``(domain, type)`` pairs.
         """
-
-        logger.info(f"mass deleting records {list(domains.keys())}")
+        pairs: list[tuple[str, TYPES]] = (
+            cast("list[tuple[str, TYPES]]", list(domains.items())) if isinstance(domains, Mapping) else list(domains)
+        )
+        logger.info(f"mass deleting records {pairs}")
 
         rrsets: dict[str, list[dict]] = {}
 
-        for domain, type in domains.items():
-            (name, tld) = Domains.separate_domain_into_parts(
-                Domains.legacy_bracket_domain_to_dotted(domain),
-            )
+        for domain, type in pairs:
+            (name, tld) = Domains.separate_domain_into_parts(domain)
 
             if tld not in rrsets:
                 rrsets[tld] = []
@@ -331,7 +367,7 @@ class DNS:
 
             if not request.ok:
                 logger.error(
-                    f"Failed to delete domains for TLD {tld}. {request.json()}",
+                    f"Failed to delete domains for TLD {tld}. {self._safe_json(request)}",
                 )
 
                 if not self.key:

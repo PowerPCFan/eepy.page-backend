@@ -3,13 +3,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, cast
 
 from database.tables.domains import Domains
 from security.encryption import Encryption
+from server.models.user import ApiPermission, ApiType
 
 if TYPE_CHECKING:
-    from database.tables.users import Users, UserType
+    from database.models import ApiKey, User
+    from database.tables.users import Users
+    from server.models.domain import DomainRecord
 
 
 class ApiError(Exception): ...
@@ -24,16 +27,18 @@ class ApiRangeError(Exception): ...
 class ApiKeyLimitError(Exception): ...
 
 
-type ApiPermission = Literal["register", "modify", "delete", "list", "userdetails"]
-
 type GenericFunction = Callable[..., Any]
 
-
-class ApiType(TypedDict):
-    string: str
-    perms: list[ApiPermission]
-    domains: list[str]
-    comment: str
+__all__ = [
+    "Api",
+    "ApiError",
+    "ApiKeyLimitError",
+    "ApiPermission",
+    "ApiPermissionError",
+    "ApiRangeError",
+    "ApiType",
+    "GenericFunction",
+]
 
 
 logger = logging.getLogger("eepy.page")
@@ -125,73 +130,58 @@ class Api:
         self.key: str = api_key
         self.encrypted_key: str = Encryption.sha256(api_key + "eepy.page")
 
-        self.key_data: ApiType | None = self.__cache_data()
-        self.valid: bool = self.__is_valid()
-
-        self.user_cache_data: UserType = self.__user_cache()
-        self.username: str = self.__get_id()
+        user_data, key_data = self.users_table.find_user_by_api_key(self.encrypted_key)
+        if user_data is None or user_data.banned or user_data.is_disabled:
+            if user_data is not None:
+                logger.info(f"API key rejected: user {user_data.id} is banned or disabled")
+            self.key_data: ApiKey | None = None
+            self.valid: bool = False
+            self.user_cache_data: User | None = None
+        else:
+            self.key_data = key_data
+            self.valid = key_data is not None
+            self.user_cache_data = user_data
         self.user_id: str = self.__get_id()
 
         self.permissions: list[ApiPermission] = self.__get_permimssions()
 
-        if self.key_data and self.valid:
+        if self.key_data and self.valid and self.user_cache_data is not None:
             self.affected_domains: list[str] = [
-                Domains.canonical_full_domain_name(d) for d in self.key_data.get("domains", [])
+                Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in (self.key_data.domains or [])
             ]
 
             if "*" in self.affected_domains:
                 logger.info("Wildcard in affected domains! Filling with users domains...")
-                self.affected_domains = Domains.domain_names(self.user_cache_data.get("domains", []))
+                self.affected_domains = Domains.domain_names(self.user_cache_data.domains)
 
-            self.user_domains = [
+            self.user_domains: list[DomainRecord] = [
                 domain
-                for domain in Domains.normalize_domains(self.user_cache_data.get("domains", []))
-                if domain["name"] in self.affected_domains
+                for domain in Domains.normalize_domains(self.user_cache_data.domains)
+                if domain.name in self.affected_domains
             ]
 
         else:
             self.affected_domains = []
             self.user_domains = []
 
-    def __cache_data(self) -> ApiType | None:
-        user_data = self.users_table.find_item(
-            {
-                f"api-keys.{self.encrypted_key}": {"$exists": True},
-            },
-        )
-
-        if user_data is None:
-            return None
-
-        if user_data.get("banned") or user_data.get("risk", {}).get("disabled"):
-            logger.info(f"API key rejected: user {user_data.get('_id')} is banned or disabled")
-            return None
-
-        return user_data.get("api-keys", {}).get(self.encrypted_key)
-
-    def __is_valid(self) -> bool:
-        return self.key_data is not None
-
-    def __user_cache(self) -> UserType:
-        data: UserType | None = self.users_table.find_item({f"api-keys.{self.encrypted_key}": {"$exists": True}})  # type: ignore[assignment]
-
-        if data is None or data.get("banned") or data.get("risk", {}).get("disabled"):
-            self.valid = False
-            return {}  # type: ignore[typeddict-item]
-
-        return self.users_table.perform_migrations(data)
+    @property
+    def user(self) -> User:
+        if self.user_cache_data is None:
+            msg = "API key is not valid"
+            raise ApiError(msg)
+        return self.user_cache_data
 
     def __get_id(self) -> str:
-        if not self.valid or self.key_data is None:
+        if not self.valid or self.key_data is None or self.user_cache_data is None:
             return ""
 
-        return self.user_cache_data.get("_id", "")
+        return self.user_cache_data.id
 
     def __get_permimssions(self) -> list[ApiPermission]:
         if not self.valid or self.key_data is None:
             return []
 
-        return self.key_data.get("perms", [])
+        return cast("list[ApiPermission]", list(self.key_data.perms or []))
 
     @staticmethod
     def create(
@@ -202,12 +192,12 @@ class Api:
         domains: list[str],
     ) -> str:
         api_key: str = "$APIV2=" + Encryption.generate_random_string(32)
-        user_data: UserType | None = users.find_user({"_id": username})
+        user_data = users.get_user(username)
         if user_data is None:
             msg = "User not found"
             raise ValueError(msg)
 
-        user_domains = Domains.domain_names(user_data["domains"])
+        user_domains = Domains.domain_names(user_data.domains)
 
         canonical_domains: list[str] = [Domains.canonical_full_domain_name(d) if d != "*" else "*" for d in domains]
         for domain in canonical_domains:
@@ -216,23 +206,17 @@ class Api:
                 msg_0 = f"User does not own domain {domain}"
                 raise PermissionError(msg_0)
 
-        api_keys = user_data.get("api-keys", {})
-        if len(api_keys) >= 1:
+        if len(user_data.api_keys or []) >= 1:
             msg = "Only one API key is allowed per account"
             raise ApiKeyLimitError(msg)
 
-        key: ApiType = {
-            "string": users.encryption.encrypt(api_key),
-            "perms": permissions,
-            "domains": canonical_domains,
-            "comment": comment,
-        }
-
         encrypted_api_key: str = Encryption.sha256(api_key + "eepy.page")
-        users.modify_document(
-            filter={"_id": username},
-            operation="$set",
-            key=f"api-keys.{encrypted_api_key}",
-            value=key,
+        users.create_api_key(
+            username,
+            key_hash=encrypted_api_key,
+            encrypted_key=users.encryption.encrypt(api_key),
+            perms=list(permissions),
+            domains=canonical_domains,
+            comment=comment,
         )
         return api_key

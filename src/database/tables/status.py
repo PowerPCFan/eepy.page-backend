@@ -1,54 +1,45 @@
 import logging
 import time
-from typing import TypedDict
+from typing import TYPE_CHECKING
 
-from pymongo import MongoClient
+from sqlalchemy import select, update
 
+from database.models import StatusModel
 from database.table import Table
 from security.encryption import Encryption
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class StatusType(TypedDict):
-    _id: str
-    time: float
-    message: str
-    active: bool
+class Status(Table[StatusModel]):
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, StatusModel)
 
-
-class Status(Table):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client, "status")
-
-    def get(self) -> StatusType | None:
+    def get(self) -> StatusModel | None:
         logger.info("Getting active status")
-        return self.find_item({"active": True})  # pyright: ignore[reportReturnType]
+        with self.session() as session:
+            return session.scalars(
+                select(StatusModel).where(StatusModel.active.is_(True)).order_by(StatusModel.time.desc()),
+            ).first()
 
     def set(self, message: str) -> None:
-        self.modify_document(
-            filter={"active": True},
-            operation="$set",
-            key="active",
-            value=False,
-            create_if_not_exist=False,
-            ignore_no_matches=True,
-        )
-        self.insert_document(
-            {
-                "_id": Encryption.generate_random_string(16),
-                "time": time.time(),
-                "message": message,
-                "active": True,
-            },
-        )
+        with self.session() as session:
+            session.execute(
+                update(StatusModel).where(StatusModel.active.is_(True)).values(active=False),
+            )
+            new_status = StatusModel(
+                id=Encryption.generate_random_string(16),
+                time=time.time(),
+                message=message,
+                active=True,
+            )
+            session.add(new_status)
 
     def clear(self) -> None:
-        self.modify_document(
-            filter={"active": True},
-            operation="$set",
-            key="active",
-            value=False,
-            create_if_not_exist=False,
-            ignore_no_matches=True,
-        )
+        with self.session() as session:
+            session.execute(
+                update(StatusModel).where(StatusModel.active.is_(True)).values(active=False),
+            )

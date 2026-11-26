@@ -1,22 +1,25 @@
 import logging
-from collections.abc import Callable
-from typing import Any
-from unittest.mock import MagicMock  # type: ignore[import-untyped]
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
-import pymongo
 import pyotp
 import pytest
 from starlette.requests import Request
 
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
+    from tests.conftest import TestUserFactory
+
 from database.exceptions import UserNotExistError
+from database.models import User, UserPermissions, UserRiskProfile
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import USER_MIGRATION_VERSION, Users, UserType
+from database.tables.users import Users
 from dns_.dns import DNS
 from mail.email import Email
 from security.encryption import Encryption
-from security.risk import create_default_risk
 from security.session import (
     InvalidToken,
     Session,
@@ -30,9 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 class TestCreation:
-    def test_creation(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_creation(self, test_user: User, users: Users, sessions: Sessions) -> None:
         assert Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -52,9 +55,9 @@ class TestCreation:
                 session_table=sessions,
             )["success"]
 
-    def test_mfa_setup(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_mfa_setup(self, test_user: User, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -72,8 +75,9 @@ class TestCreation:
         url = mfa_result["url"]
         backup = mfa_result["codes"]
 
-        refreshed_user = users.find_user({"_id": test_user["_id"]})
-        session.user_cache_data = refreshed_user  # type: ignore
+        refreshed_user = users.get_user(test_user.id)
+        assert refreshed_user is not None
+        session.user_cache_data = refreshed_user
 
         code = pyotp.TOTP(pyotp.parse_uri(url).secret).now()
         assert session.verify_2fa(code)
@@ -82,26 +86,26 @@ class TestCreation:
 
     def test_refresh(
         self,
-        test_user: UserType,
+        test_user: User,
         test_session: Session,
         test_session_refresh: str,
         sessions: Sessions,
         users: Users,
     ) -> None:
-        logger.info(test_user["country"])
+        logger.info(test_user.country)
         old_access_token = test_session.token
         assert not Session.refresh(
             old_access_token,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
         result = Session.refresh(
             test_session_refresh,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
         if not result:
@@ -115,21 +119,22 @@ class TestCreation:
             test_session_refresh,
             sessions,
             "BACKEND_TESTING",
-            test_user["country"]["ip"],
+            test_user.country["ip"],
         )
 
-    def test_object(self, test_session: Session, test_user: UserType, users: Users) -> None:
-        assert test_session.user_id == test_session.user_cache_data["_id"]
+    def test_object(self, test_session: Session, test_user: User, users: Users) -> None:
+        assert test_session.user_cache_data is not None
+        assert test_session.user_id == test_session.user_cache_data.id
         assert test_session.token_result != InvalidToken
 
-        user = users.find_user({"_id": test_user["_id"]})
+        user = users.get_user(test_user.id)
         assert user is not None
 
         assert test_session.user_cache_data == user
 
-    def test_logging_out(self, test_user: UserType, users: Users, sessions: Sessions) -> None:
+    def test_logging_out(self, test_user: User, users: Users, sessions: Sessions) -> None:
         session_data = Session.create(
-            username=test_user["_id"],
+            username=test_user.id,
             real_username="testing",
             mfa_code=None,
             ip="192.168.1.1",
@@ -145,9 +150,6 @@ class TestCreation:
         session = Session(session_data["access_token"], users, sessions)
         assert session.delete(session.data["jti"])
 
-    def test_attributes(self, test_session: Session) -> None:
-        assert test_session.user_id == test_session.username  # backwards compatability
-
     def test_missing_jwt_key_fails_before_signing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("JWT_KEY", raising=False)
 
@@ -160,112 +162,123 @@ class TestCreation:
             )
 
 
-valid_session = MagicMock(spec=Session)
-valid_session.valid = True
+@pytest.fixture
+def valid_session(
+    users: Users,
+    sessions: Sessions,
+    encryption: Encryption,
+    insert_test_user: "TestUserFactory",
+) -> Session:
+    user_id = Encryption.sha256("session_decorator_test_user")
+    insert_test_user(
+        id=user_id,
+        email=encryption.encrypt("session_decorator@example.com"),
+        email_hash=encryption.hash_email("session_decorator@example.com"),
+        normalized_email_hash=encryption.hash_email("session_decorator@example.com"),
+        display_name=encryption.encrypt("session_decorator_test_user"),
+        username=user_id,
+        verified=True,
+        feature_flags={"store": True, "apex-domains": False},
+        permissions=UserPermissions(
+            user_id=user_id,
+            admin_enabled=True,
+            admin_userdetails=True,
+        ),
+    )
+    access_token, _ = Session.create_session_pair(user_id, "pytest-agent", "198.51.100.1", sessions)
+    assert access_token is not None
+    return Session(access_token, users, sessions)
 
-valid_session.permissions = ["userdetails"]
-valid_session.flags = ["store"]
 
-invalid_session = MagicMock(spec=Session)
-invalid_session.valid = False
+@pytest.fixture
+def invalid_session(users: Users, sessions: Sessions) -> Session:
+    return Session("invalid.jwt.token", users, sessions)
 
 
-def test_requires_auth_valid_session() -> None:
+def test_requires_auth_valid_session(valid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_auth_underscore_session() -> None:
+def test_requires_auth_underscore_session(valid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(_session) -> str:
+    def protected(_session: Session) -> str:
         return "Executed"
 
-    result = mock_function(_session=valid_session)
-    assert result == "Executed"
+    assert protected(_session=valid_session) == "Executed"
 
 
-def test_requires_auth_invalid_session() -> None:
+def test_requires_auth_invalid_session(invalid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionError):
-        mock_function(session=invalid_session)
+        protected(session=invalid_session)
 
 
-def test_requires_perms_valid() -> None:
+def test_requires_perms_valid(valid_session: Session) -> None:
     @Session.requires_permission("userdetails")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_perms_invalid() -> None:
+def test_requires_perms_invalid(valid_session: Session) -> None:
     @Session.requires_permission("blogs")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionPermissonError):
-        mock_function(session=valid_session)
+        protected(session=valid_session)
 
 
-def test_requires_flag_valid() -> None:
+def test_requires_flag_valid(valid_session: Session) -> None:
     @Session.requires_flag(flag="store")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_flag_invalid() -> None:
+def test_requires_flag_invalid(valid_session: Session) -> None:
     @Session.requires_flag(flag="apex-domains")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionFlagError):
-        mock_function(session=valid_session)
+        protected(session=valid_session)
 
 
 def test_disabled_account_rejected_on_session_refresh(
     users: Users,
     sessions: Sessions,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     user_id = Encryption.sha256("disabled_session_user")
 
     insert_test_user(
-        {
-            "_id": user_id,
-            "email": encryption.encrypt("disabled_session@example.com"),
-            "email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("disabled_session@example.comsupahcool"),
-            "password": None,
-            "display-name": encryption.encrypt("disabled_session_user"),
-            "username": user_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last-login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-            "risk": {
-                "score": 85,
-                "locked": False,
-                "disabled": True,
-                "disable_reasons": ["Auto-disabled"],
-                "flags": {},
-            },
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id=user_id,
+        email=encryption.encrypt("disabled_session@example.com"),
+        email_hash=encryption.hash_email("disabled_session@example.com"),
+        normalized_email_hash=encryption.hash_email("disabled_session@example.com"),
+        display_name=encryption.encrypt("disabled_session_user"),
+        username=user_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
+        risk_profile=UserRiskProfile(
+            user_id=user_id,
+            score=85,
+            disabled=True,
+            disable_reasons=["Auto-disabled"],
+        ),
     )
 
     access_token, refresh_token = Session.create_session_pair(
@@ -283,39 +296,31 @@ def test_disabled_account_rejected_on_session_refresh(
         users=users,
     )
     assert refreshed is False
-    assert sessions.find_items({"owner": user_id, "type": "refresh"}) == []
+    assert sessions.find_all(owner=user_id, type="refresh") == []
 
 
 def test_session_delete_and_logout_for_both_refresh_and_access_types(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
     email: Email,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     user_id = Encryption.sha256("session_owner")
 
     insert_test_user(
-        {
-            "_id": user_id,
-            "email": encryption.encrypt("owner@example.com"),
-            "email-hash": Encryption.sha256("owner@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("owner@example.comsupahcool"),
-            "password": None,
-            "display-name": encryption.encrypt("session_owner"),
-            "username": user_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last-login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-            "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id=user_id,
+        email=encryption.encrypt("owner@example.com"),
+        email_hash=encryption.hash_email("owner@example.com"),
+        normalized_email_hash=encryption.hash_email("owner@example.com"),
+        display_name=encryption.encrypt("session_owner"),
+        username=user_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
     )
 
     access_1, _refresh_1 = Session.create_session_pair(user_id, "agent-1", "198.51.100.1", sessions)
@@ -328,9 +333,10 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
 
     access_2_doc = sessions.get_session(session_2.data["jti"])
     assert access_2_doc is not None
-    refresh_2_id = access_2_doc["parent"]  # pyright: ignore[reportGeneralTypeIssues]
+    refresh_2_id = access_2_doc.parent
+    assert refresh_2_id is not None
 
-    invites = Invites(mongo_client)
+    invites = Invites(db_engine)
     dns = DNS(domains)
     auth = Auth(users, sessions, invites, email, dns)
 
@@ -347,7 +353,7 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
     auth.logout(req_specific, session=session_1, x_device_id="dev-logout-1")
     assert sessions.get_session(refresh_2_id) is None
     assert sessions.get_session(session_2.data["jti"]) is None
-    assert users.recent_logouts.find_items({"user_id": user_id}) == []
+    assert users.recent_logouts.find_all(user_id=user_id) == []
 
     req_normal = Request(
         {
@@ -357,7 +363,7 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
         },
     )
     auth.logout(req_normal, session=session_1, x_device_id="dev-logout-1")
-    assert sessions.find_items({"owner": user_id}) == []
-    logout_rows = users.recent_logouts.find_items({"user_id": user_id})
+    assert sessions.find_all(owner=user_id) == []
+    logout_rows = users.recent_logouts.find_all(user_id=user_id)
     assert len(logout_rows) == 1
-    assert logout_rows[0]["user_id"] == user_id
+    assert logout_rows[0].user_id == user_id

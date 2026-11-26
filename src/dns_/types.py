@@ -7,11 +7,17 @@ ALLOWED_TYPES: list[str] = list(get_args(TYPES))
 CHANGE_TYPE = Literal["REPLACE", "DELETE"]
 
 
-def get_rec_type(type_: str | TYPES) -> TYPES:
-    if type_ not in {"A", "AAAA", "CNAME", "TXT"}:
-        msg = f"Invalid record type: {type_}"
-        raise ValueError(msg)
-    return type_  # pyright: ignore[reportReturnType]
+def get_record_type(rec_type: str | TYPES) -> TYPES:
+    if rec_type == "A":
+        return "A"
+    if rec_type == "AAAA":
+        return "AAAA"
+    if rec_type == "CNAME":
+        return "CNAME"
+    if rec_type == "TXT":
+        return "TXT"
+    msg = f"Invalid record type: {rec_type}"
+    raise ValueError(msg)
 
 
 class Record(TypedDict):

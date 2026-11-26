@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 import threading
 import time
@@ -14,6 +13,7 @@ import jwt
 import pyotp
 from jwt import DecodeError, ExpiredSignatureError, InvalidSignatureError
 
+from config.env import Environment
 from database.exceptions import UserNotExistError
 from security.admin_permissions import get_admin_permissions, get_feature_permissions
 from security.encryption import Encryption
@@ -21,8 +21,9 @@ from security.encryption import Encryption
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from database.models import User
     from database.tables.sessions import Sessions
-    from database.tables.users import Users, UserType
+    from database.tables.users import Users
 
 
 class SessionError(Exception):
@@ -76,16 +77,6 @@ class RefreshTokenData(TypedDict):
 REFRESH_AMOUNT = 14 * 60 * 60 * 24
 ACCESS_AMOUNT = 900
 
-
-class NewSessionType(TypedDict):
-    owner: str
-    type: Literal["refresh", "access"]
-    created: int
-    expires: int
-    agent: str
-    ip: str
-
-
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
@@ -98,10 +89,7 @@ class UserManager(threading.Thread):
         self.userid = userid
 
     def start(self) -> None:
-        self.table.table.update_one(
-            {"_id": self.userid},
-            {"$push": {"accessed-from": self.ip}, "$set": {"last-login": time.time()}},
-        )
+        self.table.record_login(self.userid, self.ip)
 
 
 class Session:
@@ -114,7 +102,7 @@ class Session:
         """
         self.session_table: Sessions = sessions
         self.users_table: Users = users
-        self.encryption: Encryption = Encryption(os.getenv("ENC_KEY"))  # type: ignore[arg-type]
+        self.encryption: Encryption = Encryption(Environment.enc_key())
 
         self.token = access_token
         self.token_result: AccessTokenData | InvalidToken = Session.__get_payload(self.token, "access")  # pyright: ignore[reportAttributeAccessIssue]
@@ -134,48 +122,54 @@ class Session:
                 logger.info(f"Couldnt find session {self.data['jti']} in db")
                 self.valid = False
 
-        self.username: str = "" if not self.valid else self.data["sub"]
-        self.user_id = self.username
+        self.user_id: str = "" if not self.valid else self.data["sub"]
 
-        self.user_cache_data: UserType = self.__user_cache()
+        self.user_cache_data: User | None = self.__user_cache()
         self.permissions: list = self.__get_permimssions()
         self.flags: list = self.__get_flags()
 
-    def __user_cache(self) -> UserType:
+    @property
+    def user(self) -> User:
+        if self.user_cache_data is None:
+            msg = "Session is not valid"
+            raise SessionError(msg)
+        return self.user_cache_data
+
+    def __user_cache(self) -> User | None:
         """
         Caches the user data of the session. You should use session.user_cache for every query,
         as user_cache gets reset everytime a session object is created, aka it refreshes every request
         """
         start = time.time()
         if not self.valid:
-            return {}  # type: ignore[typeddict-item]
-        data: UserType | None = self.users_table.find_user({"_id": self.data["sub"]})
+            return None
+        data = self.users_table.get_user(self.data["sub"])
 
-        if data is None or data.get("risk", {}).get("disabled"):
-            if data and data.get("risk", {}).get("disabled"):
-                logger.info(f"Session invalidated: user {data['_id']} is disabled")
+        if data is None or data.is_disabled:
+            if data and data.is_disabled:
+                logger.info(f"Session invalidated: user {data.id} is disabled")
             self.valid = False
-            return {}  # type: ignore[typeddict-item]
+            return None
 
         logger.debug(f"Retrieving user data took {(time.time() - start):.4f}s")
         return data
 
     def __get_permimssions(self) -> list[str]:
-        if not self.valid:
+        if not self.valid or self.user_cache_data is None:
             return []
 
-        return get_admin_permissions(self.user_cache_data) + get_feature_permissions(self.user_cache_data)  # pyright: ignore[reportArgumentType]
+        return get_admin_permissions(self.user_cache_data) + get_feature_permissions(self.user_cache_data)
 
     def __get_flags(self) -> list[str]:
-        if not self.valid:
+        if not self.valid or self.user_cache_data is None:
             return []
 
-        flags: dict[str, bool] = self.user_cache_data.get("feature-flags", {})
-        return list(flags.keys()) if flags else []
+        flags: dict[str, bool] = self.user_cache_data.feature_flags or {}
+        return [key for key, enabled in flags.items() if enabled]
 
     @staticmethod
     def _jwt_key() -> str:
-        key = os.getenv("JWT_KEY")
+        key = Environment.jwt_key()
         if not key:
             msg = "JWT_KEY environment variable is required"
             raise RuntimeError(msg)
@@ -254,8 +248,8 @@ class Session:
             return False
 
         if users is not None:
-            user_data = users.find_user({"_id": token_data["sub"]}, find_banned=True)
-            if user_data is None or user_data.get("banned") or user_data.get("risk", {}).get("disabled"):
+            user_data = users.get_user(token_data["sub"], find_banned=True)
+            if user_data is None or user_data.banned or user_data.is_disabled:
                 logger.info(f"Refresh rejected: user {token_data['sub']} is missing, banned, or disabled")
                 session_table.consume_refresh_session(token_data["jti"])
                 return False
@@ -265,7 +259,7 @@ class Session:
             logger.warning(f"Refresh token {token_data['jti']} was already consumed or revoked")
             return False
 
-        if target_session.get("owner") != token_data["sub"]:
+        if target_session.owner != token_data["sub"]:
             logger.error("Refresh token owner did not match its session record")
             return False
 
@@ -306,13 +300,13 @@ class Session:
                                     and a refresh and access token if successful
         """
 
-        user_data: UserType | None = users.find_user({"_id": username})
+        user_data = users.get_user(username)
 
         if user_data is None:
             raise UserNotExistError
 
-        user_has_mfa = user_data.get("totp", {}).get("verified")
-        user_mfa_key = user_data.get("totp", {}).get("key")
+        user_has_mfa = user_data.mfa_verified
+        user_mfa_key = user_data.mfa.secret_key if user_data.mfa is not None else None
 
         if user_has_mfa and not skip_mfa:
             if not mfa_code:
@@ -323,7 +317,16 @@ class Session:
                     refresh_token=None,
                 )
 
-            totp_object: pyotp.TOTP = pyotp.TOTP(users.encryption.decrypt(user_mfa_key))  # type: ignore[arg-type]
+            if not user_mfa_key:
+                logger.warning("MFA key missing for verified MFA account")
+                return SessionCreateStatus(
+                    success=False,
+                    mfa_required=True,
+                    access_token=None,
+                    refresh_token=None,
+                )
+
+            totp_object: pyotp.TOTP = pyotp.TOTP(users.encryption.decrypt(user_mfa_key))
             is_valid = totp_object.verify(mfa_code)
             if not is_valid:
                 if totp_object.verify(
@@ -349,18 +352,14 @@ class Session:
         )
 
         user_manager = UserManager(users, ip, username)
-        user_manager.start()  # updates `last-login` and `accessed-from` fields of user
+        user_manager.start()  # updates `last_login` and `accessed_from` fields of user
 
-        if real_username and (not user_data.get("display-name") or not user_data.get("username")):
-            logger.info("Updating display-name and username")
-            users.table.update_one(
-                {"_id": username},
-                {
-                    "$set": {
-                        "display-name": users.encryption.encrypt(real_username),
-                        "username": Encryption.sha256(real_username.lower()),
-                    },
-                },
+        if real_username and (not user_data.display_name or not user_data.username):
+            logger.info("Updating display_name and username")
+            users.update_display_name(
+                username,
+                users.encryption.encrypt(real_username),
+                Encryption.sha256(real_username.lower()),
             )
 
         return SessionCreateStatus(
@@ -435,8 +434,8 @@ class Session:
 
     @staticmethod
     def clear_sessions(user_id: str, session_table: Sessions) -> bool:
-        """Deletes every sesion that user has. Used mainly for resetting the password"""
-        session_table.delete_many({"owner": user_id})
+        """Deletes every session that user has. Used mainly for resetting the password"""
+        session_table.clear_user_sessions(user_id)
 
         return True
 
@@ -456,28 +455,29 @@ class Session:
             msg = "Session not found!"
             raise ValueError(msg)
 
-        owner = session_data.get("owner")
+        owner = session_data.owner
+        owner_hash = session_data.owner_hash
+        if not owner and not owner_hash:
+            msg = "User does not own target session"
+            raise SessionPermissonError(msg)
         if owner and owner != self.user_id:
             msg = "User does not own target session"
             raise SessionPermissonError(msg)
-        owner_hash = session_data.get("owner-hash")
         if not owner and owner_hash and owner_hash != Encryption.sha256(self.user_id + "eepy.page"):
             msg = "User does not own target session"
             raise SessionPermissonError(msg)
 
         success: bool = False
 
-        if session_data.get("type") == "refresh":
-            success = self.session_table.delete_session_pair(
-                session_data.get("_id", ""),
-            )
-        elif session_data.get("type") == "access":
-            success = self.session_table.delete_session_pair(
-                session_data.get("parent", ""),  # type: ignore[arg-type]
-            )
+        if session_data.type == "refresh":
+            success = self.session_table.delete_session_pair(session_data.id)
+        elif session_data.type == "access":
+            parent_id = session_data.parent
+            if parent_id:
+                success = self.session_table.delete_session_pair(parent_id)
         else:
             logger.warning("Old sesssion schema found")
-            success = self.session_table.delete_document({"_id": id}) > 0
+            success = self.session_table.delete_by_id(id)
 
         return success
 
@@ -496,28 +496,24 @@ class Session:
         backup_keys = [Encryption.generate_random_string(16) for _ in range(5)]
         encrypted_keys = [self.encryption.encrypt(key) for key in backup_keys]
 
-        user_data = self.users_table.find_user({"_id": self.username})
+        user_data = self.users_table.get_user(self.user_id)
 
         if user_data is None:
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        if user_data.get("totp", {}).get("verified"):
+        if user_data.mfa_verified:
             msg_0 = "Used already has 2FA"
             raise ValueError(msg_0)
 
-        self.users_table.modify_document(
-            filter={"_id": self.username},
-            operation="$set",
-            key="totp",
-            value={
-                "key": self.encryption.encrypt(key_for_user),
-                "verified": False,
-                "recovery": encrypted_keys,
-            },
+        self.users_table.set_mfa(
+            self.user_id,
+            self.encryption.encrypt(key_for_user),
+            encrypted_keys,
+            verified=False,
         )
 
-        display_name = self.encryption.decrypt(self.user_cache_data["display-name"])
+        display_name = self.encryption.decrypt(self.user.display_name)
         setup_url: str = pyotp.totp.TOTP(key_for_user, interval=30, digits=6).provisioning_uri(
             display_name,
             "eepy.page",
@@ -529,16 +525,17 @@ class Session:
         """Verifies that mfa code was successfully created and set by the user.
         After verification is done, MFA is necessary to login
         """
-        if not self.user_cache_data.get("totp"):
+        mfa = self.user.mfa
+        if mfa is None:
             msg = "MFA not generated"
             raise VerificationError(msg)
 
-        if self.user_cache_data.get("totp", {}).get("verified"):
+        if mfa.verified:
             msg_0 = "User is already verified"
             raise ValueError(msg_0)
 
-        user_key = self.user_cache_data.get("totp", {}).get("key")
-        if user_key is None:
+        user_key = mfa.secret_key
+        if not user_key:
             msg_1 = "user does not have a key?"
             raise ValueError(msg_1)
         totp_object = pyotp.TOTP(self.encryption.decrypt(user_key))
@@ -546,39 +543,34 @@ class Session:
         is_valid = totp_object.verify(code)
 
         if is_valid:
-            self.users_table.modify_document(
-                filter={"_id": self.username},
-                operation="$set",
-                key="totp.verified",
-                value=True,
-            )
+            self.users_table.verify_mfa(self.user_id)
 
         return is_valid
 
     def check_code(self, code: str) -> bool:
         """Checks if a backup or 2fa code is valid"""
-        try:
-            mfa_code = int(code)
-            return self.check_mfa_valid(str(mfa_code))
-        except ValueError:
-            return self.check_backup_code_valid(code)
+        stripped = code.strip()
+        if stripped.isdigit():
+            return self.check_mfa_valid(stripped)
+        return self.check_backup_code_valid(stripped)
 
     def check_mfa_valid(self, code: str) -> bool:
-        totp_object = pyotp.TOTP(
-            self.encryption.decrypt(self.user_cache_data.get("totp", {}).get("key")),  # type: ignore[arg-type]
-        )
+        mfa = self.user_cache_data.mfa if self.user_cache_data is not None else None
+        if mfa is None or not mfa.secret_key:
+            return False
+        totp_object = pyotp.TOTP(self.encryption.decrypt(mfa.secret_key))
         return totp_object.verify(code)
 
     def check_backup_code_valid(self, user_code: str) -> bool:
-        codes = self.user_cache_data.get("totp", {}).get("recovery", [])
+        mfa = self.user_cache_data.mfa if self.user_cache_data is not None else None
+        codes = mfa.recovery_codes if mfa is not None else []
         found_code: bool = False
 
         for code in codes:
             decrypted_code = self.encryption.decrypt(code)
-            logger.debug(f"Checking mfa code {user_code[:4]}... to {decrypted_code[:4]}")
 
-            if user_code == decrypted_code:
-                logger.debug("Found a matching code")
+            if secrets.compare_digest(user_code, decrypted_code):
+                logger.debug("Found a matching backup code")
                 found_code = True
                 break
 
@@ -597,28 +589,27 @@ class Session:
             raise ValueError(msg)
 
         logger.info("Removing MFA from account...")
-        self.users_table.remove_key({"_id": self.username}, "totp")
+        self.users_table.delete_mfa(self.user_id)
 
     @staticmethod
     def remove_mfa_static(
         userid: str,
         user_table: Users,
-        user: UserType,
+        user: User,
         backup_code: str,
     ) -> None:
         """
         Removes MFA without a session object. Used for when user removes 2fa with a backup code
         """
         logger.info("Checking backup code")
-        codes = user.get("totp", {}).get("recovery", [])
+        codes = user.mfa.recovery_codes if user.mfa is not None else []
         found_code: bool = False
 
         for code in codes:
             decrypted_code = user_table.encryption.decrypt(code)
-            logger.debug(f"Checking mfa code {backup_code[:4]}... to {decrypted_code[:4]}")
 
-            if backup_code == decrypted_code:
-                logger.debug("Found a matching code")
+            if secrets.compare_digest(backup_code, decrypted_code):
+                logger.debug("Found a matching backup code")
                 found_code = True
                 break
 
@@ -626,12 +617,7 @@ class Session:
             msg = "Invalid backup code"
             raise ValueError(msg)
 
-        user_table.remove_key(
-            {
-                "_id": userid,
-            },
-            "totp",
-        )
+        user_table.delete_mfa(userid)
 
     @staticmethod
     def find_session_instance(args: tuple, kwargs: dict) -> Session | None:

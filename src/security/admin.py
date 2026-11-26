@@ -1,23 +1,18 @@
 import logging
 import re
 import threading
-import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from database.exceptions import FilterMatchError, UserNotExistError
-from database.tables.domains import DomainRecord, Domains
+from database.models import User
+from database.tables.domains import DomainFormat, Domains
 from database.tables.sessions import Sessions
-from database.tables.users import UserPageType, Users, UserType
+from database.tables.users import UserPageType, Users
 from dns_.dns import DNS
 from dns_.types import AVAILABLE_TLDS, TYPES
 from dns_.validation import Validation
 from mail.email import Email
-from security.encryption import Encryption
 from security.risk import RISK_THRESHOLDS, UserRisk
-
-if TYPE_CHECKING:
-    from database.tables.referrals import ReferralType
-
 
 MAX_USERNAME_REGEX_LENGTH = 64
 MAX_USERNAME_REGEX_RESULTS = 50
@@ -31,10 +26,9 @@ class GenericDeletionError(Exception): ...
 
 
 class AccountData(UserPageType):
-    domains: list[DomainRecord]
     id: str
     banned: bool
-    ban_reasons: list[str] | list[list[str]] | None
+    ban_reasons: list[str] | None
     last_login: int
     api_key_amount: int
     accessed_from: list[str]
@@ -74,14 +68,14 @@ class Admin:
         thread.start()
         return thread
 
-    def ban_user(self, reasons: list[str], user_data: UserType, send_email: bool = False) -> bool:
+    def ban_user(self, reasons: list[str], user_data: User, send_email: bool = False) -> bool:
         if len(reasons) == 0:
             msg = "You need to specify atleast one ban reason"
             raise ValueError(msg)
 
-        domains: dict[str, TYPES] = {
-            domain["name"]: domain["type"] for domain in Domains.normalize_domains(user_data["domains"])
-        }
+        domains: list[tuple[str, TYPES]] = [
+            (domain.name, domain.type) for domain in Domains.normalize_domains(user_data.domains)
+        ]
 
         success = self.dns.delete_multiple(domains)
         if not success:
@@ -91,58 +85,50 @@ class Admin:
             msg = "Could not delete users domain"
             raise DomainDeletionError(msg)
 
-        self.users.mark_deletion_pending(user_data["_id"], reasons)
+        self.users.mark_deletion_pending(user_data.id, reasons)
 
         if send_email:
-            user_email: str = self.users.encryption.decrypt(user_data["email"])
+            user_email: str = self.users.encryption.decrypt(user_data.email)
             self.email.send_ban_email(user_email, reasons)
 
         return True
 
     def reinstate_user(self, user_id: str, send_email: bool = False) -> None:
-        user_data: UserType | None = self.users.find_user(
-            {"_id": user_id},
+        user_data = self.users.get_user(
+            user_id,
             find_banned=True,
         )
 
         if not user_data:
             msg = "User not found!"
             raise UserNotExistError(msg)
-        if not user_data.get("banned", False):
+        if not user_data.banned:
             msg_0 = "User is not banned!"
             raise ValueError(msg_0)
 
-        self.users.table.update_one(
-            {"_id": user_id},
-            {
-                "$set": {"banned": False, "unbanned": round(time.time())},
-                "$unset": {"deleted-in": 1},
-            },
-        )
+        self.users.reinstate_user(user_id)
 
-        domains = {domain["name"]: domain for domain in Domains.normalize_domains(user_data["domains"])}
+        domains: dict[str, DomainFormat] = {
+            domain.name: {"type": domain.type, "ip": domain.ip, "registered": domain.registered}
+            for domain in Domains.normalize_domains(user_data.domains)
+        }
 
         self.dns.register_multiple(domains, user_id)
         if send_email:
             self.send_nonblocking_action_email(
-                self.users.encryption.decrypt(user_data["email"]),
+                self.users.encryption.decrypt(user_data.email),
                 "Account reinstated",
             )
 
     def find_user_by_domain(self, domain: str) -> AccountData | None:
         canonical_domain = Domains.canonical_domain_name(domain)
-        user_data = self.users.find_user(
-            {
-                "domains.name": canonical_domain,
-            },
-            find_banned=True,
-        )
+        user_data = self.users.find_user_by_domain_name(canonical_domain, find_banned=True)
 
         if not user_data:
             logger.info("Failed to find user")
             return None
 
-        return self.get_user_details_by_id(user_data["_id"])
+        return self.get_user_details_by_id(user_data.id, user_data)
 
     def find_by_username(self, username: str, regex: bool = False) -> AccountData | list[AccountData] | None:  # noqa: C901
         """
@@ -150,19 +136,12 @@ class Admin:
         When regex is true, searches across decrypted usernames with regex
         """
         if not regex:
-            user: UserType | None = self.users.find_user(
-                {
-                    "$or": [
-                        {"_id": Encryption.sha256(username)},
-                        {"username": Encryption.sha256(username.lower())},
-                    ],
-                },
-            )
+            user = self.users.find_user_by_username_hash(username)
 
             if not user:
                 return None
 
-            return self.get_user_details_by_id(user["_id"], user)
+            return self.get_user_details_by_id(user.id, user)
 
         if len(username) > MAX_USERNAME_REGEX_LENGTH:
             msg = f"Regex pattern too long (max {MAX_USERNAME_REGEX_LENGTH} characters)"
@@ -178,19 +157,17 @@ class Admin:
             raise ValueError(msg) from e
 
         matching_users: list[AccountData] = []
-        cursor = self.users.table.find({}, {"_id": 1, "display-name": 1})
-        for raw_user in cursor:
-            display_name_enc = raw_user.get("display-name")
-            if not display_name_enc:
+        for raw_user in self.users.get_table():
+            if not raw_user.display_name:
                 continue
 
             try:
-                decrypted_username = self.users.encryption.decrypt(display_name_enc)
+                decrypted_username = self.users.encryption.decrypt(raw_user.display_name)
             except Exception:  # noqa: S112
                 continue
 
             if pattern.search(decrypted_username):
-                user_details = self.get_user_details_by_id(raw_user["_id"])
+                user_details = self.get_user_details_by_id(raw_user.id, raw_user)
                 if user_details:
                     matching_users.append(user_details)
                     if len(matching_users) >= MAX_USERNAME_REGEX_RESULTS:
@@ -199,66 +176,55 @@ class Admin:
         return matching_users
 
     def find_by_referral(self, referral_code: str) -> AccountData | None:
-        referral: ReferralType | None = self.users.referrals.find_item(
-            {"_id": self.users.encryption.sha256(referral_code)},
-        )  # pyright: ignore[reportAssignmentType]
+        referral = self.users.referrals.get_by_id(
+            self.users.encryption.sha256(referral_code),
+        )
 
         if referral is None:
             return None
 
-        return self.get_user_details_by_id(referral["owner"])
+        return self.get_user_details_by_id(referral.owner)
 
     def find_by_ips(self, ips: list[str]) -> list[AccountData] | None:
-        users = self.users.find_users({"accessed-from": {"$in": ips}})
+        users = self.users.find_users_by_ips(ips)
 
-        if users is None:
-            return None
+        if not users:
+            return []
 
-        return [
-            user
-            for user in [self.get_user_details_by_id(user["_id"], user) for user in users if user is not None]
-            if user is not None
-        ]
+        return [details for details in (self.get_user_details_by_id(u.id, u) for u in users) if details is not None]
 
     def get_user_details_by_id(
         self,
         user_id: str,
-        user_type: UserType | None = None,
+        user: User | None = None,
     ) -> AccountData | None:
-        user_profile: UserPageType | None = self.users.get_user_profile(
+        user_data = user or self.users.get_user(
             user_id,
-            session_table=self.sessions,
-            find_banned=True,
-            user_type=user_type,
-        )
-
-        if not user_profile:
-            logger.info("User profile did not yield results")
-            return None
-
-        user_data: UserType | None = user_type or self.users.find_user(
-            filter={"_id": user_id},
             find_banned=True,
         )
 
         if user_data is None:
-            msg = "Could not get user from db"
-            raise ValueError(msg)
+            return None
 
-        account_data: AccountData = user_profile  # type: ignore[assignment]
-        account_data["domains"] = user_data["domains"]  # pyright: ignore[reportGeneralTypeIssues]
-        account_data["id"] = user_data["_id"]
-        account_data["banned"] = user_data.get("banned", False)
-        account_data["ban_reasons"] = user_data.get("ban-reasons")
-        account_data["last_login"] = round(user_data.get("last-login", 0))
-        account_data["created"] = round(user_data.get("created", 0))
-        account_data["api_key_amount"] = len(user_data.get("api-keys", []))
-        account_data["accessed_from"] = list(set(user_data.get("accessed-from", [])))[:100]
-        account_data["risk"] = user_data.get("risk", {})
-        account_data["risk_thresholds"] = dict(RISK_THRESHOLDS)
-        account_data["disabled"] = bool(user_data.get("risk", {}).get("disabled", False))
+        user_profile: UserPageType = self.users.get_user_profile(
+            user_id,
+            session_table=self.sessions,
+            find_banned=True,
+            user=user_data,
+        )
 
-        return account_data
+        return AccountData(
+            **user_profile.model_dump(),
+            id=user_data.id,
+            banned=user_data.banned,
+            ban_reasons=list(user_data.ban_reasons or []),
+            last_login=round(user_data.last_login),
+            api_key_amount=len(user_data.api_keys or []),
+            accessed_from=list(set(user_data.accessed_ips))[:100],
+            risk=user_data.risk_dict(),
+            risk_thresholds=dict(RISK_THRESHOLDS),
+            disabled=user_data.is_disabled,
+        )
 
     def change_permission(
         self,
@@ -275,25 +241,11 @@ class Admin:
 
             if send_email:
                 self.send_nonblocking_action_email(
-                    user["email"],
+                    user.email,
                     f"Account permission changed ({permission}: {new_value})",
                 )
 
-            if permission in {"max-domains", "max-subdomains"}:
-                key = f"permissions.limits.{permission}"
-            elif permission == "enabled":
-                key = "permissions.admin.enabled"
-            else:
-                key = f"permissions.admin.permissions.{permission}"
-
-            self.users.modify_document(
-                filter={"_id": user_id},
-                operation="$set",
-                key=key,
-                value=new_value,
-            )
-
-            return True
+            return self.users.set_permission(user_id, permission, new_value)
 
         except FilterMatchError:
             return False
@@ -313,22 +265,17 @@ class Admin:
 
         if send_email:
             self.send_nonblocking_action_email(
-                user["email"],
+                user.email,
                 f"New TLD added to your account. (.{tld})",
             )
-        self.users.modify_document(
-            filter={"_id": user_id},
-            operation="$push",
-            key="owned-tlds",
-            value=tld,
-        )
+        self.users.add_owned_tld(user_id, tld)
 
     def remove_domain(self, user_id: str, tld: AVAILABLE_TLDS, send_email: bool = False) -> None:
         """Removes a TLD
 
         :param user_id: id of the user
         :type user_id: str
-        :param tld: the tld (without . prefix)
+        :param tld: the tld (without the . prefix)
         :type tld: AVAILABLE_TLDS
         """
         user = self.get_user_details_by_id(user_id)
@@ -338,20 +285,10 @@ class Admin:
 
         if send_email:
             self.send_nonblocking_action_email(
-                user["email"],
+                user.email,
                 f"TLD .{tld} has been removed from your account",
             )
-        self.users.modify_document(
-            filter={"_id": user_id},
-            operation="$pull",
-            key="owned-tlds",
-            value=tld,
-        )
+        self.users.remove_owned_tld(user_id, tld)
 
     def verify(self, user_id: str) -> None:
-        self.users.modify_document(
-            filter={"_id": user_id},
-            operation="$set",
-            key="verified",
-            value=True,
-        )
+        self.users.set_verified(user_id, verified=True)

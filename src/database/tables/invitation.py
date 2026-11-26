@@ -1,97 +1,92 @@
 import logging
 import time
+from typing import TYPE_CHECKING
 
-from pymongo import MongoClient
+from sqlalchemy import func, select
 
 from database.exceptions import InviteException, UserNotExistError
-from database.tables.users import InviteType, Users, UserType
+from database.models import Invite, User
+from database.table import Table
 from security.encryption import Encryption
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 INVITE_LENGTH: int = 16
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class Invites(Users):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client)
+class Invites(Table[Invite]):
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, Invite)
 
     def is_valid(self, code: str) -> bool:
-        logger.info(f"Checking invite {code}")
+        logger.info("Checking invite validity")
 
         if len(code) != INVITE_LENGTH:
             return False
 
-        invite_holder: UserType | None = self.find_user(
-            {f"invites.{code}": {"$exists": True}},
-        )
+        with self.session() as session:
+            invite = session.get(Invite, code)
+            if invite is None:
+                logger.info("Invite not found")
+                return False
 
-        if invite_holder is None:
-            logger.info("Invite holder does not exist...")
-            return False
+            holder = session.get(User, invite.creator_id)
+            if holder is None or holder.banned:
+                logger.info("Invite holder does not exist...")
+                return False
 
-        invite: InviteType | None = invite_holder.get("invites", {}).get(code)
-
-        if invite is None:
-            logger.info("Invite not found")
-            return False
-
-        return not invite["used"]
+            return not invite.used
 
     def create(self, user_id: str) -> str:
-        """
-        Creates an invitation code for a user.
-        Args:
-            user_id (str): The ID of the user for whom the invitation code is being created.
-        Returns:
-            str: The generated invitation code.
-        Raises:
-            UserNotExistError: If the user does not exist.
-            InviteException: If the user has already made too many invites.
-        """
         logger.info("Creating invite")
         invite_code: str = Encryption.generate_random_string(INVITE_LENGTH)
 
-        user_data: UserType | None = self.find_user({"_id": user_id})
+        with self.session() as session:
+            user = session.scalars(select(User).where(User.id == user_id).with_for_update()).first()
+            if user is None or user.banned:
+                msg = "User does not exist!"
+                raise UserNotExistError(msg)
 
-        if user_data is None:
-            msg = "User does not exist!"
-            raise UserNotExistError(msg)
+            invite_count = session.scalar(select(func.count(Invite.code)).where(Invite.creator_id == user_id)) or 0
+            if invite_count >= 3:  # noqa: PLR2004
+                msg = "User has made too many invites"
+                raise InviteException(msg)
 
-        user_invites: dict[str, InviteType] = user_data.get("invites", {})
-
-        if len(user_invites) >= 3:  # noqa: PLR2004
-            msg = "User has made too many invites"
-            raise InviteException(msg)
-
-        self.modify_document(
-            filter={"_id": user_id},
-            operation="$set",
-            key=f"invites.{invite_code}",
-            value={
-                "used": False,
-                "used_by": None,
-                "used_at": None,
-                "created": round(time.time()),
-            },
-        )
+            session.add(
+                Invite(
+                    code=invite_code,
+                    creator_id=user_id,
+                    used=False,
+                    used_by=None,
+                    used_at=None,
+                    created=round(time.time()),
+                ),
+            )
 
         return invite_code
 
     def use(self, user_id: str, invite_code: str) -> bool:
-        if not self.is_valid(invite_code):
+        if len(invite_code) != INVITE_LENGTH:
             msg = "Invite is not valid"
             raise InviteException(msg)
 
-        self.table.update_one(
-            {f"invites.{invite_code}": {"$exists": True}},
-            {
-                "$set": {
-                    f"invites.{invite_code}.used": True,
-                    f"invites.{invite_code}.used_by": user_id,
-                    f"invites.{invite_code}.used_at": round(time.time()),
-                },
-            },
-        )
+        with self.session() as session:
+            invite = session.scalars(select(Invite).where(Invite.code == invite_code).with_for_update()).first()
+            if invite is None or invite.used:
+                msg = "Invite is not valid"
+                raise InviteException(msg)
+
+            holder = session.get(User, invite.creator_id)
+            if holder is None or holder.banned:
+                msg = "Invite is not valid"
+                raise InviteException(msg)
+
+            invite.used = True
+            invite.used_by = user_id
+            invite.used_at = round(time.time())
+            session.add(invite)
 
         return True

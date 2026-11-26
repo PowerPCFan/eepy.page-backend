@@ -1,5 +1,3 @@
-# ruff: noqa: N805
-
 from typing import Literal
 
 from pydantic import (
@@ -66,8 +64,8 @@ class AdminPermissionChange(BaseModel):
     send_email: bool = False
 
     @field_validator("permission")
-    def validate_permission(cls, permission: str) -> str:
-        valid_permissions = {"enabled", "max-domains", "max-subdomains", *ADMIN_PERMISSION_NAMES}
+    def validate_permission(cls, permission: str) -> str:  # noqa: N805
+        valid_permissions = {"enabled", "max_domains", "max_subdomains", *ADMIN_PERMISSION_NAMES}
         if permission not in valid_permissions:
             msg = f"Invalid permission '{permission}'"
             raise ValueError(msg)
@@ -78,7 +76,7 @@ class AdminPermissionChange(BaseModel):
         permission = self.permission
         value = self.value
 
-        if permission in {"max-domains", "max-subdomains"}:
+        if permission in {"max_domains", "max_subdomains"}:
             if isinstance(value, bool):
                 msg = "Permission value must be an integer"
                 raise ValueError(msg)
@@ -129,7 +127,7 @@ class AdminDomainEdit(BaseModel):
     values: list[StrictStr]
     type: TYPES
     old_type: TYPES | None = None
-    mode: Literal["both", "mongo", "pdns"] = "both"
+    mode: Literal["both", "postgres", "db", "pdns"] = "both"
 
     @model_validator(mode="after")
     def validate_values(self) -> "AdminDomainEdit":
@@ -147,7 +145,7 @@ class AdminStatusMessage(BaseModel):
     message: StrictStr
 
     @field_validator("message")
-    def validate_message(cls, message: str) -> str:
+    def validate_message(cls, message: str) -> str:  # noqa: N805
         msg = message.strip()
         if not msg:
             err = "Status message cannot be empty"

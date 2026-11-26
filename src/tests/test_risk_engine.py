@@ -1,15 +1,12 @@
-import time
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+import time
+from typing import TYPE_CHECKING
 
-import pymongo
-
+from database.models import AltLink, UserDevice, UserPermissions, UserRiskProfile
 from database.table import Table
 from database.tables.domains import Domains
 from database.tables.ip_activity import (
     EXPIRES_FIELD,
-    IP_ACTIVITY_TTL_SECONDS,
     IPActivity,
     RecentLogouts,
     expiry_from_epoch,
@@ -17,7 +14,7 @@ from database.tables.ip_activity import (
 )
 from database.tables.sessions import Sessions
 from database.tables.status import Status
-from database.tables.users import USER_MIGRATION_VERSION, Users
+from database.tables.users import Users
 from dns_.dns import DNS
 from mail.email import Email
 from security.admin import Admin as AdminTools
@@ -31,12 +28,17 @@ from security.risk import (
     prune_expired_flags,
 )
 from security.session import Session
+from server.models.admin import UserDisabledBody
 from server.routes.admin import Admin as AdminRoutes
-from server.routes.models.admin import UserDisabledBody
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
+    from tests.conftest import TestUserFactory
 
 
 def make_admin_session(
-    insert_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_user: "TestUserFactory",
     users: Users,
     sessions: Sessions,
     encryption: Encryption,
@@ -44,30 +46,28 @@ def make_admin_session(
 ) -> Session:
     admin_id = Encryption.sha256("pytest_admin_actor")
     insert_user(
-        {
-            "_id": admin_id,
-            "email": encryption.encrypt("admin_actor@example.com"),
-            "email-hash": Encryption.sha256("admin_actor@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("admin_actor@example.comsupahcool"),
-            "password": encryption.create_password("admin-pass"),
-            "display-name": encryption.encrypt("pytest_admin_actor"),
-            "username": admin_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last-login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-            "permissions": {
-                "admin": {
-                    "enabled": True,
-                    "permissions": permissions,
-                },
-            },
-            "risk": create_default_risk(is_admin=True),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id=admin_id,
+        email=encryption.encrypt("admin_actor@example.com"),
+        email_hash=encryption.hash_email("admin_actor@example.com"),
+        normalized_email_hash=encryption.hash_email("admin_actor@example.com"),
+        password=encryption.create_password("admin-pass"),
+        display_name=encryption.encrypt("pytest_admin_actor"),
+        username=admin_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
+        permissions=UserPermissions(
+            user_id=admin_id,
+            admin_enabled=True,
+            admin_account=bool(permissions.get("account", False)),
+            admin_dns=bool(permissions.get("dns", False)),
+            admin_manage_permissions=bool(permissions.get("manage_permissions", False)),
+            admin_reports=bool(permissions.get("reports", False)),
+            admin_userdetails=bool(permissions.get("userdetails", False)),
+            admin_wildcards=bool(permissions.get("wildcards", False)),
+        ),
+        risk_profile=UserRiskProfile(user_id=admin_id, locked=True),
     )
     access_token, _ = Session.create_session_pair(
         admin_id,
@@ -163,31 +163,22 @@ def test_ttl_expiry_helper() -> None:
 
 def test_evaluate_risk_signals_and_threshold(
     users: Users,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     now = int(time.time())
 
     user_a = insert_test_user(
-        {
-            "_id": "aaaa1111222233334444",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": create_default_risk("device-shared-01"),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id="aaaa1111222233334444",
+        devices=[
+            UserDevice(user_id="aaaa1111222233334444", device_id="device-shared-01", first_seen=now, last_seen=now),
+        ],
     )
-    user_b = insert_test_user(
-        {
-            "_id": "bbbb5555666677778888",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
-    )
+    user_b = insert_test_user(id="bbbb5555666677778888")
 
-    users.ip_activity.record_activity("203.0.113.10", user_a["_id"], now - 300)
+    users.ip_activity.record_activity("203.0.113.10", user_a.id, now - 300)
 
     risk_b = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="203.0.113.10",
         device_id="device-shared-01",
         users_table=users,
@@ -198,18 +189,18 @@ def test_evaluate_risk_signals_and_threshold(
     assert risk_b["disabled"] is False
     assert "203.0.113.10" not in risk_b["flags"]["shared_recent_ip"]["reason"]
     assert "aaaa111122..." in risk_b["flags"]["shared_device"]["reason"]
-    assert risk_b["flags"]["shared_device"].get("user_id") == user_a["_id"]
+    assert risk_b["flags"]["shared_device"].get("user_id") == user_a.id
 
-    stored_b_doc = users.find_item({"_id": user_b["_id"]})
+    stored_b_doc = users.get_by_id(user_b.id)
     assert stored_b_doc is not None
-    stored_b = stored_b_doc["risk"]
+    stored_b = stored_b_doc.risk_dict()
     assert stored_b["score"] == 75
     assert stored_b["disabled"] is False
-    assert stored_b["flags"]["shared_device"]["user_id"] == user_a["_id"]
+    assert stored_b["flags"]["shared_device"].get("user_id") == user_a.id
 
-    users.recent_logouts.record_logout(user_a["_id"], "203.0.113.10", "device-shared-01", now - 30)
+    users.recent_logouts.record_logout(user_a.id, "203.0.113.10", "device-shared-01", now - 30)
     risk_b_after = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="203.0.113.10",
         device_id="device-shared-01",
         users_table=users,
@@ -217,52 +208,38 @@ def test_evaluate_risk_signals_and_threshold(
     assert risk_b_after["score"] == 100
     assert risk_b_after["disabled"] is True
     assert "from user aaaa111122..." in risk_b_after["flags"]["rapid_switch"]["reason"]
-    assert risk_b_after["flags"]["rapid_switch"].get("user_id") == user_a["_id"]
+    assert risk_b_after["flags"]["rapid_switch"].get("user_id") == user_a.id
 
-    stored_b_after_doc = users.find_item({"_id": user_b["_id"]})
+    stored_b_after_doc = users.get_by_id(user_b.id)
     assert stored_b_after_doc is not None
-    stored_b_after = stored_b_after_doc["risk"]
+    stored_b_after = stored_b_after_doc.risk_dict()
     assert stored_b_after["score"] == 100
     assert stored_b_after["disabled"] is True
-    assert stored_b_after["flags"]["rapid_switch"]["user_id"] == user_a["_id"]
+    assert stored_b_after["flags"]["rapid_switch"].get("user_id") == user_a.id
 
 
 def test_rapid_switch_outside_window_and_empty_ip(
     users: Users,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     now = int(time.time())
 
-    user_a = insert_test_user(
-        {
-            "_id": "user_a_id_12345",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
-    )
-    user_b = insert_test_user(
-        {
-            "_id": "user_b_id_67890",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": create_default_risk(),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
-    )
+    user_a = insert_test_user(id="user_a_id_12345")
+    user_b = insert_test_user(id="user_b_id_67890")
 
-    users.recent_logouts.record_logout(user_a["_id"], "198.51.100.5", None, now - 121)
+    users.recent_logouts.record_logout(user_a.id, "198.51.100.5", None, now - 121)
     risk_b = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="198.51.100.5",
         device_id=None,
         users_table=users,
     )
     assert "rapid_switch" not in risk_b["flags"]
 
-    users.ip_activity.record_activity("", user_a["_id"], now)
-    users.recent_logouts.record_logout(user_a["_id"], "", None, now - 10)
+    users.ip_activity.record_activity("", user_a.id, now)
+    users.recent_logouts.record_logout(user_a.id, "", None, now - 10)
     risk_empty = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="",
         device_id=None,
         users_table=users,
@@ -273,43 +250,33 @@ def test_rapid_switch_outside_window_and_empty_ip(
 
 def test_locked_profile_preserves_admin_reenable(
     users: Users,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     now = int(time.time())
 
     insert_test_user(
-        {
-            "_id": "user_a_1234567890",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": create_default_risk("device-shared-99"),
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id="user_a_1234567890",
+        devices=[UserDevice(user_id="user_a_1234567890", device_id="device-shared-99", first_seen=now, last_seen=now)],
     )
     user_b = insert_test_user(
-        {
-            "_id": "user_b_1234567890",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": {
-                "score": 100,
-                "locked": True,
-                "disabled": False,
-                "disable_reasons": [],
-                "flags": {
-                    "shared_device": {
-                        "score": 50,
-                        "reason": "Shared persistent device token with user user_a_123...",
-                        "detected_at": now - 100,
-                        "permanent": True,
-                    },
-                },
-                "device_id": "device-shared-99",
-            },
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id="user_b_1234567890",
+        risk_profile=UserRiskProfile(user_id="user_b_1234567890", score=100, locked=True),
+        devices=[UserDevice(user_id="user_b_1234567890", device_id="device-shared-99", first_seen=now, last_seen=now)],
+        alt_links=[
+            AltLink(
+                user_id="user_b_1234567890",
+                related_user_id=None,
+                signal_type="shared_device",
+                score=50,
+                reason="Shared persistent device token with user user_a_123...",
+                detected_at=now - 100,
+                permanent=True,
+            ),
+        ],
     )
 
     updated = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="203.0.113.50",
         device_id="device-shared-99",
         users_table=users,
@@ -323,98 +290,66 @@ def test_ip_activity_and_recent_logouts_subclass_table() -> None:
     assert issubclass(RecentLogouts, Table)
 
 
-def test_ip_activity_and_recent_logouts_indexes_cleanup_and_datetime_ttl(
-    mongo_client: pymongo.MongoClient,
+def test_ip_activity_and_recent_logouts_recording_and_datetime_ttl(
+    db_engine: "Engine",
+    insert_test_user: "TestUserFactory",
 ) -> None:
-    """Verifies index creation, legacy document cleanup/backfill,
-    and BSON datetime expiresAfter fields against the real test MongoDB."""
     now = int(time.time())
-    stale_epoch = now - IP_ACTIVITY_TTL_SECONDS - 100
-    fresh_epoch = now - 3600
+    insert_test_user(id="user_1")
+    ip_table = IPActivity(db_engine)
+    logout_table = RecentLogouts(db_engine)
 
-    db = mongo_client["database"]
-    ip_coll = db["ip_activity"]
-    logout_coll = db["recent_logouts"]
-
-    ip_coll.drop()
-    logout_coll.drop()
+    ip_table.delete_where()
+    logout_table.delete_where()
     try:
-        ip_coll.insert_many(
-            [
-                {"_id": "1.2.3.4_stale", "ip": "1.2.3.4", "user_id": "stale_u", "last_seen": stale_epoch},
-                {"_id": "1.2.3.4_fresh", "ip": "1.2.3.4", "user_id": "fresh_u", "last_seen": fresh_epoch},
-            ],
-        )
-
-        ip_table = IPActivity(mongo_client)
-        ip_indexes = ip_table.table.index_information()
-        assert f"{EXPIRES_FIELD}_1" in ip_indexes
-
-        assert ip_table.find_item({"_id": "1.2.3.4_stale"}) is None
-        fresh_doc = ip_table.find_item({"_id": "1.2.3.4_fresh"})
-        assert fresh_doc is not None
-        assert isinstance(fresh_doc.get(EXPIRES_FIELD), datetime)
-
         ip_table.record_activity("203.0.113.5", "user_1", now)
-        recorded_ip = ip_table.find_item({"_id": "203.0.113.5_user_1"})
+        recorded_ip = ip_table.get_by_id("203.0.113.5_user_1")
         assert recorded_ip is not None
-        assert isinstance(recorded_ip[EXPIRES_FIELD], datetime)
-
-        logout_coll.insert_one({"user_id": "legacy_u", "ip": "1.2.3.4", "device_id": "dev_1", "time": now - 10})
-
-        logout_table = RecentLogouts(mongo_client)
-        logout_indexes = logout_table.table.index_information()
-        assert f"{EXPIRES_FIELD}_1" in logout_indexes
-        assert logout_table.find_item({"user_id": "legacy_u"}) is None
+        assert isinstance(getattr(recorded_ip, EXPIRES_FIELD), datetime)
 
         logout_table.record_logout("user_1", "203.0.113.5", "dev_1234", now)
-        recorded_logout = logout_table.find_item({"user_id": "user_1"})
+        recorded_logout = logout_table.find_one(user_id="user_1")
         assert recorded_logout is not None
-        assert isinstance(recorded_logout[EXPIRES_FIELD], datetime)
+        assert isinstance(getattr(recorded_logout, EXPIRES_FIELD), datetime)
     finally:
-        ip_coll.delete_many({})
-        logout_coll.delete_many({})
+        ip_table.delete_where()
+        logout_table.delete_where()
 
 
 def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
     users: Users,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     now = int(time.time())
 
     user_b = insert_test_user(
-        {
-            "_id": "user_b_id",
-            "permissions": {"admin": {"enabled": False}},
-            "risk": {
-                "score": 75,
-                "locked": False,
-                "disabled": False,
-                "disable_reasons": [],
-                "flags": {
-                    "shared_device": {
-                        "score": 50,
-                        "reason": "Shared persistent device token with user deleted_us...",
-                        "detected_at": now - 500,
-                        "permanent": True,
-                        "user_id": "deleted_user_id",
-                    },
-                    "rapid_switch": {
-                        "score": 25,
-                        "reason": "Rapid account switch within 120s of logout from user legacy_use...",
-                        "detected_at": now - 500,
-                        "permanent": True,
-                        # Legacy flag: no user_id field stored
-                    },
-                },
-                "device_id": "dev-solo-01",
-            },
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id="user_b_id",
+        risk_profile=UserRiskProfile(user_id="user_b_id", score=75),
+        devices=[UserDevice(user_id="user_b_id", device_id="dev-solo-01", first_seen=now, last_seen=now)],
+        alt_links=[
+            AltLink(
+                user_id="user_b_id",
+                related_user_id="deleted_user_id",
+                signal_type="shared_device",
+                score=50,
+                reason="Shared persistent device token with user deleted_us...",
+                detected_at=now - 500,
+                permanent=True,
+            ),
+            AltLink(
+                user_id="user_b_id",
+                related_user_id=None,
+                signal_type="rapid_switch",
+                score=25,
+                reason="Rapid account switch within 120s of logout from user legacy_use...",
+                detected_at=now - 500,
+                permanent=True,
+            ),
+        ],
     )
 
     updated = users.risk_manager.evaluate_and_update_risk(
-        user_id=user_b["_id"],
+        user_id=user_b.id,
         ip="198.51.100.25",
         device_id="dev-solo-01",
         users_table=users,
@@ -423,61 +358,59 @@ def test_permanent_flags_drop_when_referenced_user_deleted_and_preserve_legacy(
     assert "rapid_switch" in updated["flags"]
     assert updated["score"] == 25
 
-    stored_b = users.find_item({"_id": user_b["_id"]})
+    stored_b = users.get_by_id(user_b.id)
     assert stored_b is not None
-    assert stored_b["risk"]["score"] == 25
-    assert "shared_device" not in stored_b["risk"]["flags"]
+    stored_b_risk = stored_b.risk_dict()
+    assert stored_b_risk["score"] == 25
+    assert "shared_device" not in stored_b_risk["flags"]
 
 
 def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
     email: Email,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     now = int(time.time())
+    flagged_id = Encryption.sha256("charlie_flagged")
 
     flagged_user = insert_test_user(
-        {
-            "_id": Encryption.sha256("charlie_flagged"),
-            "email": encryption.encrypt("charlie_flagged@example.com"),
-            "email-hash": Encryption.sha256("charlie_flagged@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256("charlie_flagged@example.comsupahcool"),
-            "password": encryption.create_password("secret"),
-            "display-name": encryption.encrypt("charlie_flagged"),
-            "username": Encryption.sha256("charlie_flagged"),
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": now - 1000,
-            "last-login": now - 100,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-            "permissions": {"admin": {"enabled": False, "permissions": {}}},
-            "risk": {
-                "score": 100,
-                "locked": False,
-                "disabled": True,
-                "disable_reasons": ["Automated: Risk score 100 reached or exceeded threshold (80)"],
-                "flags": {
-                    "shared_device": {
-                        "score": 50,
-                        "reason": "Shared persistent device token",
-                        "detected_at": now - 200,
-                        "permanent": True,
-                    },
-                },
-                "device_id": "dev-1234",
-            },
-            "migration-version": USER_MIGRATION_VERSION,
-        },
+        id=flagged_id,
+        email=encryption.encrypt("charlie_flagged@example.com"),
+        email_hash=encryption.hash_email("charlie_flagged@example.com"),
+        normalized_email_hash=encryption.hash_email("charlie_flagged@example.com"),
+        password=encryption.create_password("secret"),
+        display_name=encryption.encrypt("charlie_flagged"),
+        username=flagged_id,
+        country={"country": "US"},
+        created=now - 1000,
+        last_login=now - 100,
+        verified=True,
+        risk_profile=UserRiskProfile(
+            user_id=flagged_id,
+            score=100,
+            disabled=True,
+            disable_reasons=["Automated: Risk score 100 reached or exceeded threshold (80)"],
+        ),
+        devices=[UserDevice(user_id=flagged_id, device_id="dev-1234", first_seen=now, last_seen=now)],
+        alt_links=[
+            AltLink(
+                user_id=flagged_id,
+                related_user_id=None,
+                signal_type="shared_device",
+                score=50,
+                reason="Shared persistent device token",
+                detected_at=now - 200,
+                permanent=True,
+            ),
+        ],
     )
 
     dns = DNS(domains)
-    status_table = Status(mongo_client)
+    status_table = Status(db_engine)
     admin_tools = AdminTools(users, sessions, domains, dns, email)
     admin_routes = AdminRoutes(users, sessions, status_table, admin_tools)
     admin_session = make_admin_session(
@@ -485,87 +418,80 @@ def test_admin_enable_resets_score_and_flags_and_locks_against_stale_overwrite(
         users,
         sessions,
         encryption,
-        {"userdetails": True},
+        {"account": True},
     )
 
     profile = admin_routes.toggle_user_disabled(
-        UserDisabledBody(user_id=flagged_user["_id"], disabled=False),
+        UserDisabledBody(user_id=flagged_user.id, disabled=False),
         session=admin_session,
     )
-    assert profile["disabled"] is False
-    assert profile["risk"]["score"] == 0
-    assert profile["risk"]["flags"] == {}
-    assert profile["risk"]["locked"] is True
-    assert profile["risk"]["disable_reasons"] == []
+    assert profile.disabled is False
+    assert profile.risk["score"] == 0
+    assert profile.risk["flags"] == {}
+    assert profile.risk["locked"] is True
+    assert profile.risk["disable_reasons"] == []
 
     disabled_profile = admin_routes.toggle_user_disabled(
-        UserDisabledBody(user_id=flagged_user["_id"], disabled=True, reason=None),
+        UserDisabledBody(user_id=flagged_user.id, disabled=True, reason=None),
         session=admin_session,
     )
-    assert disabled_profile["disabled"] is True
+    assert disabled_profile.disabled is True
 
     admin_routes.toggle_user_disabled(
-        UserDisabledBody(user_id=flagged_user["_id"], disabled=False),
+        UserDisabledBody(user_id=flagged_user.id, disabled=False),
         session=admin_session,
     )
-    users.table.update_one(
-        {"_id": flagged_user["_id"], "risk.locked": {"$ne": True}},
-        {"$set": {"risk.score": 90, "risk.disabled": True}},
+    users.save_evaluated_risk(
+        flagged_user.id,
+        {
+            "score": 90,
+            "locked": False,
+            "disabled": True,
+            "disable_reasons": ["Stale"],
+            "flags": {},
+        },
+        only_if_unlocked=True,
     )
-    stored_after = users.find_item({"_id": flagged_user["_id"]})
+    stored_after = users.get_by_id(flagged_user.id)
     assert stored_after is not None
-    assert stored_after["risk"]["score"] == 0
-    assert stored_after["risk"]["disabled"] is False
+    stored_after_risk = stored_after.risk_dict()
+    assert stored_after_risk["score"] == 0
+    assert stored_after_risk["disabled"] is False
 
 
 def test_get_flagged_users_sorts_by_score_then_username_without_limit(
-    mongo_client: pymongo.MongoClient,
+    db_engine: "Engine",
     users: Users,
     sessions: Sessions,
     domains: Domains,
     email: Email,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
-    def make_user(username: str, score: int, disabled: bool = False) -> dict[str, Any]:
+    def add_flagged_user(username: str, score: int, disabled: bool = False) -> None:
         uid = Encryption.sha256(username)
-        return {
-            "_id": uid,
-            "email": encryption.encrypt(f"{username.lower()}@example.com"),
-            "email-hash": Encryption.sha256(f"{username.lower()}@example.comsupahcool"),
-            "normalized-email-hash": Encryption.sha256(f"{username.lower()}@example.comsupahcool"),
-            "password": None,
-            "display-name": encryption.encrypt(username),
-            "username": Encryption.sha256(username.lower()),
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last-login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-            "permissions": {"admin": {"enabled": False}},
-            "risk": {
-                "score": score,
-                "locked": False,
-                "disabled": disabled,
-                "disable_reasons": [],
-                "flags": {},
-            },
-            "migration-version": USER_MIGRATION_VERSION,
-        }
+        insert_test_user(
+            id=uid,
+            email=encryption.encrypt(f"{username.lower()}@example.com"),
+            email_hash=encryption.hash_email(f"{username.lower()}@example.com"),
+            normalized_email_hash=encryption.hash_email(f"{username.lower()}@example.com"),
+            display_name=encryption.encrypt(username),
+            username=Encryption.sha256(username.lower()),
+            country={"country": "US"},
+            created=1700000000,
+            last_login=1700000000,
+            verified=True,
+            risk_profile=UserRiskProfile(user_id=uid, score=score, disabled=disabled),
+        )
 
-    for doc in [
-        make_user("Zeta", 75),
-        make_user("alpha", 75),
-        make_user("Bravo", 95, disabled=True),
-        make_user("charlie", 75),
-        make_user("LowScoreDisabled", 10, disabled=True),
-    ]:
-        insert_test_user(doc)
+    add_flagged_user("Zeta", 75)
+    add_flagged_user("alpha", 75)
+    add_flagged_user("Bravo", 95, disabled=True)
+    add_flagged_user("charlie", 75)
+    add_flagged_user("LowScoreDisabled", 10, disabled=True)
 
     dns = DNS(domains)
-    status_table = Status(mongo_client)
+    status_table = Status(db_engine)
     admin_tools = AdminTools(users, sessions, domains, dns, email)
     admin_routes = AdminRoutes(users, sessions, status_table, admin_tools)
     admin_session = make_admin_session(
@@ -577,10 +503,65 @@ def test_get_flagged_users_sorts_by_score_then_username_without_limit(
     )
 
     flagged = admin_routes.get_flagged_users(session=admin_session)
-    assert [u["username"] for u in flagged] == [
+    assert [u.username for u in flagged] == [
         "Bravo",
         "alpha",
         "charlie",
         "Zeta",
         "LowScoreDisabled",
     ]
+
+
+def test_alt_links_relational_graph_and_cascade_delete(
+    users: Users,
+    insert_test_user: "TestUserFactory",
+) -> None:
+    now = int(time.time())
+    user_a = insert_test_user(
+        id="alt_graph_user_a",
+        devices=[UserDevice(user_id="alt_graph_user_a", device_id="dev-graph-01", first_seen=now, last_seen=now)],
+    )
+    user_b = insert_test_user(id="alt_graph_user_b")
+
+    users.risk_manager.evaluate_and_update_risk(
+        user_id=user_b.id,
+        ip="198.51.100.40",
+        device_id="dev-graph-01",
+        users_table=users,
+    )
+
+    links_from_a = users.get_alt_links(user_a.id)
+    links_from_b = users.get_alt_links(user_b.id)
+    assert len(links_from_a) == 1
+    assert len(links_from_b) == 1
+    assert links_from_a[0]["signal_type"] == "shared_device"
+    assert links_from_a[0]["user_id"] == user_b.id
+    assert links_from_a[0]["related_user_id"] == user_a.id
+
+    # Deleting user_a cascades out the alt_links row automatically
+    users.delete_by_id(user_a.id)
+    assert users.get_alt_links(user_b.id) == []
+
+
+def test_multiple_devices_tracked_per_user(
+    users: Users,
+    insert_test_user: "TestUserFactory",
+) -> None:
+    now = int(time.time())
+    user_a = insert_test_user(
+        id="multi_dev_user_a",
+        devices=[UserDevice(user_id="multi_dev_user_a", device_id="dev-laptop-01", first_seen=now, last_seen=now)],
+    )
+    user_b = insert_test_user(id="multi_dev_user_b")
+
+    # User A logs in from a second device; the first device must remain tracked
+    users.record_device(user_a.id, "dev-phone-02")
+
+    risk_b = users.risk_manager.evaluate_and_update_risk(
+        user_id=user_b.id,
+        ip="198.51.100.77",
+        device_id="dev-laptop-01",
+        users_table=users,
+    )
+    assert "shared_device" in risk_b["flags"]
+    assert risk_b["flags"]["shared_device"].get("user_id") == user_a.id

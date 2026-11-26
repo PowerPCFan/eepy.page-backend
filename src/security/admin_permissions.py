@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from database.models import User
 
 ADMIN_PERMISSION_NAMES = frozenset(
     {
         "account",
         "dns",
-        "manage-permissions",
+        "manage_permissions",
         "reports",
         "userdetails",
         "wildcards",
@@ -15,54 +18,37 @@ ADMIN_PERMISSION_NAMES = frozenset(
 FEATURE_NAMES = frozenset({"invite"})
 
 
-def admin_is_enabled(user: dict[str, Any]) -> bool:
-    permissions = user.get("permissions")
-    admin = permissions.get("admin") if isinstance(permissions, dict) else None
-    return isinstance(admin, dict) and admin.get("enabled") is True
+def admin_is_enabled(user: User | None) -> bool:
+    return bool(user is not None and user.permissions_rel is not None and user.permissions_rel.admin_enabled)
 
 
-def has_admin_permission(user: dict[str, Any], permission: str) -> bool:
-    if not admin_is_enabled(user):
+def has_admin_permission(user: User | None, permission: str) -> bool:
+    if not admin_is_enabled(user) or permission not in ADMIN_PERMISSION_NAMES:
         return False
-
-    admin = user["permissions"]["admin"]
-    permissions = admin.get("permissions")
-    return (
-        permission in ADMIN_PERMISSION_NAMES and isinstance(permissions, dict) and permissions.get(permission) is True
-    )
+    assert user is not None
+    assert user.permissions_rel is not None
+    return bool(getattr(user.permissions_rel, f"admin_{permission}", False))
 
 
-def get_admin_permissions(user: dict[str, Any]) -> list[str]:
+def get_admin_permissions(user: User | None) -> list[str]:
     if not admin_is_enabled(user):
         return []
+    assert user is not None
+    assert user.permissions_rel is not None
+    perms = user.permissions_rel
+    return [name for name in ADMIN_PERMISSION_NAMES if getattr(perms, f"admin_{name}", False)]
 
-    permissions = user["permissions"]["admin"].get("permissions")
-    if not isinstance(permissions, dict):
+
+def get_feature_permissions(user: User | None) -> list[str]:
+    if user is None or user.permissions_rel is None:
         return []
-
-    return [
-        permission
-        for permission in permissions
-        if permission in ADMIN_PERMISSION_NAMES and permissions.get(permission) is True
-    ]
+    return ["invite"] if user.permissions_rel.feature_invite else []
 
 
-def get_feature_permissions(user: dict[str, Any]) -> list[str]:
-    permissions = user.get("permissions")
-    features = permissions.get("features") if isinstance(permissions, dict) else None
-    if not isinstance(features, dict):
-        return []
-
-    return [feature for feature in features if feature in FEATURE_NAMES and features.get(feature) is True]
-
-
-def get_account_limits(user: dict[str, Any]) -> dict[str, int]:
-    permissions = user.get("permissions")
-    limits = permissions.get("limits") if isinstance(permissions, dict) else None
-    if not isinstance(limits, dict):
-        return {"max-domains": 3, "max-subdomains": 5}
-
+def get_account_limits(user: User | None) -> dict[str, int]:
+    if user is None or user.permissions_rel is None:
+        return {"max_domains": 3, "max_subdomains": 5}
     return {
-        "max-domains": limits.get("max-domains", 3),
-        "max-subdomains": limits.get("max-subdomains", 5),
+        "max_domains": user.permissions_rel.max_domains,
+        "max_subdomains": user.permissions_rel.max_subdomains,
     }

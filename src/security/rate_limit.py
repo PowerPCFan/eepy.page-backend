@@ -4,7 +4,6 @@ import hashlib
 import ipaddress
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -14,6 +13,7 @@ import redis
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from config.env import Environment
 from mail.email import normalize_email_address
 from security.convert import parse_headers
 from security.session import Session
@@ -412,7 +412,7 @@ class RedisStore:
 
 
 def create_store() -> RedisStore:
-    url = os.getenv("REDIS_URL")
+    url = Environment.redis_url()
     if not url:
         msg = "REDIS_URL must be configured for rate limiting"
         raise RuntimeError(msg)
@@ -426,7 +426,7 @@ def create_store() -> RedisStore:
 def _is_trusted_proxy(host: str) -> bool:
     if not host:
         return False
-    raw_proxies = os.getenv("TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES)
+    raw_proxies = Environment.trusted_proxies(default=DEFAULT_TRUSTED_PROXIES)
     entries = [item.strip() for item in raw_proxies.split(",") if item.strip()]
     try:
         addr = ipaddress.ip_address(host)

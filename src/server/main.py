@@ -1,6 +1,5 @@
 import datetime as dt
 import logging
-import os
 import sys
 import threading
 import time
@@ -12,8 +11,10 @@ from eepy_page_i18n import resolve_request_locale, set_current_locale
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pymongo import MongoClient
 
+from config.env import Environment
+from database.cleanup import start_expired_cleanup_loop
+from database.session import create_db_engine, set_engine
 from database.tables.codes import Codes
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
@@ -39,11 +40,13 @@ from server.routes.serveo import ServeoRoutes
 from server.routes.user import User
 
 start = time.time()
-os.environ["START_ELAPSED"] = str(round(time.time() - start, 2))
-os.environ["STARTED_AT"] = str(start)
+Environment.set_value("STARTED_AT", str(start))
+
+load_dotenv()
+debug = Environment.debug_mode()
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG if debug else logging.INFO,
     format="[%(name)s] %(levelname)s: [%(filename)s:%(funcName)s] %(message)s",
     datefmt="%d/%m/%Y %H.%M.%S",
     stream=sys.stdout,
@@ -54,9 +57,6 @@ logger.handlers = []
 
 logger.info("Logger init")
 
-if not load_dotenv():
-    logger.warning("Failed to load .env file")
-
 tags_metadata: list[dict[str, str]] = [
     {"name": "domains", "description": "Viewing, creating, and managing domains"},
     {"name": "account", "description": "Getting account data, changing settings, signing up, logging in"},
@@ -64,10 +64,10 @@ tags_metadata: list[dict[str, str]] = [
     {"name": "api", "description": "Routes that can be used with the public API"},
 ]
 
-debug = str(os.getenv("DEBUG_MODE", "False").lower().strip()) in {"true", "1", "y", "yes"}
+Environment.set_value("START_ELAPSED", str(round(time.time() - start, 2)))
 
 sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN"),
+    dsn=Environment.sentry_dsn(),
     environment=("development" if debug else "production"),
     send_default_pii=True,
 )
@@ -81,6 +81,7 @@ app.state.safe_domains = [
     "https://development.eepy.page",
     "https://canary.eepy.page",
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 app.add_middleware(RateLimitMiddleware, store=create_store())
 app.add_middleware(
@@ -99,75 +100,37 @@ async def locale_middleware(request: Request, call_next: Callable[[Request], Awa
     return await call_next(request)
 
 
-client: MongoClient = MongoClient(os.getenv("MONGODB_URL"))
+engine = create_db_engine(Environment.postgres_url())
+set_engine(engine)
 
 
-class VariableInitializer:
+class DatabaseRepositories:
     def __init__(self) -> None:
-        pass
+        self.users: Users = Users(engine)
+        self.rewards: Rewards = Rewards(engine, self.users)
+        self.sessions: Sessions = Sessions(engine)
+        self.invites: Invites = Invites(engine)
+        self.codes: Codes = Codes(engine)
+        self.domains: Domains = Domains(engine)
+        self.dns: DNS = DNS(self.domains)
+        self.tunnels: ServeoTable = ServeoTable(engine)
+        self.status: Status = Status(engine)
 
-    def gather_users(self) -> None:
-        self.users: Users = Users(client)
-        self.rewards = Rewards(client, self.users)
         threading.Thread(target=self.users.migrate_all_users, daemon=True).start()
         threading.Thread(target=self.users.start_unverified_purge_loop, daemon=True).start()
-
-    def gather_sessions(self) -> None:
-        self.sessions: Sessions = Sessions(client)
-
-    def gather_invites(self) -> None:
-        self.invites: Invites = Invites(client)
-
-    def gather_codes(self) -> None:
-        self.codes: Codes = Codes(client)
-
-    def gather_domains(self) -> None:
-        self.domains: Domains = Domains(client)
-        self.dns: DNS = DNS(self.domains)
-
-    def gather_serveo(self) -> None:
-        self.tunnels: ServeoTable = ServeoTable(client)
-
-    def gather_status(self) -> None:
-        self.status = Status(client)
+        threading.Thread(target=start_expired_cleanup_loop, args=(engine,), daemon=True).start()
 
 
-v = VariableInitializer()
-
-threads: dict[str, threading.Thread] = {
-    "users": threading.Thread(target=v.gather_users),
-    "sessions": threading.Thread(target=v.gather_sessions),
-    "invites": threading.Thread(target=v.gather_invites),
-    "codes": threading.Thread(target=v.gather_codes),
-    "domains": threading.Thread(target=v.gather_domains),
-    "tunnels": threading.Thread(target=v.gather_serveo),
-    "status": threading.Thread(target=v.gather_status),
-}
-
-for thread in threads.values():
-    thread.start()
-
-
-threads["users"].join()
-threads["domains"].join()
-threads["sessions"].join()
-threads["tunnels"].join()
+v = DatabaseRepositories()
 
 domain_instance = Domain(v.users, v.sessions, v.domains, v.dns)
-app.include_router(domain_instance.router, include_in_schema=False)
+app.include_router(domain_instance.router)
 
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
-app.include_router(
-    ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router,
-    include_in_schema=False,
-)
+app.include_router(ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router)
+app.include_router(Invite(v.users, v.sessions, v.invites).router)
 
-threads["invites"].join()
-app.include_router(Invite(v.users, v.sessions, v.invites).router, include_in_schema=False)
-
-threads["codes"].join()
-
-email: Email = Email(v.codes, v.users, Encryption(os.getenv("ENC_KEY")))
+email: Email = Email(v.codes, v.users, Encryption(Environment.enc_key()))
 app.include_router(
     User(
         table=v.users,
@@ -178,13 +141,9 @@ app.include_router(
         dns=v.dns,
         rewards=v.rewards,
     ).router,
-    include_in_schema=False,
 )
-app.include_router(
-    Auth(v.users, v.sessions, v.invites, email, v.dns).router,
-    include_in_schema=False,
-)
-app.include_router(Kofi(email, v.rewards).router, include_in_schema=False)
+app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
+app.include_router(Kofi(email, v.rewards).router)
 
 app.include_router(
     Admin(
@@ -199,26 +158,22 @@ app.include_router(
             email,
         ),
     ).router,
-    include_in_schema=False,
 )
 
 
 @app.get("/status")
 async def status() -> JSONResponse:
-    if not v.status:
-        threads["status"].join()
-
     content = {
-        "started-at": dt.datetime.fromtimestamp(
-            float(os.getenv("STARTED_AT", "0")),
+        "started_at": dt.datetime.fromtimestamp(
+            Environment.started_at(),
             dt.UTC,
         ).isoformat(),
-        "start-elapsed": f"{os.getenv('START_ELAPSED')}s",
+        "start_elapsed": f"{Environment.start_elapsed()}s",
     }
 
-    status = v.status.get()
-    if status is not None:
-        content["message"] = status["message"]
+    current_status = v.status.get()
+    if current_status is not None:
+        content["message"] = current_status.message
 
     return JSONResponse(status_code=200, content=content)
 
@@ -270,11 +225,11 @@ async def api_permission_except_handler(_request: Request, e: Exception) -> JSON
 # TODO: fix deprecated event, also make this less janky
 @app.on_event("shutdown")
 async def _shutdown_event() -> None:
-    logger.info("Application shutdown: closing MongoClient and flushing Sentry")
+    logger.info("Application shutdown: disposing database engine and flushing Sentry")
     try:
-        client.close()
+        engine.dispose()
     except Exception:
-        logger.exception("Error closing MongoClient")
+        logger.exception("Error disposing database engine")
 
     try:
         sentry_sdk.flush(timeout=5)

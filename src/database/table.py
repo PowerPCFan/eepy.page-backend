@@ -1,132 +1,61 @@
+from __future__ import annotations
+
 import logging
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
-from pymongo import MongoClient
+from sqlalchemy import delete, select
 
-from database.exceptions import FilterMatchError
+from database.models.base import Base
+from database.session import get_engine, rowcount, session_scope
 
 if TYPE_CHECKING:
-    from pymongo.collection import Collection
-    from pymongo.cursor import Cursor
-    from pymongo.database import Database
+    from collections.abc import Generator
+
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.orm import Session
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class Table:
-    def __init__(self, mongo_client: MongoClient, table_name: str) -> None:
-        logger.info(f"Initializing table {table_name}")
-        self.name: str = table_name
-        self.cluster: MongoClient = mongo_client
-        self.db: Database = self.cluster["database"]
-        self.table: Collection = self.db[table_name]
+class Table[T: Base]:
+    def __init__(self, db_engine: Engine | None, model_cls: type[T]) -> None:
+        self.engine: Engine = db_engine if db_engine is not None else get_engine()
+        self.model_cls: type[T] = model_cls
+        self.name: str = str(model_cls.__tablename__)
+        logger.info(f"Initializing table {self.name}")
 
-    def find_item(self, filter: dict[str, Any]) -> dict | None:
-        """Finds and item from the database
+    @contextmanager
+    def session(self) -> Generator[Session]:
+        with session_scope(self.engine) as session:
+            yield session
 
-        :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
-        :type filter: dict[str, Any]
-        :return: the item found, None if the item isnt found
-        :rtype: dict | None
-        """
-        result: dict | None = self.table.find_one(
-            filter,
-        )  # Not simply returning the result in case we need to do something in the future
-        return result
+    def get_by_id(self, record_id: str) -> T | None:
+        with self.session() as session:
+            return session.get(self.model_cls, record_id)
 
-    def find_items(self, filter: dict[str, Any]) -> list[dict]:
-        """Finds multiple items from the database
+    def find_one(self, **where: object) -> T | None:
+        with self.session() as session:
+            return session.scalars(select(self.model_cls).filter_by(**where)).first()
 
-        :param filter: Filter. [More info here](https://www.mongodb.com/docs/compass/query/filter/)
-        :type filter: dict[str, Any]
-        :return: list of items found. returns an empty list if None is found
-        :rtype: list[dict]
-        """
-        cursor: Cursor = self.table.find(filter)
-        return list(cursor)
+    def find_all(self, **where: object) -> list[T]:
+        with self.session() as session:
+            return list(session.scalars(select(self.model_cls).filter_by(**where)).all())
 
-    def get_table(self) -> list[dict]:
-        """Gets every item inside a specific table.
+    def get_table(self) -> list[T]:
+        return self.find_all()
 
-        :return: a list of every document inside the collection
-        :rtype: list[dict]
-        """
-        cursor: Cursor = self.table.find()
-        return list(cursor)
+    def delete_by_id(self, record_id: str) -> bool:
+        logger.info(f"Deleting record '{record_id}' on table {self.name}")
+        with self.session() as session:
+            row = session.get(self.model_cls, record_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
 
-    def insert_document(self, document: Mapping[Any, Any]) -> None:
-        """Creates a new document in the database
-
-        :param document: the document
-        :type document: Mapping[Any, Any]
-        """
-        self.table.insert_one(document)
-
-    def modify_document(  # noqa: PLR0913
-        self,
-        *,
-        filter: dict[str, Any],
-        operation: str,
-        key: str,
-        value: Any,  # noqa: ANN401
-        create_if_not_exist: bool = False,
-        ignore_no_matches: bool = False,
-    ) -> None:
-        """Modifies an item in the database
-
-        :param filter: a filter for the document that will be modified
-        :type filter: dict[str, Any]
-        :param operation: what operation to do. Uses MongoDB query operators (e.g $set)
-        :type operation: str
-        :param key: what key to change
-        :type key: str
-        :param value: new value for the key
-        :type value: Any
-        :param create_if_not_exist: create a new document if one isnt found, defaults to False
-        :type create_if_not_exist: bool, optional
-        :param ignore_no_matches: do not raise errors if filter doesn't match anything, defaults to False
-        :type ignore_no_matches: bool, optional
-        :raises FilterMatchError: if no document is found
-        """
-        result = self.table.update_one(
-            filter,
-            {operation: {key: value}},
-            upsert=create_if_not_exist,
-        )
-
-        if result.matched_count == 0 and not ignore_no_matches:
-            logger.error(
-                f"Filter {filter} for table {self.name} couldn't match a document",
-            )
-            msg = "Filter didn't match anything"
-            raise FilterMatchError(msg)
-
-    def create_index(self, key: str | list[tuple[str, int]]) -> None:
-        """Creates a new index for a specific key
-
-        :param key: the key or sequence of (key, direction) tuples to be indexed
-        :type key: str | list[tuple[str, int]]
-        """
-        logger.info(f"Creating index on table {self.name} for key {key}")
-        self.table.create_index(key)
-
-    def delete_in_time(self, date_key: str) -> None:
-        """Creates a document deletion index. `date_key` should be a DateTime object inside the document
-
-        :param date_key: a key that references a DateTime object
-        :type date_key: str
-        """
-        logger.info(f"Creating delete index for key {date_key} on table {self.name}")
-        self.table.create_index(date_key, expireAfterSeconds=1)
-
-    def delete_document(self, filter: dict[str, Any]) -> int:
-        logger.info(f"Deleting document with filter {filter} on table {self.name}")
-        return self.table.delete_one(filter).deleted_count
-
-    def delete_many(self, filter: dict[str, Any]) -> int:
-        logger.info(f"Deleting many with filter {filter} on table {self.name}")
-        return self.table.delete_many(filter).deleted_count
-
-    def remove_key(self, filter: dict[str, Any], key: str) -> bool:
-        return self.table.update_one(filter, {"$unset": {key: ""}}).matched_count != 0
+    def delete_where(self, **where: object) -> int:
+        logger.info(f"Deleting records matching {where} on table {self.name}")
+        with self.session() as session:
+            result = session.execute(delete(self.model_cls).filter_by(**where))
+            return rowcount(result)

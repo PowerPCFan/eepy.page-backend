@@ -20,4 +20,11 @@
     "ruff.format.backend": "internal",
 
     "python.analysis.autoImportCompletions": true,
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ],
 }

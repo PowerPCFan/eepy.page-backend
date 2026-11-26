@@ -1,5 +1,5 @@
+import html
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -8,14 +8,15 @@ import resend
 import resend.exceptions
 from disposable_email_domains import blocklist
 
+from config.env import Environment
 from security.encryption import Encryption
 
 if TYPE_CHECKING:
     from database.tables.codes import Codes
-    from database.tables.users import Users, UserType
+    from database.tables.users import Users
 
 
-template_path: Path = Path("src") / "mail" / "templates"
+template_path: Path = Path(__file__).resolve().parent / "templates"
 
 verify_template: str
 recovery_template: str
@@ -85,8 +86,8 @@ class Email:
     def __init__(self, codes: "Codes", users: "Users", encryption: Encryption) -> None:
         self.codes: Codes = codes
         self.users: Users = users
-        self.encryption: Encryption = encryption  # type: ignore[arg-type]
-        resend.api_key = os.getenv("RESEND_KEY")
+        self.encryption: Encryption = encryption
+        resend.api_key = Environment.resend_key()
 
     @staticmethod
     def is_disposable(email_or_domain: str) -> bool:
@@ -94,23 +95,21 @@ class Email:
 
     def is_taken(self, email: str) -> bool:
         normalized = normalize_email_address(email)
-        norm_hash: str = Encryption.sha256(normalized + "supahcool")
+        norm_hash: str = self.encryption.hash_email(normalized)
 
-        return self.users.find_item({"normalized-email-hash": norm_hash}) is not None
+        return self.users.find_one(normalized_email_hash=norm_hash) is not None
 
     def send_verification_code(self, base_url: str, username: str, email: str) -> bool:
         code: str = self.codes.create_code("verification", username)
+        verify_url = f"{base_url}/account/verify/email?code={code}"
         try:
             resend.Emails.send(
                 {
                     "from": "noreply@mail.eepy.page",
                     "to": email,
                     "subject": "Verify your account",
-                    "html": verify_template.replace(
-                        "{{link}}",
-                        f"{base_url}/account/verify/email?code={code}",
-                    ),
-                    "text": f"Go to {base_url}/account/verify/email?code={code} to verify your account",
+                    "html": verify_template.replace("{{link}}", html.escape(verify_url, quote=True)),
+                    "text": f"Go to {verify_url} to verify your account",
                 },
             )
         except resend.exceptions.ResendError:
@@ -132,8 +131,8 @@ class Email:
                     "subject": "Order completed",
                     "html": purchase_template.replace(
                         "{{link}}",
-                        purchase_link,
-                    ).replace("{{code}}", code),
+                        html.escape(purchase_link, quote=True),
+                    ).replace("{{code}}", html.escape(code)),
                     "text": f"To activate your product, go to {purchase_link}",
                 },
             )
@@ -151,7 +150,7 @@ class Email:
                     "from": "noreply@mail.eepy.page",
                     "to": email,
                     "subject": "Account deletion",
-                    "html": deletion_template.replace("{{link}}", url),
+                    "html": deletion_template.replace("{{link}}", html.escape(url, quote=True)),
                     "text": f"Go to {url} to delete your account",
                 },
             )
@@ -164,14 +163,14 @@ class Email:
         return True
 
     def send_password_code(self, username: str) -> bool:
-        user_data: UserType | None = self.users.find_user_by_identifier(username)
+        user_data = self.users.find_user_by_identifier(username)
 
         if user_data is None:
             logger.debug(f"User {username} does not exist")
             return False
 
-        user_email = self.encryption.decrypt(user_data["email"])
-        code = self.codes.create_code("recovery", user_data["_id"])
+        user_email = self.encryption.decrypt(user_data.email)
+        code = self.codes.create_code("recovery", user_data.id)
 
         try:
             resend.Emails.send(

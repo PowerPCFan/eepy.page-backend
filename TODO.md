@@ -32,7 +32,6 @@
   - Improve how I'm hosting stuff on my VPS, it's a mess
 - Make sure emails are rate limited
 - Make sure email verification is secure, with the codes and stuff - I think old codes still work, also improve the verification flow, maybe add another DB value like if the user has ever tried to log in and if it's their first login attempt + unverified THEN it'll show a dedicated "Verify your email" page and THAT'S when the verification email sends (instead of right at signup) and then they verify from there? Or is that an anti-pattern of some sort? Unsure. Also maybe check a user's standing when performing actions? If I were to set a user's status to unverified, or disable their account, they might still be logged in and stuff. Have to do some testing and messing around with this
-- API response body JSON keys: migrate to snake_case or camelCase? kebab-case works badly in both Python and JS so i have no clue why it was chosen, annoying as it forces bracket syntax (like `var["key-name"]`) instead of just `var.keyName`
 - Secrets + SSH key maintenance on VPS
 - Implement a full audit log for all actions, for many purposes
 - Remove old migrations (e.g. I'm pretty sure theres a no username -> username migration but since eepy.page started this summer, all users should have a username anyways since usernames were added before that so it's needlessly stealing CPU time)
@@ -40,9 +39,15 @@
 - Custom status page (Atlassian Statuspage / Uptime Kuma style)
 - Write how-to guides on docs.eepy.page
 - Modernize and streamline all infrastructure
-- Migrate from MongoDB to PostgreSQL and use SQLModel
 - Improve GDPR export system
 - Figure out wtf I'm doing with git. Like I need to stop doing 100000-line commits that get instantly pushed to main with me crossing my fingers that it works in prod. That just can't be happening anymore bro what are we doinggg. like it's not really a big deal since eepy.page doesn't have many users but i need to learn how to actually work on public, production systems because i do a shit ton of breaking changes out of nowhere as well. so i need proper versioning, release workflows, checklists/reminders, more incremental commits, semantic commit messages, more organization overall, using dev branches and pull requests, etc.
 - Fix turnstile! Not sure why it broke suddenly
 - make it so unverified accounts cannot be included in alt checking (for example- this just happened in production, a user got flagged as an alt because they misspelled their email, so then they created a 2nd account with a properly spelled email which was then flagged. also weirdly enough the first account was not flagged. i also need to set up the whole "Alt groups" system/page in the admin panel the whole alt system needs a lot of work)
 - discord integration into admin panel? or some sort of other admin panel notification system for flagged accounts / other things that need attention?
+  - i should actually probably move away from discord and 1. use a dedicated notification system and 2. move the signup notifs to that system as well
+    - could self-host ntfy, i've used their public instance and it's quite good
+- remove caddy from everything- that should be my own internal setup, not something that's part of the backend and in the backend .env and stuff
+- set up a password vault for eepy.page-related passwords
+- set up alembic
+- make sure everything is compliant with DNS spec
+- get rid of user eager-loading in db queries

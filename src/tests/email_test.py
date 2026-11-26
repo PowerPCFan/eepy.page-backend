@@ -1,13 +1,17 @@
 import logging
+from typing import TYPE_CHECKING
 
 import email_normalize
 import pytest
 from pydantic import ValidationError
 
-from database.tables.users import Users, UserType
+from database.tables.users import USER_MIGRATION_VERSION, Users
 from mail.email import Email, is_disposable
 from security.encryption import Encryption
-from server.routes.models.user import SignUp
+from server.models.user import SignUp
+
+if TYPE_CHECKING:
+    from tests.conftest import TestUserFactory
 
 logger = logging.getLogger(__name__)
 
@@ -60,56 +64,53 @@ class TestMail:
             skip_verification=True,
         )
 
-        user_data: UserType | None = users.find_user({"_id": user_id})
+        user_data = users.get_user(user_id)
         assert user_data is not None
 
-        decrypted_email = encryption.decrypt(user_data["email"])
+        decrypted_email = encryption.decrypt(user_data.email)
         assert decrypted_email == "Test.Norm+MyTag@gmail.com"
 
-        expected_auth_hash = Encryption.sha256("test.norm+mytag@gmail.comsupahcool")
-        assert user_data.get("email-hash") == expected_auth_hash
+        expected_auth_hash = encryption.hash_email("test.norm+mytag@gmail.com")
+        assert user_data.email_hash == expected_auth_hash
 
-        expected_norm_hash = Encryption.sha256("testnorm@gmail.comsupahcool")
-        assert user_data.get("normalized-email-hash") == expected_norm_hash
+        expected_norm_hash = encryption.hash_email("testnorm@gmail.com")
+        assert user_data.normalized_email_hash == expected_norm_hash
 
         assert users.find_user_by_identifier("Test.Norm+MyTag@gmail.com") is not None
         assert users.find_user_by_identifier("test.norm+mytag@gmail.com") is not None
         assert users.find_user_by_identifier("testnorm@gmail.com") is None
 
-    def test_migration_backfills_normalized_hash(
+    def test_in_backend_migration_framework(
         self,
         users: Users,
         encryption: Encryption,
+        insert_test_user: "TestUserFactory",
     ) -> None:
         mock_id = Encryption.sha256("unmigrated_user")
         raw_email = "Unmigrated.Account+oldtag@gmail.com"
+        norm_hash = encryption.hash_email("unmigratedaccount@gmail.com")
+        auth_hash = encryption.hash_email("unmigrated.account+oldtag@gmail.com")
 
-        legacy_doc: UserType = {
-            "_id": mock_id,
-            "email": encryption.encrypt(raw_email),
-            "password": encryption.create_password("testpass"),
-            "display-name": encryption.encrypt("unmigrated_user"),
-            "username": Encryption.sha256("unmigrated_user"),
-            "lang": "en",
-            "country": {"country": "US"},
-            "email-hash": Encryption.sha256(raw_email + "supahcool"),
-            "accessed-from": [],
-            "created": 1600000000,
-            "last-login": 1600000000,
-            "verified": True,
-            "domains": [],
-            "owned-tlds": ["eepy.page"],
-        }
-        users.table.insert_one(legacy_doc)
+        insert_test_user(
+            id=mock_id,
+            email=encryption.encrypt(raw_email),
+            password=encryption.create_password("testpass"),
+            display_name=encryption.encrypt("unmigrated_user"),
+            username=Encryption.sha256("unmigrated_user"),
+            country={"country": "US"},
+            email_hash=auth_hash,
+            normalized_email_hash=norm_hash,
+            created=1600000000,
+            last_login=1600000000,
+            verified=True,
+            migration_version=0,
+        )
 
-        migrated_user = users.find_user({"_id": mock_id})
+        migrated_user = users.get_user(mock_id)
         assert migrated_user is not None
-
-        expected_norm_hash = Encryption.sha256("unmigratedaccount@gmail.comsupahcool")
-        assert migrated_user.get("normalized-email-hash") == expected_norm_hash
-
-        expected_auth_hash = Encryption.sha256("unmigrated.account+oldtag@gmail.comsupahcool")
-        assert migrated_user.get("email-hash") == expected_auth_hash
+        assert migrated_user.normalized_email_hash == norm_hash
+        assert migrated_user.email_hash == auth_hash
+        assert migrated_user.migration_version == USER_MIGRATION_VERSION
 
 
 class TestEmailValidation:

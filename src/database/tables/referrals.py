@@ -1,46 +1,34 @@
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
-from pymongo import MongoClient
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from database.exceptions import ConflictingReferralCode, UserNotExistError
+from database.models import Referral, ReferralRedemption, User, UserPermissions
 from database.table import Table
 
 if TYPE_CHECKING:
-    from database.tables.users import Users, UserType
+    from sqlalchemy.engine import Engine
 
-from database.exceptions import (
-    ConflictingReferralCode,
-    UserNotExistError,
-)
+    from database.tables.users import Users
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-class ReferralType(TypedDict):
-    _id: str
-    owner: str
-    users: list[str]
-    created: int
-
-
-class Referrals(Table):
-    def __init__(self, mongo_client: MongoClient, users: "Users") -> None:
-        super().__init__(mongo_client, "referrals")
+class Referrals(Table[Referral]):
+    def __init__(self, db_engine: "Engine | None", users: "Users") -> None:
+        super().__init__(db_engine, Referral)
         self.users: Users = users
-
-    def insert(self, document: ReferralType) -> None:
-        return super().insert_document(document)
 
     def create(self, user_id: str, requested_code: str) -> None:
         requested_code = requested_code.lower()
         logger.info("Creating referral code")
         if len(requested_code) < 3 or len(requested_code) > 50:  # noqa: PLR2004
             msg = f"requested code is too long or too short! {requested_code}"
-            raise ValueError(
-                msg,
-            )
+            raise ValueError(msg)
 
         if not re.fullmatch(r"[a-z0-9-]+", requested_code):
             msg = "Invalid code regex!"
@@ -48,103 +36,99 @@ class Referrals(Table):
 
         lookup_request_code: str = self.users.encryption.sha256(requested_code)
 
-        user: UserType | None = self.users.find_user({"_id": user_id})
+        with self.session() as session:
+            user = session.scalars(select(User).where(User.id == user_id).with_for_update()).first()
+            if user is None or user.banned:
+                msg = "User does not exist!"
+                raise UserNotExistError(msg)
 
-        if user is None:
-            msg = "User does not exist!"
-            raise UserNotExistError(msg)
+            if user.referral_code:
+                msg = "User already has a referral code"
+                raise ValueError(msg)
 
-        if user.get("referral-code"):
-            msg = "User already has a referral code"
-            raise ValueError(msg)
+            existing = session.get(Referral, lookup_request_code)
+            if existing is not None:
+                msg = "Referral code already exists!"
+                raise ConflictingReferralCode(msg)
 
-        if self.find_item({"_id": lookup_request_code}) is not None:
-            msg = "Referral code already exists!"
-            raise ConflictingReferralCode(msg)
-
-        self.insert(
-            {
-                "_id": lookup_request_code,
-                "owner": user_id,
-                "users": [],
-                "created": round(time.time()),
-            },
-        )
-
-        self.users.modify_document(
-            filter={"_id": user_id},
-            operation="$set",
-            key="referral-code",
-            value=requested_code,
-        )
+            session.add(
+                Referral(
+                    id=lookup_request_code,
+                    owner=user_id,
+                    created=round(time.time()),
+                ),
+            )
+            user.referral_code = requested_code
+            session.add(user)
+            try:
+                session.flush()
+            except IntegrityError as exc:
+                msg = "Referral code already exists!"
+                raise ConflictingReferralCode(msg) from exc
 
     def check(self, referral_code: str) -> bool:
-        """Checks if referral code is valid
-
-        :param referral_code: the referral code
-        :type referral_code: str
-        :return: whether the code is valid
-        :rtype: bool
-        """
         referral_code = referral_code.lower()
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
+        with self.session() as session:
+            stmt = (
+                select(Referral.id)
+                .join(User, User.id == Referral.owner)
+                .where(Referral.id == lookup_request_code, User.banned.is_(False))
+            )
+            return session.scalar(stmt) is not None
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # pyright: ignore[reportAssignmentType]
-        return referral is not None
-
-    def use(self, user: "UserType", referral_code: str) -> None:
-        """Uses referral code. Does NOT modify the referred user directly, please handle that yourself
-
-        :param user: the user who got referred
-        :type user: UserType
-        :param referral_code: the referral code
-        :type referral_code: str
-        :raises ValueError: if referral code isnt valid
-        """
-
+    def use(self, user: User, referral_code: str) -> None:
         referral_code = referral_code.lower()
         logger.info(f"Using referral {referral_code}")
         lookup_request_code: str = self.users.encryption.sha256(referral_code)
 
-        referral: ReferralType | None = self.find_item({"_id": lookup_request_code})  # pyright: ignore[reportAssignmentType]
+        with self.session() as session:
+            referral = session.get(Referral, lookup_request_code)
+            if referral is None:
+                logger.warning("Referral does not exist!")
+                msg = "Referral does not exist!"
+                raise ValueError(msg)
 
-        if referral is None:
-            logger.warning("Referral does not exist!")
-            msg = "Referral does not exist!"
-            raise ValueError(msg)
+            if referral.owner == user.id:
+                msg = "Cannot redeem own referral code"
+                raise ValueError(msg)
 
-        owner: UserType | None = self.users.find_user({"_id": referral["owner"]})
-        if owner is None:
-            logger.warning("Referral owner does not exist!")
-            msg = "Referral owner does not exist!"
-            raise ValueError(msg)
+            owner = session.scalars(select(User).where(User.id == referral.owner).with_for_update()).first()
+            if owner is None or owner.banned:
+                logger.warning("Referral owner does not exist!")
+                msg = "Referral owner does not exist!"
+                raise ValueError(msg)
 
-        current_referred_count: int = owner.get("referred-count", 0)
-        new_referred_count: int = current_referred_count + 1
-
-        update_ops: dict = {"$inc": {"referred-count": 1}}
-
-        # Grant 1 extra domain for every 2 verified referrals, capped at 5 bonus domains (10 referrals)
-        if new_referred_count <= 10 and new_referred_count % 2 == 0:  # noqa: PLR2004
-            logger.info(
-                f"Granting extra domain to referral owner {referral['owner']} (referred count: {new_referred_count})",
+            existing_redemption = session.scalar(
+                select(ReferralRedemption.id).where(ReferralRedemption.referred_user_id == user.id),
             )
-            update_ops["$inc"]["permissions.limits.max-domains"] = 1
+            if existing_redemption is not None:
+                msg = "User has already redeemed a referral code"
+                raise ValueError(msg)
 
-        self.users.table.update_one(
-            {"_id": referral["owner"]},
-            update_ops,
-        )
+            new_referred_count = (owner.referred_count or 0) + 1
+            owner.referred_count = new_referred_count
 
-        self.modify_document(
-            filter={"_id": referral["_id"]},
-            operation="$push",
-            key="users",
-            value=user["_id"],
-        )
+            # Grant 1 extra domain for every 2 verified referrals, capped at 5 bonus domains (10 referrals)
+            if new_referred_count <= 10 and new_referred_count % 2 == 0:  # noqa: PLR2004
+                logger.info(
+                    f"Granting extra domain to referral owner {referral.owner} (referred count: {new_referred_count})",
+                )
+                perms = owner.permissions_rel or UserPermissions(user_id=owner.id)
+                perms.max_domains = int(perms.max_domains) + 1
+                owner.permissions_rel = perms
 
-    def get_users(self, referral_code: str) -> list["UserType"]:
+            session.add(
+                ReferralRedemption(
+                    referral_id=referral.id,
+                    referred_user_id=user.id,
+                    created_at=round(time.time()),
+                ),
+            )
+
+            session.add(owner)
+
+    def get_users(self, referral_code: str) -> list[User]:
         referral_code = referral_code.lower()
-        referrals: list[UserType] = self.find_items({"referred-by": referral_code})  # pyright: ignore[reportAssignmentType]
-
-        return referrals
+        with self.session() as session:
+            return list(session.scalars(select(User).where(User.referred_by == referral_code)).all())

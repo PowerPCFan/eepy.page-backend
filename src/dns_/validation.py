@@ -6,13 +6,13 @@ import string
 from typing import TYPE_CHECKING, NamedTuple, get_args
 
 from database.exceptions import SubdomainError, UserNotExistError
-from database.tables.domains import DomainFormat, Domains
-from database.tables.users import UserType
+from database.tables.domains import DomainInput, Domains
 from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.types import ALLOWED_TYPES, AVAILABLE_TLDS
 from security.admin_permissions import get_account_limits
 
 if TYPE_CHECKING:
+    from database.models import User
     from dns_.dns import DNS
 
 logger: logging.Logger = logging.getLogger("eepy.page")
@@ -1141,6 +1141,9 @@ class Validation:
         if type.upper() == "TXT":
             return True
 
+        if not values:
+            return False
+
         all_valid: bool = True
 
         if len(set(values)) != len(values):
@@ -1180,7 +1183,8 @@ class Validation:
                 ipv6_pattern = re.compile(
                     r"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))",
                 )
-                return re.match(string=value, pattern=ipv6_pattern) is not None
+                if re.fullmatch(string=value, pattern=ipv6_pattern) is None:
+                    all_valid = False
             else:  # If type is not in checks
                 logger.error(f"Type {type} is not valid!")
                 all_valid = False
@@ -1236,7 +1240,7 @@ class Validation:
         self,
         name: str,
         type: str,
-        domains: dict[str, DomainFormat],
+        domains: DomainInput,
         *,
         user_id: str | None = None,
         user_is_admin: bool = False,
@@ -1297,9 +1301,9 @@ class Validation:
         existing_records = [
             record
             for record in Domains.normalize_domains(domains)
-            if record["name"] == Domains.canonical_full_domain_name(canonical_domain)
+            if record.name == Domains.canonical_full_domain_name(canonical_domain)
         ]
-        if type.upper() == "CNAME" or any(record["type"] == "CNAME" for record in existing_records):  # noqa: SIM102
+        if type.upper() == "CNAME" or any(record.type == "CNAME" for record in existing_records):  # noqa: SIM102
             if existing_records:
                 logger.info(f"Record type {type} conflicts at {canonical_domain}")
                 if raise_exceptions:
@@ -1319,17 +1323,13 @@ class Validation:
                 )
             return False
 
-        for user in self.table.get_table():
-            if user_id is not None and user.get("_id") == user_id:
-                continue
-
-            for existing_domain in Domains.normalize_domains(user.get("domains", [])):
-                if Validation.domains_overlap(canonical_domain, existing_domain["name"]):
-                    logger.warning(f"Domain {canonical_domain} overlaps with {existing_domain['name']}")
-                    if raise_exceptions:
-                        msg = "Domain is already registered"
-                        raise DomainExistsError(msg)
-                    return False
+        overlapping = self.table.find_overlapping_domain(canonical_domain, exclude_user_id=user_id)
+        if overlapping is not None:
+            logger.warning(f"Domain {canonical_domain} overlaps with {overlapping}")
+            if raise_exceptions:
+                msg = "Domain is already registered"
+                raise DomainExistsError(msg)
+            return False
 
         logger.info("Domain not found in database.")
 
@@ -1340,7 +1340,7 @@ class Validation:
         user_id: str,
         domain: str,
         type: str | None = None,
-        user: UserType | None = None,
+        user: "User | None" = None,
     ) -> bool:
         """Returns whether user has a specfic domain owned. Can bee passed a user_id or user. If user_id is passed, a database lookup occurs.
 
@@ -1349,29 +1349,26 @@ class Validation:
         :param domain: the full domain name
         :type domain: str
         :param user: the user object, if provided, no database lookup occusr, defaults to None
-        :type user: UserType | None, optional
+        :type user: User | None, optional
         :raises UserNotExistError: if the user does not exist
         :return: whether user owns domain
         :rtype: bool
         """  # noqa: E501
-        if not user:
-            user_data: UserType | None = self.table.find_user({"_id": user_id})
-        else:
-            user_data = user
+        user_data = user if user is not None else self.table.get_user(user_id)
         if user_data is None:
             msg = "User does not exist!"
             raise UserNotExistError(msg)
 
-        return Domains.get_domain(user_data["domains"], domain, type) is not None
+        return Domains.get_domain(user_data.domains, domain, type) is not None
 
     @staticmethod
-    def can_user_register(domain: str, user: UserType) -> UserCanRegisterResult:
+    def can_user_register(domain: str, user: "User") -> UserCanRegisterResult:
         """Checks whether users domain limit allows them to register a domain
 
         :param domain: a beautified domain, eg a.b.eepy.page
         :type domain: str
         :param user: the user who is registering
-        :type user: UserType
+        :type user: User
         :return: whether the user can register
         :rtype: UserCanRegisterResult
         """
@@ -1381,7 +1378,7 @@ class Validation:
         user_domain_amount = 0
         subdomain_amount = 0
 
-        for user_domain in Domains.domain_names(user["domains"]):
+        for user_domain in Domains.domain_names(user.domains):
             if Validation.find_required_domain(user_domain):
                 subdomain_amount += 1
             else:
@@ -1391,9 +1388,9 @@ class Validation:
             f"User has {subdomain_amount} subdomains and {user_domain_amount} domains",
         )
 
-        limits = get_account_limits(user)  # pyright: ignore[reportArgumentType]
-        user_max_domains = int(limits["max-domains"])
-        user_max_subdomains = int(limits["max-subdomains"])
+        limits = get_account_limits(user)
+        user_max_domains = int(limits["max_domains"])
+        user_max_subdomains = int(limits["max_subdomains"])
 
         if not is_subdomain and user_domain_amount >= user_max_domains:
             return UserCanRegisterResult(success=False, comment="Domain limit exceeded")

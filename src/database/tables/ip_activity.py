@@ -1,18 +1,23 @@
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import TypedDict
+from typing import TYPE_CHECKING
 
-from pymongo import MongoClient, UpdateOne
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from database.models import IPActivityModel, RecentLogoutModel
 from database.table import Table
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 IP_ACTIVITY_TTL_SECONDS = 60 * 86400
 LOGOUT_VELOCITY_WINDOW_SECONDS = 120
 
-EXPIRES_FIELD = "expiresAfter"
+EXPIRES_FIELD = "expires_after"
 BACKFILL_BATCH_SIZE = 1000
 DEVICE_ID_REGEX: re.Pattern[str] = re.compile(r"\A[A-Za-z0-9_.:-]{4,128}\Z")
 
@@ -26,119 +31,64 @@ def normalize_device_id(device_id: str | None) -> str | None:
     return cleaned
 
 
-class IPActivityType(TypedDict):
-    _id: str
-    ip: str
-    user_id: str
-    last_seen: int
-    expiresAfter: datetime
-
-
-class RecentLogoutType(TypedDict):
-    user_id: str
-    ip: str | None
-    device_id: str | None
-    time: int
-    expiresAfter: datetime
-
-
 def expiry_from_epoch(epoch_seconds: float, ttl_seconds: int) -> datetime:
     return datetime.fromtimestamp(epoch_seconds, UTC) + timedelta(seconds=ttl_seconds)
 
 
-class IPActivity(Table):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client, "ip_activity")
-        self._ensure_indexes()
-
-    def _ensure_indexes(self) -> None:
-        try:
-            self.table.create_index([("ip", 1), ("last_seen", -1)])
-            self.table.create_index([("user_id", 1)])
-            self.delete_in_time(EXPIRES_FIELD)
-            self._cleanup_legacy_documents()
-        except Exception:
-            logger.exception("Failed to initialize TTL and lookup indexes on ip_activity table; continuing startup")
-
-    def _cleanup_legacy_documents(self, now: int | None = None) -> None:
-        current_time = round(datetime.now(UTC).timestamp()) if now is None else now
-        legacy_filter = {EXPIRES_FIELD: {"$exists": False}}
-
-        deleted = self.table.delete_many(
-            {
-                **legacy_filter,
-                "$or": [
-                    {"last_seen": {"$lte": current_time - IP_ACTIVITY_TTL_SECONDS}},
-                    {"last_seen": {"$not": {"$type": "number"}}},
-                ],
-            },
-        ).deleted_count
-
-        operations: list[UpdateOne] = []
-        backfilled = 0
-        for document in self.table.find(legacy_filter, {"last_seen": 1}):
-            operations.append(
-                UpdateOne(
-                    {"_id": document["_id"]},
-                    {"$set": {EXPIRES_FIELD: expiry_from_epoch(document["last_seen"], IP_ACTIVITY_TTL_SECONDS)}},
-                ),
-            )
-            if len(operations) >= BACKFILL_BATCH_SIZE:
-                backfilled += self.table.bulk_write(operations, ordered=False).modified_count
-                operations = []
-        if operations:
-            backfilled += self.table.bulk_write(operations, ordered=False).modified_count
-
-        if deleted or backfilled:
-            logger.info(f"ip_activity legacy cleanup: deleted {deleted}, backfilled {backfilled}")
+class IPActivity(Table[IPActivityModel]):
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, IPActivityModel)
 
     def record_activity(self, ip: str, user_id: str, timestamp: int) -> None:
-        if not ip:
+        clean_ip = ip.strip() if ip else ""
+        if not clean_ip:
             return
         try:
-            self.table.update_one(
-                {"_id": f"{ip}_{user_id}"},
-                {
-                    "$set": {
-                        "ip": ip,
+            doc_id = f"{clean_ip}_{user_id}"
+            expires_at = expiry_from_epoch(timestamp, IP_ACTIVITY_TTL_SECONDS)
+            with self.session() as session:
+                stmt = pg_insert(IPActivityModel).values(
+                    id=doc_id,
+                    ip=clean_ip,
+                    user_id=user_id,
+                    last_seen=timestamp,
+                    expires_after=expires_at,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[IPActivityModel.id],
+                    set_={
+                        "ip": clean_ip,
                         "user_id": user_id,
-                        "last_seen": timestamp,
-                        EXPIRES_FIELD: expiry_from_epoch(timestamp, IP_ACTIVITY_TTL_SECONDS),
+                        "last_seen": func.greatest(IPActivityModel.last_seen, stmt.excluded.last_seen),
+                        "expires_after": func.greatest(IPActivityModel.expires_after, stmt.excluded.expires_after),
                     },
-                },
-                upsert=True,
-            )
+                )
+                session.execute(stmt)
         except Exception:
             logger.exception("Failed to record activity in ip_activity table")
 
-    def find_recent_shared_ip(self, ip: str, user_id: str, since_timestamp: int) -> dict | None:
-        if not ip:
+    def find_recent_shared_ip(self, ip: str, user_id: str, since_timestamp: int) -> IPActivityModel | None:
+        clean_ip = ip.strip() if ip else ""
+        if not clean_ip:
             return None
-        return self.table.find_one(
-            {
-                "ip": ip,
-                "user_id": {"$ne": user_id},
-                "last_seen": {"$gt": since_timestamp},
-            },
-        )
+        now = datetime.now(UTC)
+        with self.session() as session:
+            stmt = (
+                select(IPActivityModel)
+                .where(
+                    IPActivityModel.ip == clean_ip,
+                    IPActivityModel.user_id != user_id,
+                    IPActivityModel.last_seen > since_timestamp,
+                    IPActivityModel.expires_after > now,
+                )
+                .order_by(IPActivityModel.last_seen.desc())
+            )
+            return session.scalars(stmt).first()
 
 
-class RecentLogouts(Table):
-    def __init__(self, mongo_client: MongoClient) -> None:
-        super().__init__(mongo_client, "recent_logouts")
-        self._ensure_indexes()
-
-    def _ensure_indexes(self) -> None:
-        try:
-            self.table.create_index([("ip", 1)])
-            self.table.create_index([("device_id", 1)])
-            self.table.create_index([("user_id", 1)])
-            self.delete_in_time(EXPIRES_FIELD)
-            removed = self.table.delete_many({EXPIRES_FIELD: {"$exists": False}}).deleted_count
-            if removed:
-                logger.info(f"recent_logouts legacy cleanup: deleted {removed}")
-        except Exception:
-            logger.exception("Failed to initialize TTL and lookup indexes on recent_logouts table; continuing startup")
+class RecentLogouts(Table[RecentLogoutModel]):
+    def __init__(self, db_engine: "Engine | None" = None) -> None:
+        super().__init__(db_engine, RecentLogoutModel)
 
     def record_logout(self, user_id: str, ip: str | None, device_id: str | None, timestamp: int) -> None:
         clean_ip = ip.strip() if ip else None
@@ -146,15 +96,16 @@ class RecentLogouts(Table):
         if not clean_ip and not clean_device:
             return
         try:
-            self.insert_document(
-                {
-                    "user_id": user_id,
-                    "ip": clean_ip or None,
-                    "device_id": clean_device,
-                    "time": timestamp,
-                    EXPIRES_FIELD: expiry_from_epoch(timestamp, LOGOUT_VELOCITY_WINDOW_SECONDS),
-                },
-            )
+            with self.session() as session:
+                session.add(
+                    RecentLogoutModel(
+                        user_id=user_id,
+                        ip=clean_ip or None,
+                        device_id=clean_device,
+                        time=timestamp,
+                        expires_after=expiry_from_epoch(timestamp, LOGOUT_VELOCITY_WINDOW_SECONDS),
+                    ),
+                )
         except Exception:
             logger.exception("Failed to record logout in recent_logouts table")
 
@@ -165,26 +116,28 @@ class RecentLogouts(Table):
         device_id: str | None,
         since_timestamp: int,
         limit: int = 5,
-    ) -> list[dict]:
-        query: list[dict] = []
+    ) -> list[RecentLogoutModel]:
         clean_ip = ip.strip() if ip else ""
         clean_device = normalize_device_id(device_id)
+        conditions = []
         if clean_ip:
-            query.append({"ip": clean_ip})
+            conditions.append(RecentLogoutModel.ip == clean_ip)
         if clean_device:
-            query.append({"device_id": clean_device})
-        if not query:
+            conditions.append(RecentLogoutModel.device_id == clean_device)
+        if not conditions:
             return []
 
-        cursor = (
-            self.table.find(
-                {
-                    "$or": query,
-                    "user_id": {"$ne": user_id},
-                    "time": {"$gte": since_timestamp},
-                },
+        now = datetime.now(UTC)
+        with self.session() as session:
+            stmt = (
+                select(RecentLogoutModel)
+                .where(
+                    or_(*conditions),
+                    RecentLogoutModel.user_id != user_id,
+                    RecentLogoutModel.time >= since_timestamp,
+                    RecentLogoutModel.expires_after > now,
+                )
+                .order_by(RecentLogoutModel.time.desc())
+                .limit(limit)
             )
-            .sort("time", -1)
-            .limit(limit)
-        )
-        return list(cursor)
+            return list(session.scalars(stmt).all())
