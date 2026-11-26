@@ -33,7 +33,7 @@ class SessionModel(Base):
         if expires_dt.tzinfo is None:
             expires_dt = expires_dt.replace(tzinfo=UTC)
         payload: dict[str, Any] = {
-            "_id": self.id,
+            "id": self.id,
             "owner": self.owner or "",
             "type": self.type,
             "created": self.created,

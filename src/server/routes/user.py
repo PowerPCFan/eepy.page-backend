@@ -575,7 +575,7 @@ class User:
     ) -> dict[Any, Any]:
         user_data = session.user
         return {
-            "_id": user_data.id,
+            "id": user_data.id,
             "lang": user_data.lang,
             "country": dict(user_data.country or {}),
             "created": user_data.created,
