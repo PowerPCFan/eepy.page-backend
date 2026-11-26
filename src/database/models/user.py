@@ -22,11 +22,11 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(default="")
-    email_hash: Mapped[str | None] = mapped_column(default=None, index=True)
-    normalized_email_hash: Mapped[str | None] = mapped_column(default=None, index=True)
+    email_hash: Mapped[str | None] = mapped_column(default=None, unique=True, index=True)
+    normalized_email_hash: Mapped[str | None] = mapped_column(default=None, unique=True, index=True)
     password: Mapped[str | None] = mapped_column(default=None)
     display_name: Mapped[str] = mapped_column(default="")
-    username: Mapped[str | None] = mapped_column(default=None, index=True)
+    username: Mapped[str | None] = mapped_column(default=None, unique=True, index=True)
     lang: Mapped[str] = mapped_column(default="en")
     country: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default_factory=dict, server_default="{}")
     created: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0", index=True)
@@ -55,10 +55,12 @@ class User(Base):
     migration_version: Mapped[int] = mapped_column(default=1, index=True)
     extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default_factory=dict, server_default="{}")
 
+    # passive_deletes=True delegates child row cleanup to Postgres ON DELETE CASCADE FKs.
     permissions_rel: Mapped[UserPermissions | None] = relationship(
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default=None,
     )
@@ -66,18 +68,21 @@ class User(Base):
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default=None,
     )
     ips: Mapped[list[UserIP]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
     owned_tlds_rel: Mapped[list[UserOwnedTLD]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
@@ -85,18 +90,21 @@ class User(Base):
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default=None,
     )
     devices: Mapped[list[UserDevice]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
     alt_links: Mapped[list[AltLink]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         foreign_keys="[AltLink.user_id]",
         default_factory=list,
@@ -104,6 +112,7 @@ class User(Base):
     incoming_alt_links: Mapped[list[AltLink]] = relationship(
         back_populates="related_user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         foreign_keys="[AltLink.related_user_id]",
         default_factory=list,
@@ -111,24 +120,28 @@ class User(Base):
     domains: Mapped[list[Domain]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
     tunnels: Mapped[list[ServeoTunnel]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
     api_keys: Mapped[list[ApiKey]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
     invites: Mapped[list[Invite]] = relationship(
         back_populates="creator",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         foreign_keys="[Invite.creator_id]",
         default_factory=list,

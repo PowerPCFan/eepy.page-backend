@@ -26,35 +26,37 @@ def purge_expired_records(engine: "Engine | None" = None) -> dict[str, int]:
     now_epoch = round(now.timestamp())
     counts: dict[str, int] = {}
 
-    with session_scope(engine) as session:
-        counts["sessions"] = rowcount(session.execute(delete(SessionModel).where(SessionModel.expires <= now)))
-        counts["codes"] = rowcount(
-            session.execute(delete(VerificationCode).where(VerificationCode.expires_after <= now)),
-        )
-        counts["ip_activity"] = rowcount(
-            session.execute(delete(IPActivityModel).where(IPActivityModel.expires_after <= now)),
-        )
-        counts["recent_logouts"] = rowcount(
-            session.execute(delete(RecentLogoutModel).where(RecentLogoutModel.expires_after <= now)),
-        )
-        counts["alt_links"] = rowcount(
-            session.execute(
-                delete(AltLink).where(
-                    AltLink.permanent.is_(False),
-                    AltLink.expires_at.is_not(None),
-                    AltLink.expires_at <= now_epoch,
-                ),
+    statements = [
+        ("sessions", delete(SessionModel).where(SessionModel.expires <= now)),
+        ("codes", delete(VerificationCode).where(VerificationCode.expires_after <= now)),
+        ("ip_activity", delete(IPActivityModel).where(IPActivityModel.expires_after <= now)),
+        ("recent_logouts", delete(RecentLogoutModel).where(RecentLogoutModel.expires_after <= now)),
+        (
+            "alt_links",
+            delete(AltLink).where(
+                AltLink.permanent.is_(False),
+                AltLink.expires_at.is_not(None),
+                AltLink.expires_at <= now_epoch,
             ),
-        )
-        counts["deleted_banned_users"] = rowcount(
-            session.execute(
-                delete(User).where(
-                    User.banned.is_(True),
-                    User.deleted_in.is_not(None),
-                    User.deleted_in <= now,
-                ),
+        ),
+        (
+            "deleted_banned_users",
+            # Deleting from users cascades to all user-owned child tables in Postgres (ON DELETE CASCADE).
+            delete(User).where(
+                User.banned.is_(True),
+                User.deleted_in.is_not(None),
+                User.deleted_in <= now,
             ),
-        )
+        ),
+    ]
+
+    for label, stmt in statements:
+        try:
+            with session_scope(engine) as session:
+                counts[label] = rowcount(session.execute(stmt))
+        except Exception:
+            logger.exception("Failed to purge expired rows for %s", label)
+            counts[label] = 0
 
     total = sum(counts.values())
     if total > 0:

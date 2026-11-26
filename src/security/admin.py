@@ -73,9 +73,9 @@ class Admin:
             msg = "You need to specify atleast one ban reason"
             raise ValueError(msg)
 
-        domains: dict[str, TYPES] = {
-            domain.name: domain.type for domain in Domains.normalize_domains(user_data.domains)
-        }
+        domains: list[tuple[str, TYPES]] = [
+            (domain.name, domain.type) for domain in Domains.normalize_domains(user_data.domains)
+        ]
 
         success = self.dns.delete_multiple(domains)
         if not success:

@@ -409,11 +409,12 @@ class Admin:
 
     @Session.requires_auth
     @Session.requires_permission(permission="account")
-    def delete_domain(
+    def delete_domain(  # noqa: PLR0913, PLR0917
         self,
         domain: str,
         userid: str,
         reason: str,
+        type: str | None = None,
         send_email: bool = False,
         session: Session = Depends(converter.create),
     ) -> None:
@@ -422,7 +423,7 @@ class Admin:
             raise HTTPException(status_code=404, detail="Couldnt find a user")
 
         email: str = target_user.email
-        domain_data = self.admin_tools.domains.get_domain(target_user.domains, domain)
+        domain_data = self.admin_tools.domains.get_domain(target_user.domains, domain, type)
         if domain_data is None:
             raise HTTPException(status_code=404, detail="Domain not found")
 
@@ -433,7 +434,7 @@ class Admin:
         )
 
         if dns_success:
-            if self.admin_tools.domains.delete_domain(userid, domain):
+            if self.admin_tools.domains.delete_domain(userid, domain, type=domain_data.type, allow_banned=True):
                 if send_email:
                     self.admin_tools.email.send_domain_termination_email(
                         email,
@@ -517,6 +518,7 @@ class Admin:
                     value=values,
                     type=body.type,
                     old_type=domain_data.type,
+                    allow_banned=True,
                 )
             except ValueError as error:
                 logger.exception("Admin database domain edit failed")
@@ -768,7 +770,7 @@ class Admin:
 
     @Session.requires_auth
     @Session.requires_permission(permission="dns")
-    def find_desync(  # noqa: C901
+    def find_desync(  # noqa: C901, PLR0912, PLR0915
         self,
         session: Session = Depends(converter.create),
     ) -> dict[str, object]:
@@ -777,9 +779,13 @@ class Admin:
         if not powerdns_url or not api_key:
             raise HTTPException(status_code=503, detail="PowerDNS configuration is unavailable")
 
+        banned_user_ids = {user.id for user in self.users.find_all(banned=True)}
         postgres_records: dict[tuple[str, str], list[tuple[str, ...]]] = defaultdict(list)
         owners: dict[tuple[str, str], set[str]] = defaultdict(set)
         for domain in self.admin_tools.domains.get_all_domain_records():
+            # Banned users' DNS records are removed from PowerDNS while retained in Postgres for reinstatement.
+            if domain.user_id in banned_user_ids:
+                continue
             record_type = domain.type.upper()
             if record_type not in ALLOWED_TYPES:
                 continue
@@ -884,7 +890,7 @@ class Admin:
         self.admin_tools.remove_domain(id, tld, send_email=send_email)  # pyright: ignore[reportArgumentType]
 
     @Session.requires_auth
-    @Session.requires_permission(permission="userdetails")
+    @Session.requires_permission(permission="account")
     def verify(
         self,
         id: str,
@@ -923,7 +929,7 @@ class Admin:
         return results
 
     @Session.requires_auth
-    @Session.requires_permission(permission="userdetails")
+    @Session.requires_permission(permission="account")
     def update_user_risk(
         self,
         body: RiskUpdateBody,
@@ -945,7 +951,7 @@ class Admin:
         return updated_profile
 
     @Session.requires_auth
-    @Session.requires_permission(permission="userdetails")
+    @Session.requires_permission(permission="account")
     def toggle_user_disabled(
         self,
         body: UserDisabledBody,

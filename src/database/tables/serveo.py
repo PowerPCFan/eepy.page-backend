@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from database.models import ServeoTunnel
 from database.table import Table
@@ -55,15 +55,14 @@ class ServeoTable(Table[ServeoTunnel]):
 
     def remove_tunnel(self, tunnel_id: str, user_id: str) -> None:
         with self.session() as session:
-            stmt = select(ServeoTunnel).where(
-                ServeoTunnel.id == tunnel_id,
-                ServeoTunnel.user_id == user_id,
+            session.execute(
+                delete(ServeoTunnel).where(
+                    ServeoTunnel.id == tunnel_id,
+                    ServeoTunnel.user_id == user_id,
+                ),
             )
-            row = session.scalars(stmt).first()
-            if row is not None:
-                session.delete(row)
 
     def tunnels(self, user_id: str) -> list[ServeoTunnel]:
         with self.session() as session:
-            stmt = select(ServeoTunnel).where(ServeoTunnel.user_id == user_id)
+            stmt = select(ServeoTunnel).where(ServeoTunnel.user_id == user_id).order_by(ServeoTunnel.created_at.desc())
             return list(session.scalars(stmt).all())

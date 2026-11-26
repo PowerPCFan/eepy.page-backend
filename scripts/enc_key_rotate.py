@@ -240,20 +240,30 @@ def main() -> int:
     if not apply:
         print("Dry run only. Re-run with apply to write rotated values.")
 
-    engine = create_db_engine(postgres_url)
+    engine = create_db_engine(postgres_url, init_tables=apply)
     with session_scope(engine) as session:
         user_stats = rotate_users(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
         code_stats = rotate_codes(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
         reward_stats = rotate_rewards(session, old_fernet.decrypt, new_fernet.encrypt, apply=apply)
 
+        total_errors = user_stats.errors + code_stats.errors + reward_stats.errors
+        if total_errors or not apply:
+            session.rollback()
+
     print_stats("users", user_stats)
     print_stats("codes", code_stats)
     print_stats("rewards", reward_stats)
 
-    total_errors = user_stats.errors + code_stats.errors + reward_stats.errors
     if total_errors:
-        print(f"Finished with {total_errors} error(s).", file=sys.stderr)
+        print(
+            f"Finished with {total_errors} error(s). All database changes were rolled back.",
+            file=sys.stderr,
+        )
         return 1
+
+    if not apply:
+        print("Dry run succeeded with 0 errors. Re-run with 'apply' to rotate.")
+        return 0
 
     print("Rotation complete. Paste this value into your .env to complete migration:")
     print(f"ENC_KEY={new_fernet_plaintext}")

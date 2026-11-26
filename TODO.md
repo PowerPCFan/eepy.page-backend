@@ -32,7 +32,6 @@
   - Improve how I'm hosting stuff on my VPS, it's a mess
 - Make sure emails are rate limited
 - Make sure email verification is secure, with the codes and stuff - I think old codes still work, also improve the verification flow, maybe add another DB value like if the user has ever tried to log in and if it's their first login attempt + unverified THEN it'll show a dedicated "Verify your email" page and THAT'S when the verification email sends (instead of right at signup) and then they verify from there? Or is that an anti-pattern of some sort? Unsure. Also maybe check a user's standing when performing actions? If I were to set a user's status to unverified, or disable their account, they might still be logged in and stuff. Have to do some testing and messing around with this
-- API response body JSON keys: migrate to snake_case or camelCase? kebab-case works badly in both Python and JS so i have no clue why it was chosen, annoying as it forces bracket syntax (like `var["key-name"]`) instead of just `var.keyName`
 - Secrets + SSH key maintenance on VPS
 - Implement a full audit log for all actions, for many purposes
 - Remove old migrations (e.g. I'm pretty sure theres a no username -> username migration but since eepy.page started this summer, all users should have a username anyways since usernames were added before that so it's needlessly stealing CPU time)
@@ -51,3 +50,4 @@
 - set up a password vault for eepy.page-related passwords
 - set up alembic
 - make sure everything is compliant with DNS spec
+- get rid of user eager-loading in db queries

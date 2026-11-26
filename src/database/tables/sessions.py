@@ -3,10 +3,12 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_
 
 from database.models import SessionModel
+from database.session import rowcount
 from database.table import Table
+from security.encryption import Encryption
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -40,7 +42,7 @@ class Sessions(Table[SessionModel]):
                 ip=ip,
                 parent=parent,
             )
-            session.merge(session_obj)
+            session.add(session_obj)
 
     @staticmethod
     def _is_expired(expires: datetime) -> bool:
@@ -53,9 +55,22 @@ class Sessions(Table[SessionModel]):
             if row is None:
                 return None
             if self._is_expired(row.expires):
-                session.delete(row)
+                session.execute(delete(SessionModel).where(SessionModel.id == uid))
                 return None
             return row
+
+    def clear_user_sessions(self, user_id: str) -> int:
+        owner_hash = Encryption.sha256(user_id + "eepy.page")
+        with self.session() as session:
+            result = session.execute(
+                delete(SessionModel).where(
+                    or_(
+                        SessionModel.owner == user_id,
+                        SessionModel.owner_hash == owner_hash,
+                    ),
+                ),
+            )
+            return rowcount(result)
 
     def set_manual_login(self, refresh_uid: str, user_id: str, metadata: dict[str, Any]) -> None:
         with self.session() as session:
@@ -65,7 +80,7 @@ class Sessions(Table[SessionModel]):
                 session.add(row)
 
     def delete_session_pair(self, refresh_uid: str) -> bool:
-        """Deletes both the refresh and access token for said sesison"""
+        """Deletes both the refresh and access token for said session"""
         logger.info("Marking session as disabled")
 
         if len(refresh_uid) < 30:  # noqa: PLR2004
@@ -73,22 +88,20 @@ class Sessions(Table[SessionModel]):
             return False
 
         with self.session() as session:
-            stmt = select(SessionModel).where(
-                or_(
-                    SessionModel.id == refresh_uid,
-                    SessionModel.parent == refresh_uid,
+            result = session.execute(
+                delete(SessionModel).where(
+                    or_(
+                        SessionModel.id == refresh_uid,
+                        SessionModel.parent == refresh_uid,
+                    ),
                 ),
             )
-            rows = list(session.scalars(stmt).all())
-            if not rows:
+            deleted = rowcount(result)
+            if deleted == 0:
                 logger.warning("Failed to delete session as there werent any matches")
-                logger.debug(refresh_uid)
                 return False
 
-            for row in rows:
-                session.delete(row)
-
-            logger.info(f"Deleted {len(rows)} sessions")
+            logger.info(f"Deleted {deleted} sessions")
             return True
 
     def consume_refresh_session(self, refresh_uid: str) -> SessionModel | None:
@@ -97,19 +110,21 @@ class Sessions(Table[SessionModel]):
             return None
 
         with self.session() as session:
-            stmt = select(SessionModel).where(
-                SessionModel.id == refresh_uid,
-                SessionModel.type == "refresh",
+            stmt = (
+                delete(SessionModel)
+                .where(
+                    SessionModel.id == refresh_uid,
+                    SessionModel.type == "refresh",
+                )
+                .returning(SessionModel)
             )
             target = session.scalars(stmt).first()
             if target is None:
                 return None
 
-            expired = self._is_expired(target.expires)
-            session.delete(target)
             session.execute(
                 delete(SessionModel).where(SessionModel.parent == refresh_uid),
             )
-            if expired:
+            if self._is_expired(target.expires):
                 return None
             return target

@@ -21,7 +21,9 @@ class Status(Table[StatusModel]):
     def get(self) -> StatusModel | None:
         logger.info("Getting active status")
         with self.session() as session:
-            return session.scalars(select(StatusModel).where(StatusModel.active.is_(True))).first()
+            return session.scalars(
+                select(StatusModel).where(StatusModel.active.is_(True)).order_by(StatusModel.time.desc()),
+            ).first()
 
     def set(self, message: str) -> None:
         with self.session() as session:

@@ -386,18 +386,23 @@ class User:
     ) -> UserPageType:
         return self.table.get_user_profile(session.user_id, self.session_table)
 
+    @staticmethod
+    def _safe_origin(request: Request) -> str:
+        origin = request.headers.get("Origin", "").strip()
+        safe_domains: list[str] = getattr(request.app.state, "safe_domains", [])
+        if origin and origin in safe_domains:
+            return origin
+        return "https://www.eepy.page"
+
     def resend_verification(self, request: Request, user_id: str) -> None:
-        self.codes.create_code("verification", user_id)
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
+        from_url: str = self._safe_origin(request)
 
         user_data = self.table.get_user(user_id)
 
-        if user_data is None:
-            logger.info(f"Could not find user with id {user_id}")
-            raise HTTPException(status_code=404, detail="User not found")
-
-        if user_data.verified:
-            raise HTTPException(status_code=409, detail="Account already verified")
+        if user_data is None or user_data.verified:
+            # Return 200 silently so unauthenticated callers cannot enumerate accounts or verification state.
+            logger.info("Skipping verification resend for unknown or already-verified account")
+            return
 
         email: str = self.encryption.decrypt(user_data.email)
 
@@ -417,6 +422,7 @@ class User:
             if target and target.verified:
                 logger.info("Account is already verified")
                 return
+            raise HTTPException(status_code=400, detail="Code is expired or invalid")
 
         try:
             target_account = code_status.get("account")
@@ -452,7 +458,7 @@ class User:
         x_mfa_code: Annotated[str, Header()],
         session: Session = Depends(converter.create),
     ) -> None:
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
+        from_url: str = self._safe_origin(request)
         if session.user.mfa_verified and not session.check_code(x_mfa_code):
             raise HTTPException(status_code=412, detail="Invalid MFA code")
 
@@ -623,9 +629,9 @@ class User:
         if user_data is None:
             raise HTTPException(status_code=404, detail="Account not found")
 
-        domains: dict[str, TYPES] = {
-            domain.name: domain.type for domain in Domains.normalize_domains(user_data.domains)
-        }
+        domains: list[tuple[str, TYPES]] = [
+            (domain.name, domain.type) for domain in Domains.normalize_domains(user_data.domains)
+        ]
 
         success = self.dns.delete_multiple(domains)
         if not success:
@@ -633,7 +639,10 @@ class User:
                 "Domain mass deletion failed! Continuing with account deletion.",
             )
 
+        # Clear legacy owner_hash sessions explicitly; Postgres ON DELETE CASCADE removes all other user-owned rows.
+        Session.clear_sessions(user_id, self.session_table)
         self.table.delete_by_id(user_id)
+        self.codes.delete_code(code, "deletion")
 
     def send_recovery_link(self, username: str) -> None:  # username being a plaintext string
         try:
@@ -654,3 +663,5 @@ class User:
 
         if not self.table.set_password(username, password):
             raise HTTPException(status_code=404, detail="Invalid user")
+
+        self.codes.delete_code(body.code, "recovery")

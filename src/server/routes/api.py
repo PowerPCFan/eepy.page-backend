@@ -11,7 +11,7 @@ from database.tables.sessions import Sessions as SessionTable
 from database.tables.users import UserPageType
 from database.tables.users import Users as UsersTable
 from dns_.dns import DNS
-from dns_.exceptions import DNSException, DomainExistsError
+from dns_.exceptions import DNSException, DomainExistsError, ReservedDomainError
 from dns_.validation import Validation
 from security.admin_permissions import admin_is_enabled
 from security.api import Api, ApiPermission
@@ -152,7 +152,10 @@ class API:
 
     @Api.requires_auth
     @Api.requires_permission("register")
-    def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901
+    def register(self, body: DomainType, api: Api = Depends(converter.create)) -> None:  # noqa: C901, PLR0912
+        if not body.values or not self.dns_validation.record_value_valid(body.values, body.type):
+            raise HTTPException(status_code=412, detail=f"Invalid value in {body.values}")
+
         user = api.user
         can_user_register = self.dns_validation.can_user_register(body.domain, user)
         tld = Domains.separate_domain_into_parts(body.domain)[-1]
@@ -182,6 +185,8 @@ class API:
             )
         except DomainExistsError:
             raise HTTPException(status_code=409, detail="Domain is already registered")
+        except ReservedDomainError:
+            raise HTTPException(status_code=409, detail="Domain is unavailable")
 
         if not is_domain_available:
             raise HTTPException(status_code=409, detail="Domain is not available")
@@ -198,7 +203,7 @@ class API:
         try:
             self.dns.register_domain(
                 body.domain,
-                body.values[0],
+                body.values,
                 body.type,
                 f"Registered through API user: {api.user_id}",
             )
@@ -206,15 +211,20 @@ class API:
             logger.exception("DNSException occurred during domain registration:")
             raise HTTPException(status_code=500, detail="DNS Registration failed")
 
-        self.domains.add_domain(
-            api.user_id,
-            body.domain,
-            {
-                "type": body.type,
-                "ip": body.values,
-                "registered": round(time.time()),
-            },
-        )
+        try:
+            self.domains.add_domain(
+                api.user_id,
+                body.domain,
+                {
+                    "type": body.type,
+                    "ip": body.values,
+                    "registered": round(time.time()),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to save domain in PostgreSQL; rolling back PowerDNS record")
+            self.dns.delete_domain(body.domain, body.type)
+            raise HTTPException(status_code=500, detail="Domain database update failed")
 
     @Api.requires_auth
     @Api.requires_permission("modify")
@@ -314,15 +324,22 @@ class API:
                     detail=f"Cannot delete domain while subdomains exist ({preview}). Please delete subdomains first.",
                 )
 
-        if not self.domains.delete_domain(api.user_id, domain, type):
+        if self.domains.get_domain(user_domains, domain, type) is None:
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",
             )
+
         if not self.dns.delete_domain(domain, type):
             raise HTTPException(
                 status_code=403,
                 detail="DNS deletion failed: maybe the domain doesnt exist? Try specifying a type manually",
+            )
+
+        if not self.domains.delete_domain(api.user_id, domain, type):
+            raise HTTPException(
+                status_code=403,
+                detail="Domain does not exist, or user does not own it.",
             )
 
     @Api.requires_auth

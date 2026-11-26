@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, DateTime
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.models.base import Base
@@ -13,7 +13,7 @@ class SessionModel(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    owner: Mapped[str] = mapped_column(default="", index=True)
+    owner: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), default=None, index=True)
     owner_hash: Mapped[str | None] = mapped_column(default=None, index=True)
     type: Mapped[str] = mapped_column(default="access", index=True)
     created: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
@@ -34,7 +34,7 @@ class SessionModel(Base):
             expires_dt = expires_dt.replace(tzinfo=UTC)
         payload: dict[str, Any] = {
             "_id": self.id,
-            "owner": self.owner,
+            "owner": self.owner or "",
             "type": self.type,
             "created": self.created,
             "expires": round(expires_dt.timestamp()),
@@ -45,8 +45,6 @@ class SessionModel(Base):
             payload["owner_hash"] = self.owner_hash
         if self.parent:
             payload["parent"] = self.parent
-        if self.manual_login is not None:
-            payload["manual_login"] = self.manual_login
         return payload
 
 

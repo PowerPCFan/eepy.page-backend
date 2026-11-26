@@ -60,13 +60,15 @@ install_cron() {
 }
 
 run_backup() {
+    umask 077
+
     if [ ! -f "${ENV_FILE}" ]; then
         echo "[$(date -u +%FT%TZ)] ERROR: .env file not found at ${ENV_FILE}" >&2
         exit 1
     fi
 
     local raw_url
-    raw_url="$(grep -E '^[[:space:]]*POSTGRES_URL=' "${ENV_FILE}" | tail -n 1 | cut -d '=' -f 2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+    raw_url="$(grep -E '^[[:space:]]*(export[[:space:]]+)?POSTGRES_URL=' "${ENV_FILE}" | tail -n 1 | cut -d '=' -f 2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)"
 
     if [ -z "${raw_url}" ]; then
         echo "[$(date -u +%FT%TZ)] ERROR: POSTGRES_URL is not set in ${ENV_FILE}" >&2
@@ -77,6 +79,19 @@ run_backup() {
     pg_url="${pg_url/postgresql+psycopg2:\/\//postgresql://}"
     pg_url="${pg_url/postgres:\/\//postgresql://}"
 
+    local pg_host="" pg_port="" pg_db="" pg_user="" pg_pass=""
+    eval "$(python3 - "${pg_url}" <<'PY'
+import shlex, sys
+from urllib.parse import unquote, urlparse
+u = urlparse(sys.argv[1])
+print(f"pg_host={shlex.quote(u.hostname or 'localhost')}")
+print(f"pg_port={shlex.quote(str(u.port or 5432))}")
+print(f"pg_db={shlex.quote((u.path or '').lstrip('/'))}")
+print(f"pg_user={shlex.quote(unquote(u.username or ''))}")
+print(f"pg_pass={shlex.quote(unquote(u.password or ''))}")
+PY
+    )"
+
     mkdir -p "${BACKUP_DIR}"
     chmod 700 "${BACKUP_DIR}"
 
@@ -84,13 +99,19 @@ run_backup() {
     timestamp="$(date -u +%Y%m%d_%H%M%SZ)"
     local dump_file="${BACKUP_DIR}/eepy_page_${timestamp}.dump"
     local tmp_file="${dump_file}.tmp"
+    local pgpass_file
+    pgpass_file="$(mktemp)"
+    chmod 600 "${pgpass_file}"
+    printf '%s:%s:%s:%s:%s\n' "${pg_host}" "${pg_port}" "${pg_db}" "${pg_user}" "${pg_pass}" > "${pgpass_file}"
 
-    trap 'rm -f "${tmp_file}"' EXIT
+    trap 'rm -f "${tmp_file}" "${pgpass_file}"' EXIT
 
     echo "[$(date -u +%FT%TZ)] Starting PostgreSQL backup..."
 
     if command -v pg_dump >/dev/null 2>&1; then
-        pg_dump --format=custom --compress=9 --no-owner --no-privileges --dbname="${pg_url}" --file="${tmp_file}"
+        PGPASSFILE="${pgpass_file}" pg_dump --format=custom --compress=9 --no-owner --no-privileges \
+            --host="${pg_host}" --port="${pg_port}" --username="${pg_user}" --dbname="${pg_db}" \
+            --file="${tmp_file}"
     elif command -v docker >/dev/null 2>&1; then
         local container="${PG_CONTAINER:-}"
         if [ -z "${container}" ]; then
@@ -106,7 +127,7 @@ run_backup() {
             exit 1
         fi
 
-        docker exec "${container}" pg_dump --format=custom --compress=9 --no-owner --no-privileges --dbname="${pg_url}" > "${tmp_file}"
+        docker exec -e "PGPASSWORD=${pg_pass}" "${container}" pg_dump --format=custom --compress=9 --no-owner --no-privileges --username="${pg_user}" --dbname="${pg_db}" > "${tmp_file}"
     else
         echo "[$(date -u +%FT%TZ)] ERROR: Neither pg_dump nor docker is installed." >&2
         exit 1
@@ -119,6 +140,7 @@ run_backup() {
 
     chmod 600 "${tmp_file}"
     mv "${tmp_file}" "${dump_file}"
+    rm -f "${pgpass_file}"
     trap - EXIT
 
     local size

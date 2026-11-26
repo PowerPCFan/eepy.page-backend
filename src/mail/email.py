@@ -1,3 +1,4 @@
+import html
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from database.tables.users import Users
 
 
-template_path: Path = Path("src") / "mail" / "templates"
+template_path: Path = Path(__file__).resolve().parent / "templates"
 
 verify_template: str
 recovery_template: str
@@ -100,17 +101,15 @@ class Email:
 
     def send_verification_code(self, base_url: str, username: str, email: str) -> bool:
         code: str = self.codes.create_code("verification", username)
+        verify_url = f"{base_url}/account/verify/email?code={code}"
         try:
             resend.Emails.send(
                 {
                     "from": "noreply@mail.eepy.page",
                     "to": email,
                     "subject": "Verify your account",
-                    "html": verify_template.replace(
-                        "{{link}}",
-                        f"{base_url}/account/verify/email?code={code}",
-                    ),
-                    "text": f"Go to {base_url}/account/verify/email?code={code} to verify your account",
+                    "html": verify_template.replace("{{link}}", html.escape(verify_url, quote=True)),
+                    "text": f"Go to {verify_url} to verify your account",
                 },
             )
         except resend.exceptions.ResendError:
@@ -132,8 +131,8 @@ class Email:
                     "subject": "Order completed",
                     "html": purchase_template.replace(
                         "{{link}}",
-                        purchase_link,
-                    ).replace("{{code}}", code),
+                        html.escape(purchase_link, quote=True),
+                    ).replace("{{code}}", html.escape(code)),
                     "text": f"To activate your product, go to {purchase_link}",
                 },
             )
@@ -151,7 +150,7 @@ class Email:
                     "from": "noreply@mail.eepy.page",
                     "to": email,
                     "subject": "Account deletion",
-                    "html": deletion_template.replace("{{link}}", url),
+                    "html": deletion_template.replace("{{link}}", html.escape(url, quote=True)),
                     "text": f"Go to {url} to delete your account",
                 },
             )

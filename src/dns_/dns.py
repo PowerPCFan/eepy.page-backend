@@ -1,6 +1,7 @@
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any, cast
 
 import dns.exception
 import dns.rdataclass
@@ -166,7 +167,7 @@ class DNS:
     def register_domain(
         self,
         domain: str,
-        content: str,
+        content: str | list[str],
         type: str,
         user_id: str,
     ) -> bool:
@@ -183,8 +184,15 @@ class DNS:
             DNSException: If the request to register the domain fails.
             ValueError: If the ID of the newly created DNS record cannot be retrieved.
         """
-
-        content = sanitize(content, type)
+        raw_values = content if isinstance(content, list) else [content]
+        records = [
+            {
+                "content": sanitize(value, type),
+                "disabled": False,
+                "comment": f"Created with Session based auth ({user_id})",
+            }
+            for value in raw_values
+        ]
 
         (name, tld) = Domains.separate_domain_into_parts(domain)
 
@@ -198,13 +206,7 @@ class DNS:
                             "type": type,
                             "ttl": 300,
                             "changetype": "REPLACE",
-                            "records": [
-                                {
-                                    "content": content,
-                                    "disabled": False,
-                                    "comment": f"Created with Session based auth ({user_id})",
-                                },
-                            ],
+                            "records": records,
                         },
                     ],
                 },
@@ -214,32 +216,31 @@ class DNS:
         )
 
         if not request.ok:
-            logger.error(f"Failed to register domain {domain}. {request.json()}")
+            err_payload = self._safe_json(request)
+            logger.error(f"Failed to register domain {domain}. {err_payload}")
 
             if not self.key:
                 logger.error("API key not defined!")
 
             msg = "Failed to register domain"
-            raise DNSException(msg, request.json())
+            raise DNSException(msg, err_payload)
 
         return True
 
+    @staticmethod
+    def _safe_json(response: requests.Response) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except ValueError:
+            return {"status_code": response.status_code, "text": response.text}
+        return data if isinstance(data, dict) else {"data": data}
+
     def register_multiple(self, domains: Mapping[str, DomainFormat], user_id: str) -> bool:
         """
-        Registers a new DNS record for the specified domain.
-        Args:
-            domain (str): The name of the DNS record (e.g., a.b).
-            content (str): The content of the DNS record.
-            type (str): The type of the DNS record (e.g., A, AAAA, CNAME, etc.).
-            user_id (str): ID of the user creating the record
-        Returns:
-            str: The ID of the newly created DNS record.
-        Raises:
-            DNSException: If the request to register the domain fails.
-            ValueError: If the ID of the newly created DNS record cannot be retrieved.
+        Registers multiple DNS records grouped by TLD.
         """
 
-        rrsets: list[RRSet] = []
+        rrsets_by_tld: dict[str, list[RRSet]] = {}
 
         for domain, values in domains.items():
             (name, tld) = Domains.separate_domain_into_parts(domain)
@@ -262,8 +263,9 @@ class DNS:
                     },
                 )
 
-            rrsets.append(rrset)
+            rrsets_by_tld.setdefault(tld, []).append(rrset)
 
+        for tld, rrsets in rrsets_by_tld.items():
             request = requests.patch(
                 f"{self.domain}/api/v1/servers/localhost/zones/{tld}.",
                 data=json.dumps({"rrsets": rrsets}),
@@ -272,15 +274,16 @@ class DNS:
             )
 
             if not request.ok:
+                err_payload = self._safe_json(request)
                 logger.error(
-                    f"Failed to register domains for TLD {tld}. {request.json()}",
+                    f"Failed to register domains for TLD {tld}. {err_payload}",
                 )
 
                 if not self.key:
                     logger.critical("API key not defined!")
 
                 msg = "Failed to register domain"
-                raise DNSException(msg, request.json())
+                raise DNSException(msg, err_payload)
 
         return True
 
@@ -321,23 +324,25 @@ class DNS:
             if not self.key:
                 logger.critical("DNS API key missing!")
 
-            logger.error(f"Could not delete domain {domain}. {request.json()}")
+            logger.error(f"Could not delete domain {domain}. {self._safe_json(request)}")
             return False
 
         return True
 
-    def delete_multiple(self, domains: dict[str, TYPES]) -> bool:
-        """Deleted multiple records at once
+    def delete_multiple(self, domains: Mapping[str, TYPES] | Iterable[tuple[str, TYPES]]) -> bool:
+        """Deletes multiple records at once.
 
         Args:
-            domains (dict[str, TYPES]): A set of keys {domain: type}
+            domains: Mapping of ``{domain: type}`` or iterable of ``(domain, type)`` pairs.
         """
-
-        logger.info(f"mass deleting records {list(domains.keys())}")
+        pairs: list[tuple[str, TYPES]] = (
+            cast("list[tuple[str, TYPES]]", list(domains.items())) if isinstance(domains, Mapping) else list(domains)
+        )
+        logger.info(f"mass deleting records {pairs}")
 
         rrsets: dict[str, list[dict]] = {}
 
-        for domain, type in domains.items():
+        for domain, type in pairs:
             (name, tld) = Domains.separate_domain_into_parts(domain)
 
             if tld not in rrsets:
@@ -362,7 +367,7 @@ class DNS:
 
             if not request.ok:
                 logger.error(
-                    f"Failed to delete domains for TLD {tld}. {request.json()}",
+                    f"Failed to delete domains for TLD {tld}. {self._safe_json(request)}",
                 )
 
                 if not self.key:

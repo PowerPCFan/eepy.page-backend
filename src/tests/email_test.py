@@ -1,6 +1,5 @@
-from collections.abc import Callable
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 import email_normalize
 import pytest
@@ -8,8 +7,11 @@ from pydantic import ValidationError
 
 from database.tables.users import USER_MIGRATION_VERSION, Users
 from mail.email import Email, is_disposable
-from server.models.user import SignUp
 from security.encryption import Encryption
+from server.models.user import SignUp
+
+if TYPE_CHECKING:
+    from tests.conftest import TestUserFactory
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ class TestMail:
         self,
         users: Users,
         encryption: Encryption,
-        insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+        insert_test_user: "TestUserFactory",
     ) -> None:
         mock_id = Encryption.sha256("unmigrated_user")
         raw_email = "Unmigrated.Account+oldtag@gmail.com"
@@ -90,24 +92,18 @@ class TestMail:
         auth_hash = encryption.hash_email("unmigrated.account+oldtag@gmail.com")
 
         insert_test_user(
-            {
-                "_id": mock_id,
-                "email": encryption.encrypt(raw_email),
-                "password": encryption.create_password("testpass"),
-                "display_name": encryption.encrypt("unmigrated_user"),
-                "username": Encryption.sha256("unmigrated_user"),
-                "lang": "en",
-                "country": {"country": "US"},
-                "email_hash": auth_hash,
-                "normalized_email_hash": norm_hash,
-                "accessed_from": [],
-                "created": 1600000000,
-                "last_login": 1600000000,
-                "verified": True,
-                "domains": [],
-                "owned_tlds": ["eepy.page"],
-                "migration_version": 0,
-            },
+            id=mock_id,
+            email=encryption.encrypt(raw_email),
+            password=encryption.create_password("testpass"),
+            display_name=encryption.encrypt("unmigrated_user"),
+            username=Encryption.sha256("unmigrated_user"),
+            country={"country": "US"},
+            email_hash=auth_hash,
+            normalized_email_hash=norm_hash,
+            created=1600000000,
+            last_login=1600000000,
+            verified=True,
+            migration_version=0,
         )
 
         migrated_user = users.get_user(mock_id)

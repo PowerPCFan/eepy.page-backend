@@ -40,11 +40,13 @@ from server.routes.serveo import ServeoRoutes
 from server.routes.user import User
 
 start = time.time()
-Environment.set_value("START_ELAPSED", str(round(time.time() - start, 2)))
 Environment.set_value("STARTED_AT", str(start))
 
+load_dotenv()
+debug = Environment.debug_mode()
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG if debug else logging.INFO,
     format="[%(name)s] %(levelname)s: [%(filename)s:%(funcName)s] %(message)s",
     datefmt="%d/%m/%Y %H.%M.%S",
     stream=sys.stdout,
@@ -55,9 +57,6 @@ logger.handlers = []
 
 logger.info("Logger init")
 
-if not load_dotenv():
-    logger.warning("Failed to load .env file")
-
 tags_metadata: list[dict[str, str]] = [
     {"name": "domains", "description": "Viewing, creating, and managing domains"},
     {"name": "account", "description": "Getting account data, changing settings, signing up, logging in"},
@@ -65,7 +64,7 @@ tags_metadata: list[dict[str, str]] = [
     {"name": "api", "description": "Routes that can be used with the public API"},
 ]
 
-debug = Environment.debug_mode()
+Environment.set_value("START_ELAPSED", str(round(time.time() - start, 2)))
 
 sentry_sdk.init(
     dsn=Environment.sentry_dsn(),
@@ -125,14 +124,11 @@ class DatabaseRepositories:
 v = DatabaseRepositories()
 
 domain_instance = Domain(v.users, v.sessions, v.domains, v.dns)
-app.include_router(domain_instance.router, include_in_schema=False)
+app.include_router(domain_instance.router)
 
 app.include_router(API(v.users, v.domains, v.dns, v.sessions).router)
-app.include_router(
-    ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router,
-    include_in_schema=False,
-)
-app.include_router(Invite(v.users, v.sessions, v.invites).router, include_in_schema=False)
+app.include_router(ServeoRoutes(v.tunnels, v.users, v.sessions, v.domains, v.dns).router)
+app.include_router(Invite(v.users, v.sessions, v.invites).router)
 
 email: Email = Email(v.codes, v.users, Encryption(Environment.enc_key()))
 app.include_router(
@@ -145,13 +141,9 @@ app.include_router(
         dns=v.dns,
         rewards=v.rewards,
     ).router,
-    include_in_schema=False,
 )
-app.include_router(
-    Auth(v.users, v.sessions, v.invites, email, v.dns).router,
-    include_in_schema=False,
-)
-app.include_router(Kofi(email, v.rewards).router, include_in_schema=False)
+app.include_router(Auth(v.users, v.sessions, v.invites, email, v.dns).router)
+app.include_router(Kofi(email, v.rewards).router)
 
 app.include_router(
     Admin(
@@ -166,7 +158,6 @@ app.include_router(
             email,
         ),
     ).router,
-    include_in_schema=False,
 )
 
 

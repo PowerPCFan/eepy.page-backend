@@ -1,7 +1,7 @@
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Generator
 import secrets
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from cryptography.fernet import Fernet
 import pytest
@@ -14,7 +14,6 @@ from database.models import (
     Domain,
     User,
     UserDevice,
-    UserIP,
     UserMFA,
     UserOwnedTLD,
     UserPermissions,
@@ -36,139 +35,33 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 
-def _build_user_from_test_doc(doc: Mapping[str, Any]) -> User:
-    user_id = str(doc.get("_id") or doc.get("id"))
-    user = User(
-        id=user_id,
-        email=str(doc.get("email", "")),
-        email_hash=doc.get("email_hash"),
-        normalized_email_hash=doc.get("normalized_email_hash"),
-        password=doc.get("password"),
-        display_name=str(doc.get("display_name", "")),
-        username=doc.get("username"),
-        lang=str(doc.get("lang", "en")),
-        country=dict(doc.get("country") or {}),
-        created=int(doc.get("created", 0)),
-        last_login=int(doc.get("last_login", 0)),
-        feature_flags=dict(doc.get("feature_flags") or {}),
-        verified=bool(doc.get("verified", False)),
-        credits=int(doc.get("credits", 200)),
-        invite_code=str(doc.get("invite_code", "")),
-        banned=bool(doc.get("banned", False)),
-        ban_reasons=list(doc.get("ban_reasons") or []),
-        referral_code=str(doc.get("referral_code", "")),
-        referred_by=str(doc.get("referred_by", "")),
-        referred_count=int(doc.get("referred_count", 0)),
-        migration_version=int(doc.get("migration_version", USER_MIGRATION_VERSION)),
-    )
-
-    raw_perms = doc.get("permissions")
-    perms = UserPermissions(user_id=user_id)
-    if isinstance(raw_perms, Mapping):
-        limits = raw_perms.get("limits")
-        if isinstance(limits, Mapping):
-            if limits.get("max_domains") is not None:
-                perms.max_domains = int(limits["max_domains"])
-            if limits.get("max_subdomains") is not None:
-                perms.max_subdomains = int(limits["max_subdomains"])
-        features = raw_perms.get("features")
-        if isinstance(features, Mapping) and "invite" in features:
-            perms.feature_invite = bool(features["invite"])
-        admin = raw_perms.get("admin")
-        if isinstance(admin, Mapping):
-            if "enabled" in admin:
-                perms.admin_enabled = bool(admin["enabled"])
-            admin_perms = admin.get("permissions")
-            if isinstance(admin_perms, Mapping):
-                perms.admin_account = bool(admin_perms.get("account", False))
-                perms.admin_dns = bool(admin_perms.get("dns", False))
-                perms.admin_manage_permissions = bool(admin_perms.get("manage_permissions", False))
-                perms.admin_reports = bool(admin_perms.get("reports", False))
-                perms.admin_userdetails = bool(admin_perms.get("userdetails", False))
-                perms.admin_wildcards = bool(admin_perms.get("wildcards", False))
-    user.permissions_rel = perms
-
-    raw_totp = doc.get("totp")
-    if isinstance(raw_totp, Mapping) and (raw_totp.get("key") or raw_totp.get("verified")):
-        user.mfa = UserMFA(
-            user_id=user_id,
-            verified=bool(raw_totp.get("verified", False)),
-            secret_key=str(raw_totp.get("key") or ""),
-            recovery_codes=list(raw_totp.get("recovery") or []),
-        )
-
-    raw_tlds = doc.get("owned_tlds")
-    tlds = list(raw_tlds) if isinstance(raw_tlds, list) else ["eepy.page"]
-    user.owned_tlds_rel = [UserOwnedTLD(user_id=user_id, tld=str(tld)) for tld in tlds]
-
-    raw_ips = doc.get("accessed_from")
-    if isinstance(raw_ips, list):
-        user.ips = [
-            UserIP(user_id=user_id, ip=str(ip), first_seen=idx, last_seen=idx)
-            for idx, ip in enumerate(raw_ips)
-            if str(ip).strip()
-        ]
-
-    raw_domains = doc.get("domains")
-    if isinstance(raw_domains, list):
-        user.domains = [
-            Domain(
-                user_id=user_id,
-                name=Domains.canonical_full_domain_name(str(d["name"])),
-                type=str(d.get("type", "A")).upper(),
-                ip=list(d["ip"]) if isinstance(d.get("ip"), list) else [str(d.get("ip", ""))],
-                registered=int(d.get("registered", 0)),
-            )
-            for d in raw_domains
-            if isinstance(d, Mapping) and d.get("name")
-        ]
-
-    raw_keys = doc.get("api_keys")
-    if isinstance(raw_keys, Mapping):
-        user.api_keys = [
-            ApiKey(
-                id=str(key_id),
-                user_id=user_id,
-                string=str(kd.get("string", "")),
-                perms=list(kd.get("perms") or []),
-                domains=list(kd.get("domains") or []),
-                comment=str(kd.get("comment", "")),
-            )
-            for key_id, kd in raw_keys.items()
-            if isinstance(kd, Mapping)
-        ]
-
-    raw_risk = doc.get("risk")
-    rp = UserRiskProfile(user_id=user_id)
-    if isinstance(raw_risk, Mapping):
-        rp.score = int(raw_risk.get("score") or 0)
-        rp.locked = bool(raw_risk.get("locked", False))
-        rp.disabled = bool(raw_risk.get("disabled", False))
-        rp.disable_reasons = list(raw_risk.get("disable_reasons") or [])
-
-        raw_dev = raw_risk.get("device_id")
-        if isinstance(raw_dev, str) and raw_dev.strip():
-            now_ts = int(time.time())
-            user.devices = [UserDevice(user_id=user_id, device_id=raw_dev.strip(), first_seen=now_ts, last_seen=now_ts)]
-
-        raw_flags = raw_risk.get("flags")
-        if isinstance(raw_flags, Mapping):
-            user.alt_links = [
-                AltLink(
-                    user_id=user_id,
-                    related_user_id=str(fd["user_id"]) if fd.get("user_id") else None,
-                    signal_type=str(sig),
-                    score=int(fd.get("score") or 0),
-                    reason=str(fd.get("reason") or ""),
-                    detected_at=int(fd.get("detected_at") or 0),
-                    expires_at=int(fd["expires_at"]) if fd.get("expires_at") is not None else None,
-                    permanent=bool(fd.get("permanent", False)),
-                )
-                for sig, fd in raw_flags.items()
-                if isinstance(fd, Mapping)
-            ]
-    user.risk_profile = rp
-    return user
+class TestUserFactory(Protocol):
+    def __call__(  # noqa: PLR0913
+        self,
+        *,
+        id: str,
+        email: str = "",
+        email_hash: str | None = None,
+        normalized_email_hash: str | None = None,
+        password: str | None = None,
+        display_name: str = "",
+        username: str | None = None,
+        lang: str = "en",
+        country: dict[str, Any] | None = None,
+        created: int = 0,
+        last_login: int = 0,
+        feature_flags: dict[str, bool] | None = None,
+        verified: bool = False,
+        migration_version: int = USER_MIGRATION_VERSION,
+        permissions: UserPermissions | None = None,
+        mfa: UserMFA | None = None,
+        owned_tlds: list[str] | None = None,
+        domains: list[Domain] | None = None,
+        api_keys: list[ApiKey] | None = None,
+        risk_profile: UserRiskProfile | None = None,
+        devices: list[UserDevice] | None = None,
+        alt_links: list[AltLink] | None = None,
+    ) -> User: ...
 
 
 def _resolve_test_db_engine() -> "Engine":
@@ -328,24 +221,71 @@ def insert_test_user(
     users: Users,
     sessions: Sessions,
     codes: Codes,
-) -> Generator[Callable[[dict[str, Any]], dict[str, Any]]]:
+) -> Generator[TestUserFactory]:
     created_ids: list[str] = []
     users.ip_activity.delete_where()
     users.recent_logouts.delete_where()
 
-    def _insert(doc: dict[str, Any]) -> dict[str, Any]:
-        uid = str(doc["_id"])
-        users.delete_by_id(uid)
-        user_obj = _build_user_from_test_doc(doc)
+    def _insert(  # noqa: PLR0913
+        *,
+        id: str,
+        email: str = "",
+        email_hash: str | None = None,
+        normalized_email_hash: str | None = None,
+        password: str | None = None,
+        display_name: str = "",
+        username: str | None = None,
+        lang: str = "en",
+        country: dict[str, Any] | None = None,
+        created: int = 0,
+        last_login: int = 0,
+        feature_flags: dict[str, bool] | None = None,
+        verified: bool = False,
+        migration_version: int = USER_MIGRATION_VERSION,
+        permissions: UserPermissions | None = None,
+        mfa: UserMFA | None = None,
+        owned_tlds: list[str] | None = None,
+        domains: list[Domain] | None = None,
+        api_keys: list[ApiKey] | None = None,
+        risk_profile: UserRiskProfile | None = None,
+        devices: list[UserDevice] | None = None,
+        alt_links: list[AltLink] | None = None,
+    ) -> User:
+        users.delete_by_id(id)
+        tlds = ["eepy.page"] if owned_tlds is None else owned_tlds
+        user_obj = User(
+            id=id,
+            email=email,
+            email_hash=email_hash,
+            normalized_email_hash=normalized_email_hash,
+            password=password,
+            display_name=display_name,
+            username=username,
+            lang=lang,
+            country=dict(country or {}),
+            created=created,
+            last_login=last_login,
+            feature_flags=dict(feature_flags or {}),
+            verified=verified,
+            migration_version=migration_version,
+        )
+        user_obj.permissions_rel = permissions or UserPermissions(user_id=id)
+        user_obj.mfa = mfa
+        user_obj.owned_tlds_rel = [UserOwnedTLD(user_id=id, tld=tld) for tld in tlds]
+        user_obj.domains = list(domains or [])
+        user_obj.api_keys = list(api_keys or [])
+        user_obj.risk_profile = risk_profile or UserRiskProfile(user_id=id)
+        user_obj.devices = list(devices or [])
+
         with users.session() as session:
             user_obj.alt_links = [
                 link
-                for link in user_obj.alt_links
+                for link in (alt_links or [])
                 if link.related_user_id is None or session.get(User, link.related_user_id) is not None
             ]
             session.add(user_obj)
-        created_ids.append(uid)
-        return doc
+        created_ids.append(id)
+        return user_obj
 
     yield _insert
 

@@ -165,7 +165,7 @@ class Session:
             return []
 
         flags: dict[str, bool] = self.user_cache_data.feature_flags or {}
-        return list(flags.keys()) if flags else []
+        return [key for key, enabled in flags.items() if enabled]
 
     @staticmethod
     def _jwt_key() -> str:
@@ -434,8 +434,8 @@ class Session:
 
     @staticmethod
     def clear_sessions(user_id: str, session_table: Sessions) -> bool:
-        """Deletes every sesion that user has. Used mainly for resetting the password"""
-        session_table.delete_where(owner=user_id)
+        """Deletes every session that user has. Used mainly for resetting the password"""
+        session_table.clear_user_sessions(user_id)
 
         return True
 
@@ -456,10 +456,13 @@ class Session:
             raise ValueError(msg)
 
         owner = session_data.owner
+        owner_hash = session_data.owner_hash
+        if not owner and not owner_hash:
+            msg = "User does not own target session"
+            raise SessionPermissonError(msg)
         if owner and owner != self.user_id:
             msg = "User does not own target session"
             raise SessionPermissonError(msg)
-        owner_hash = session_data.owner_hash
         if not owner and owner_hash and owner_hash != Encryption.sha256(self.user_id + "eepy.page"):
             msg = "User does not own target session"
             raise SessionPermissonError(msg)
@@ -546,11 +549,10 @@ class Session:
 
     def check_code(self, code: str) -> bool:
         """Checks if a backup or 2fa code is valid"""
-        try:
-            mfa_code = int(code)
-            return self.check_mfa_valid(str(mfa_code))
-        except ValueError:
-            return self.check_backup_code_valid(code)
+        stripped = code.strip()
+        if stripped.isdigit():
+            return self.check_mfa_valid(stripped)
+        return self.check_backup_code_valid(stripped)
 
     def check_mfa_valid(self, code: str) -> bool:
         mfa = self.user_cache_data.mfa if self.user_cache_data is not None else None
@@ -566,10 +568,9 @@ class Session:
 
         for code in codes:
             decrypted_code = self.encryption.decrypt(code)
-            logger.debug(f"Checking mfa code {user_code[:4]}... to {decrypted_code[:4]}")
 
-            if user_code == decrypted_code:
-                logger.debug("Found a matching code")
+            if secrets.compare_digest(user_code, decrypted_code):
+                logger.debug("Found a matching backup code")
                 found_code = True
                 break
 
@@ -606,10 +607,9 @@ class Session:
 
         for code in codes:
             decrypted_code = user_table.encryption.decrypt(code)
-            logger.debug(f"Checking mfa code {backup_code[:4]}... to {decrypted_code[:4]}")
 
-            if backup_code == decrypted_code:
-                logger.debug("Found a matching code")
+            if secrets.compare_digest(backup_code, decrypted_code):
+                logger.debug("Found a matching backup code")
                 found_code = True
                 break
 

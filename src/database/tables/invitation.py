@@ -2,6 +2,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from sqlalchemy import func, select
+
 from database.exceptions import InviteException, UserNotExistError
 from database.models import Invite, User
 from database.table import Table
@@ -20,7 +22,7 @@ class Invites(Table[Invite]):
         super().__init__(db_engine, Invite)
 
     def is_valid(self, code: str) -> bool:
-        logger.info(f"Checking invite {code}")
+        logger.info("Checking invite validity")
 
         if len(code) != INVITE_LENGTH:
             return False
@@ -43,12 +45,13 @@ class Invites(Table[Invite]):
         invite_code: str = Encryption.generate_random_string(INVITE_LENGTH)
 
         with self.session() as session:
-            user = session.get(User, user_id)
+            user = session.scalars(select(User).where(User.id == user_id).with_for_update()).first()
             if user is None or user.banned:
                 msg = "User does not exist!"
                 raise UserNotExistError(msg)
 
-            if len(user.invites or []) >= 3:  # noqa: PLR2004
+            invite_count = session.scalar(select(func.count(Invite.code)).where(Invite.creator_id == user_id)) or 0
+            if invite_count >= 3:  # noqa: PLR2004
                 msg = "User has made too many invites"
                 raise InviteException(msg)
 
@@ -66,15 +69,21 @@ class Invites(Table[Invite]):
         return invite_code
 
     def use(self, user_id: str, invite_code: str) -> bool:
-        if not self.is_valid(invite_code):
+        if len(invite_code) != INVITE_LENGTH:
             msg = "Invite is not valid"
             raise InviteException(msg)
 
         with self.session() as session:
-            invite = session.get(Invite, invite_code)
-            if invite is None:
+            invite = session.scalars(select(Invite).where(Invite.code == invite_code).with_for_update()).first()
+            if invite is None or invite.used:
                 msg = "Invite is not valid"
                 raise InviteException(msg)
+
+            holder = session.get(User, invite.creator_id)
+            if holder is None or holder.banned:
+                msg = "Invite is not valid"
+                raise InviteException(msg)
+
             invite.used = True
             invite.used_by = user_id
             invite.used_at = round(time.time())

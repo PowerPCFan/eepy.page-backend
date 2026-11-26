@@ -54,7 +54,10 @@ def main() -> int:
         return 1
 
     original_metadata = {
-        "accessed_from": user_obj.accessed_ips,
+        "accessed_from": [
+            {"ip": row.ip, "first_seen": row.first_seen, "last_seen": row.last_seen}
+            for row in (user_obj.ips or [])
+        ],
         "last_login": user_obj.last_login,
     }
 

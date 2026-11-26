@@ -28,7 +28,8 @@ def normalize_postgres_url(url: str | None = None) -> str:
     if raw.startswith("postgresql://"):
         return "postgresql+psycopg://" + raw.removeprefix("postgresql://")
     if not raw.startswith("postgresql+"):
-        msg = f"Unsupported database URL scheme (PostgreSQL required): {raw.split('://', 1)[0]}"
+        scheme = raw.split("://", 1)[0] if "://" in raw else "<missing scheme>"
+        msg = f"Unsupported database URL scheme (PostgreSQL required): {scheme}"
         raise ValueError(msg)
     return raw
 

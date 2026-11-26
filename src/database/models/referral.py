@@ -10,12 +10,14 @@ class Referral(Base):
     __tablename__ = "referrals"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    owner: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    owner: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
     created: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
+    # passive_deletes=True delegates redemption cleanup to Postgres ON DELETE CASCADE.
     redemptions: Mapped[list[ReferralRedemption]] = relationship(
         back_populates="referral",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         default_factory=list,
     )
@@ -26,7 +28,7 @@ class ReferralRedemption(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
     referral_id: Mapped[str] = mapped_column(ForeignKey("referrals.id", ondelete="CASCADE"), index=True)
-    referred_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    referred_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
     referral: Mapped[Referral | None] = relationship(

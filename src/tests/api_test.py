@@ -1,23 +1,46 @@
-from collections.abc import Callable
-from typing import Any
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING
 
 import pytest
 
-from database.models import User
-from database.tables.users import USER_MIGRATION_VERSION, Users
+from database.models import ApiKey, Domain, User, UserRiskProfile
+from database.tables.users import Users
 from security.api import Api, ApiError, ApiKeyLimitError, ApiPermissionError, ApiRangeError
 from security.encryption import Encryption
 from security.session import Session
 
-valid_key: Api = MagicMock(spec=Api)
-valid_key.valid = True
+if TYPE_CHECKING:
+    from tests.conftest import TestUserFactory
 
-valid_key.permissions = ["modify", "register", "list"]
-valid_key.affected_domains = ["test.eepy.page", "affected.eepy.page"]
 
-invalid_key: Api = MagicMock(spec=Api)
-invalid_key.valid = False
+@pytest.fixture
+def valid_api_key(users: Users, encryption: Encryption, insert_test_user: "TestUserFactory") -> Api:
+    user_id = Encryption.sha256("api_decorator_test_user")
+    insert_test_user(
+        id=user_id,
+        email=encryption.encrypt("api_decorator@example.com"),
+        email_hash=encryption.hash_email("api_decorator@example.com"),
+        normalized_email_hash=encryption.hash_email("api_decorator@example.com"),
+        display_name=encryption.encrypt("api_decorator_test_user"),
+        username=user_id,
+        verified=True,
+        domains=[
+            Domain(user_id=user_id, name="test.eepy.page", type="A", ip=["1.2.3.4"], registered=1700000000),
+            Domain(user_id=user_id, name="affected.eepy.page", type="A", ip=["1.2.3.4"], registered=1700000000),
+        ],
+    )
+    raw_key = Api.create(
+        user_id,
+        users,
+        "decorator test key",
+        ["modify", "register", "list"],
+        domains=["test.eepy.page", "affected.eepy.page"],
+    )
+    return Api(raw_key, users)
+
+
+@pytest.fixture
+def invalid_api_key(users: Users) -> Api:
+    return Api("$APIV2=00000000000000000000000000000000", users)
 
 
 @pytest.mark.order(-1)
@@ -117,106 +140,98 @@ class TestUserApi:
         assert test_list(api)
 
 
-def test_requires_auth_valid_key() -> None:
+def test_requires_auth_valid_key(valid_api_key: Api) -> None:
     @Api.requires_auth
-    def mock_function(api) -> str:
+    def protected(api: Api) -> str:
         return "Executed"
 
-    result = mock_function(api=valid_key)
-    assert result == "Executed"
+    assert protected(api=valid_api_key) == "Executed"
 
 
-def test_requires_auth_invalid_key() -> None:
+def test_requires_auth_invalid_key(invalid_api_key: Api) -> None:
     @Api.requires_auth
-    def mock_function(api) -> str:
+    def protected(api: Api) -> str:
         return "Executed"
 
     with pytest.raises(ApiError):
-        mock_function(api=invalid_key)
+        protected(api=invalid_api_key)
 
 
-def test_requires_perms_valid() -> None:
+def test_requires_perms_valid(valid_api_key: Api) -> None:
     @Api.requires_auth
     @Api.requires_permission("register")
-    def mock_function(api) -> str:
+    def protected(api: Api) -> str:
         return "Executed"
 
-    result = mock_function(api=valid_key)
-    assert result == "Executed"
+    assert protected(api=valid_api_key) == "Executed"
 
 
-def test_requires_perms_invalid() -> None:
+def test_requires_perms_invalid(valid_api_key: Api) -> None:
     @Api.requires_auth
     @Api.requires_permission("delete")
-    def mock_function(api) -> str:
+    def protected(api: Api) -> str:
         return "Executed"
 
     with pytest.raises(ApiPermissionError):
-        mock_function(api=valid_key)
+        protected(api=valid_api_key)
 
 
-def test_modification_domain() -> None:
+def test_modification_domain(valid_api_key: Api) -> None:
     @Api.requires_auth
     @Api.requires_permission("modify")
-    def mock_function(api, domain) -> str:
+    def protected(api: Api, domain: str) -> str:
         return "Executed"
 
-    result = mock_function(api=valid_key, domain="affected.eepy.page")
-    assert result == "Executed"
+    assert protected(api=valid_api_key, domain="affected.eepy.page") == "Executed"
 
 
-def test_invalid_modification_domain() -> None:
+def test_invalid_modification_domain(valid_api_key: Api) -> None:
     @Api.requires_auth
     @Api.requires_permission("modify")
-    def mock_function(api, domain) -> str:
+    def protected(api: Api, domain: str) -> str:
         return "Executed"
 
     with pytest.raises(ApiRangeError):
-        mock_function(api=valid_key, domain="unaffected.eepy.page")
+        protected(api=valid_api_key, domain="unaffected.eepy.page")
 
 
 def test_disabled_account_rejected_on_api_key(
     users: Users,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     raw_api_key = "$APIV2=0123456789abcdef0123456789abcdef"
     key_hash = Encryption.sha256(raw_api_key + "eepy.page")
     user_id = Encryption.sha256("disabled_api_user")
 
     insert_test_user(
-        {
-            "_id": user_id,
-            "email": encryption.encrypt("u@example.com"),
-            "email_hash": encryption.hash_email("u@example.com"),
-            "normalized_email_hash": encryption.hash_email("u@example.com"),
-            "password": None,
-            "display_name": encryption.encrypt("disabled_api_user"),
-            "username": user_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last_login": 1700000000,
-            "verified": True,
-            "domains": [{"name": "sub.eepy.page", "type": "A", "ip": ["1.2.3.4"], "registered": 1700000000}],
-            "owned_tlds": ["eepy.page"],
-            "api_keys": {
-                key_hash: {
-                    "string": encryption.encrypt(raw_api_key),
-                    "perms": ["modify", "register", "delete", "list"],
-                    "domains": ["*"],
-                    "comment": "key",
-                },
-            },
-            "risk": {
-                "score": 85,
-                "locked": False,
-                "disabled": True,
-                "disable_reasons": ["Auto-disabled"],
-                "flags": {},
-            },
-            "migration_version": USER_MIGRATION_VERSION,
-        },
+        id=user_id,
+        email=encryption.encrypt("u@example.com"),
+        email_hash=encryption.hash_email("u@example.com"),
+        normalized_email_hash=encryption.hash_email("u@example.com"),
+        display_name=encryption.encrypt("disabled_api_user"),
+        username=user_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
+        domains=[Domain(user_id=user_id, name="sub.eepy.page", type="A", ip=["1.2.3.4"], registered=1700000000)],
+        api_keys=[
+            ApiKey(
+                id=key_hash,
+                user_id=user_id,
+                string=encryption.encrypt(raw_api_key),
+                perms=["modify", "register", "delete", "list"],
+                domains=["*"],
+                comment="key",
+            ),
+        ],
+        risk_profile=UserRiskProfile(
+            user_id=user_id,
+            score=85,
+            disabled=True,
+            disable_reasons=["Auto-disabled"],
+        ),
     )
 
     api = Api(raw_api_key, users)

@@ -23,7 +23,7 @@ converter: Convert = Convert()
 logger: logging.Logger = logging.getLogger("eepy.page")
 
 
-def register_domain_record(  # noqa: C901, PLR0912
+def register_domain_record(  # noqa: C901, PLR0912, PLR0915
     domains: DomainTable,
     dns: DNS,
     dns_validation: Validation,
@@ -33,6 +33,9 @@ def register_domain_record(  # noqa: C901, PLR0912
     domain_name = body.domain
     if not domain_name.endswith(get_args(AVAILABLE_TLDS)):
         raise HTTPException(status_code=412, detail="Deprecated usage of register. Please pass the TLD!")
+
+    if not body.values or not dns_validation.record_value_valid(body.values, body.type):
+        raise HTTPException(status_code=412, detail=f"Invalid value in {body.values}")
 
     _, tld = domains.separate_domain_into_parts(domain_name)
     user = session.user
@@ -79,21 +82,29 @@ def register_domain_record(  # noqa: C901, PLR0912
     try:
         success = dns.register_domain(
             domain_name,
-            body.values[0],
+            body.values,
             body.type,
             f"Registered through website user: {session.user_id}",
         )
     except ConflictingDomain:
         raise HTTPException(status_code=409, detail="Domain is already registered")
+    except DNSException:
+        logger.exception("DNSException occurred during domain registration:")
+        raise HTTPException(status_code=500, detail="DNS Registration failed")
     if not success:
         logger.error("DNS registration failed")
         raise HTTPException(status_code=500, detail="DNS Registration failed")
 
-    domains.add_domain(
-        session.user_id,
-        domain_name,
-        {"type": body.type, "ip": body.values, "registered": round(time.time())},
-    )
+    try:
+        domains.add_domain(
+            session.user_id,
+            domain_name,
+            {"type": body.type, "ip": body.values, "registered": round(time.time())},
+        )
+    except Exception:
+        logger.exception("Failed to save domain in PostgreSQL; rolling back PowerDNS record")
+        dns.delete_domain(domain_name, body.type)
+        raise HTTPException(status_code=500, detail="Domain database update failed")
 
 
 class Domain:
@@ -271,7 +282,14 @@ class Domain:
     @Session.requires_auth
     def delete(self, domain: str, type: str | None = None, session: Session = Depends(converter.create)) -> None:
         user_domains = session.user_cache_data.domains if session.user_cache_data else None
-        if user_domains and self.domains.will_domain_be_removed(user_domains, domain, type):
+        domain_data = self.domains.get_domain(user_domains or [], domain, type)
+        if domain_data is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Domain does not exist, or user does not own it.",
+            )
+
+        if user_domains and self.domains.will_domain_be_removed(user_domains, domain, domain_data.type):
             subdomains = self.domains.get_child_subdomains(user_domains, domain)
             if subdomains:
                 preview = ", ".join(subdomains[:3])
@@ -282,22 +300,14 @@ class Domain:
                     detail=f"Cannot delete domain while subdomains exist ({preview}). Please delete subdomains first.",
                 )
 
-        if not self.domains.delete_domain(session.user_id, domain, type):
+        if not self.dns.delete_domain(domain, domain_data.type):
+            raise HTTPException(status_code=500, detail="DNS deletion failed")
+
+        if not self.domains.delete_domain(session.user_id, domain, domain_data.type):
             raise HTTPException(
                 status_code=403,
                 detail="Domain does not exist, or user does not own it.",
             )
-
-        if not session.user_cache_data:
-            return
-
-        domain_data = self.domains.get_domain(session.user_cache_data.domains, domain, type)
-        domain_type: str | None = domain_data.type if domain_data else None
-
-        if domain_type is None:
-            return
-
-        self.dns.delete_domain(domain, domain_type)
 
     def is_available(self, name: str) -> None:
         if not self.dns_validation.is_free(name, "A", {}, raise_exceptions=False):

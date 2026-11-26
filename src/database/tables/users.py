@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import requests
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm.attributes import flag_modified
 
 from config.env import Environment
@@ -85,7 +86,7 @@ __all__ = [
 class Users(Table[User]):
     def __init__(self, db_engine: "Engine | None" = None) -> None:
         super().__init__(db_engine, User)
-        self.encryption: Encryption = Encryption(Environment.enc_key() or "none")
+        self.encryption: Encryption = Encryption(Environment.enc_key())
         self.referrals: Referrals = Referrals(self.engine, self)
         self.ip_activity: IPActivity = IPActivity(self.engine)
         self.recent_logouts: RecentLogouts = RecentLogouts(self.engine)
@@ -136,8 +137,11 @@ class Users(Table[User]):
         return user
 
     def find_user_by_username_hash(self, username: str, find_banned: bool = False) -> User | None:
-        exact_hash = Encryption.sha256(username)
-        lower_hash = Encryption.sha256(username.lower())
+        clean_username = username.strip()
+        if not clean_username:
+            return None
+        exact_hash = Encryption.sha256(clean_username)
+        lower_hash = Encryption.sha256(clean_username.lower())
         with self.session() as session:
             stmt = select(User).where(
                 or_(
@@ -145,6 +149,8 @@ class Users(Table[User]):
                     User.username == lower_hash,
                 ),
             )
+            if not find_banned:
+                stmt = stmt.where(User.banned.is_(False))
             row = session.scalars(stmt).first()
             if row is None:
                 return None
@@ -201,21 +207,19 @@ class Users(Table[User]):
             return
         now_ts = round(time.time()) if timestamp is None else int(timestamp)
         with self.session() as session:
-            if session.get(User, user_id) is None:
+            if session.scalar(select(User.id).where(User.id == user_id)) is None:
                 return
-            existing = session.get(UserDevice, (user_id, clean_dev))
-            if existing is not None:
-                existing.last_seen = now_ts
-                session.add(existing)
-            else:
-                session.add(
-                    UserDevice(
-                        user_id=user_id,
-                        device_id=clean_dev,
-                        first_seen=now_ts,
-                        last_seen=now_ts,
-                    ),
-                )
+            stmt = pg_insert(UserDevice).values(
+                user_id=user_id,
+                device_id=clean_dev,
+                first_seen=now_ts,
+                last_seen=now_ts,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[UserDevice.user_id, UserDevice.device_id],
+                set_={"last_seen": func.greatest(UserDevice.last_seen, stmt.excluded.last_seen)},
+            )
+            session.execute(stmt)
 
     def get_alt_links(self, user_id: str) -> list[dict[str, Any]]:
         """Return all alt-detection links involving a user from either direction."""
@@ -323,6 +327,20 @@ class Users(Table[User]):
             session.delete(mfa)
             return True
 
+    @staticmethod
+    def _coerce_bool(value: str | bool | int) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off", ""}:
+            return False
+        msg = f"Invalid boolean permission value: {value!r}"
+        raise ValueError(msg)
+
     def set_permission(self, user_id: str, permission: str, value: str | bool | int) -> bool:
         with self.session() as session:
             user = session.get(User, user_id)
@@ -334,11 +352,11 @@ class Users(Table[User]):
             elif permission == "max_subdomains":
                 perms.max_subdomains = int(value)
             elif permission == "enabled":
-                perms.admin_enabled = bool(value)
+                perms.admin_enabled = self._coerce_bool(value)
             elif permission == "invite":
-                perms.feature_invite = bool(value)
+                perms.feature_invite = self._coerce_bool(value)
             elif permission in {"account", "dns", "manage_permissions", "reports", "userdetails", "wildcards"}:
-                setattr(perms, f"admin_{permission}", bool(value))
+                setattr(perms, f"admin_{permission}", self._coerce_bool(value))
             else:
                 return False
             user.permissions_rel = perms
@@ -346,19 +364,19 @@ class Users(Table[User]):
             return True
 
     def add_owned_tld(self, user_id: str, tld: str) -> bool:
-        clean_tld = tld.strip()
+        clean_tld = tld.strip().lower()
         if not clean_tld:
             return False
         with self.session() as session:
-            if session.get(User, user_id) is None:
+            if session.scalar(select(User.id).where(User.id == user_id)) is None:
                 return False
-            existing = session.get(UserOwnedTLD, (user_id, clean_tld))
-            if existing is None:
-                session.add(UserOwnedTLD(user_id=user_id, tld=clean_tld))
+            session.execute(
+                pg_insert(UserOwnedTLD).values(user_id=user_id, tld=clean_tld).on_conflict_do_nothing(),
+            )
             return True
 
     def remove_owned_tld(self, user_id: str, tld: str) -> bool:
-        clean_tld = tld.strip()
+        clean_tld = tld.strip().lower()
         if not clean_tld:
             return False
         with self.session() as session:
@@ -388,12 +406,13 @@ class Users(Table[User]):
             return list(session.scalars(stmt).all())
 
     def find_user_by_domain_name(self, canonical_domain: str, find_banned: bool = True) -> User | None:
+        full_domain = Domains.canonical_full_domain_name(canonical_domain)
         with self.session() as session:
-            stmt = select(User).join(Domain, Domain.user_id == User.id).where(Domain.name == canonical_domain)
+            stmt = select(User).join(Domain, Domain.user_id == User.id).where(Domain.name == full_domain)
+            if not find_banned:
+                stmt = stmt.where(User.banned.is_(False))
             row = session.scalars(stmt).first()
             if row is None:
-                return None
-            if row.banned and not find_banned:
                 return None
         return self.perform_migrations(row)
 
@@ -508,7 +527,7 @@ class Users(Table[User]):
         if refer_code:
             if self.referrals.check(refer_code):
                 logger.info("User was referred")
-                referred_by_val = refer_code
+                referred_by_val = refer_code.lower()
             else:
                 logger.warning("Invalid referral code!")
                 msg_1 = "Invalid referral code!"
@@ -729,19 +748,17 @@ class Users(Table[User]):
                 user.last_login = now_ts
                 session.add(user)
                 if clean_ip:
-                    existing_ip = session.get(UserIP, (user_id, clean_ip))
-                    if existing_ip is not None:
-                        existing_ip.last_seen = now_ts
-                        session.add(existing_ip)
-                    else:
-                        session.add(
-                            UserIP(
-                                user_id=user_id,
-                                ip=clean_ip,
-                                first_seen=now_ts,
-                                last_seen=now_ts,
-                            ),
-                        )
+                    stmt = pg_insert(UserIP).values(
+                        user_id=user_id,
+                        ip=clean_ip,
+                        first_seen=now_ts,
+                        last_seen=now_ts,
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=[UserIP.user_id, UserIP.ip],
+                        set_={"last_seen": func.greatest(UserIP.last_seen, stmt.excluded.last_seen)},
+                    )
+                    session.execute(stmt)
 
     def update_display_name(self, user_id: str, encrypted_display_name: str, username_hash: str) -> None:
         with self.session() as session:
@@ -773,21 +790,29 @@ class Users(Table[User]):
         with self.session() as session:
             user = session.get(User, user_id)
             if user is not None:
+                user.ips = []
+                session.flush()
+
                 raw_ips = metadata.get("accessed_from")
                 if isinstance(raw_ips, list):
                     seen: set[str] = set()
                     restored_ips: list[UserIP] = []
                     for idx, ip_val in enumerate(raw_ips):
-                        ip_str = str(ip_val).strip()
+                        if isinstance(ip_val, Mapping):
+                            ip_str = str(ip_val.get("ip") or "").strip()
+                            first_seen = int(ip_val.get("first_seen") or idx)
+                            last_seen = int(ip_val.get("last_seen") or first_seen)
+                        else:
+                            ip_str = str(ip_val).strip()
+                            first_seen = idx
+                            last_seen = idx
                         if not ip_str or ip_str in seen:
                             continue
                         seen.add(ip_str)
                         restored_ips.append(
-                            UserIP(user_id=user_id, ip=ip_str, first_seen=idx, last_seen=idx),
+                            UserIP(user_id=user_id, ip=ip_str, first_seen=first_seen, last_seen=last_seen),
                         )
                     user.ips = restored_ips
-                else:
-                    user.ips = []
 
                 if "last_login" in metadata and metadata["last_login"] is not None:
                     user.last_login = int(metadata["last_login"])
@@ -890,19 +915,17 @@ class Users(Table[User]):
 
             clean_dev = normalize_device_id(risk_data.get("device_id"))
             if clean_dev:
-                existing_dev = session.get(UserDevice, (user_id, clean_dev))
-                if existing_dev is not None:
-                    existing_dev.last_seen = now_ts
-                    session.add(existing_dev)
-                else:
-                    user.devices.append(
-                        UserDevice(
-                            user_id=user_id,
-                            device_id=clean_dev,
-                            first_seen=now_ts,
-                            last_seen=now_ts,
-                        ),
-                    )
+                dev_stmt = pg_insert(UserDevice).values(
+                    user_id=user_id,
+                    device_id=clean_dev,
+                    first_seen=now_ts,
+                    last_seen=now_ts,
+                )
+                dev_stmt = dev_stmt.on_conflict_do_update(
+                    index_elements=[UserDevice.user_id, UserDevice.device_id],
+                    set_={"last_seen": func.greatest(UserDevice.last_seen, dev_stmt.excluded.last_seen)},
+                )
+                session.execute(dev_stmt)
 
             new_links: list[AltLink] = []
             for signal_type, flag_data in (risk_data.get("flags") or {}).items():
@@ -928,27 +951,27 @@ class Users(Table[User]):
 
     def perform_migrations(self, user: User) -> User:
         """Runs registered in-backend migrations for a user record."""
-        current_version = int(user.migration_version or 0)
-        if current_version >= USER_MIGRATION_VERSION and not USER_MIGRATIONS:
+        if int(user.migration_version or 0) >= USER_MIGRATION_VERSION:
             return user
 
-        if current_version < USER_MIGRATION_VERSION:
-            with self.session() as session:
-                user_row = session.get(User, user.id)
-                if user_row is None:
-                    return user
+        with self.session() as session:
+            user_row = session.scalars(select(User).where(User.id == user.id).with_for_update()).first()
+            if user_row is None:
+                return user
 
-                for target_ver in range(current_version + 1, USER_MIGRATION_VERSION + 1):
-                    migration_fn = USER_MIGRATIONS.get(target_ver)
-                    if migration_fn is not None:
-                        migration_fn(user_row, self)
-
-                user_row.migration_version = USER_MIGRATION_VERSION
-                session.add(user_row)
-                session.flush()
+            current_version = int(user_row.migration_version or 0)
+            if current_version >= USER_MIGRATION_VERSION:
                 return user_row
 
-        return user
+            for target_ver in range(current_version + 1, USER_MIGRATION_VERSION + 1):
+                migration_fn = USER_MIGRATIONS.get(target_ver)
+                if migration_fn is not None:
+                    migration_fn(user_row, self)
+
+            user_row.migration_version = USER_MIGRATION_VERSION
+            session.add(user_row)
+            session.flush()
+            return user_row
 
     def find_username_case_collisions(self) -> dict[str, list[str]]:
         by_lower_hash: dict[str, list[str]] = {}
@@ -973,7 +996,12 @@ class Users(Table[User]):
         with self.session() as session:
             unmigrated_ids = list(
                 session.scalars(
-                    select(User.id).where(User.migration_version != USER_MIGRATION_VERSION),
+                    select(User.id).where(
+                        or_(
+                            User.migration_version < USER_MIGRATION_VERSION,
+                            User.migration_version.is_(None),
+                        ),
+                    ),
                 ).all(),
             )
 
@@ -991,6 +1019,7 @@ class Users(Table[User]):
     def delete_unverified_users(self, days: int = 7) -> int:
         cutoff = int(time.time()) - (days * 86400)
         with self.session() as session:
+            # Postgres ON DELETE CASCADE removes dependent child rows (domains, sessions, IP logs, etc.).
             stmt = delete(User).where(
                 User.verified.is_(False),
                 User.created < cutoff,

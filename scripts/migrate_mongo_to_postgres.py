@@ -33,15 +33,6 @@ from simple_python_dotenv import load_dotenv  # noqa: E402
 load_dotenv(backend_dir / ".env")
 
 if TYPE_CHECKING:
-    from src.database.session import create_db_engine, session_scope
-    from src.database.tables.domains import Domains
-    from src.database.tables.ip_activity import (
-        IP_ACTIVITY_TTL_SECONDS,
-        LOGOUT_VELOCITY_WINDOW_SECONDS,
-        expiry_from_epoch,
-    )
-    from src.database.tables.users import USER_MIGRATION_VERSION
-    from src.mail.email import normalize_email_address
     from src.database.models import (
         AltLink,
         ApiKey,
@@ -64,18 +55,19 @@ if TYPE_CHECKING:
         UserRiskProfile,
         VerificationCode,
     )
-    from src.security.encryption import Encryption
-    from src.security.risk import create_default_risk, normalize_device_id
-else:
-    from database.session import create_db_engine, session_scope
-    from database.tables.domains import Domains
-    from database.tables.ip_activity import (
+    from src.database.session import create_db_engine, session_scope
+    from src.database.tables.domains import Domains
+    from src.database.tables.ip_activity import (
         IP_ACTIVITY_TTL_SECONDS,
         LOGOUT_VELOCITY_WINDOW_SECONDS,
         expiry_from_epoch,
     )
-    from database.tables.users import USER_MIGRATION_VERSION
-    from mail.email import normalize_email_address
+    from src.database.tables.users import USER_MIGRATION_VERSION
+    from src.mail.email import normalize_email_address
+    from src.security.encryption import Encryption
+    from src.security.risk import create_default_risk, normalize_device_id
+    from src.server.models.user import CountryInfo
+else:
     from database.models import (
         AltLink,
         ApiKey,
@@ -98,8 +90,18 @@ else:
         UserRiskProfile,
         VerificationCode,
     )
+    from database.session import create_db_engine, session_scope
+    from database.tables.domains import Domains
+    from database.tables.ip_activity import (
+        IP_ACTIVITY_TTL_SECONDS,
+        LOGOUT_VELOCITY_WINDOW_SECONDS,
+        expiry_from_epoch,
+    )
+    from database.tables.users import USER_MIGRATION_VERSION
+    from mail.email import normalize_email_address
     from security.encryption import Encryption
     from security.risk import create_default_risk, normalize_device_id
+    from server.models.user import CountryInfo
 
 
 @dataclass
@@ -231,7 +233,7 @@ def normalize_permissions(raw_perms: object) -> dict[str, Any]:
     return perms
 
 
-def normalize_reward_mappings(raw_mappings: object) -> dict[str, Any]:
+def normalize_reward_mappings(raw_mappings: object) -> dict[str, Any]:  # noqa: C901
     if not isinstance(raw_mappings, Mapping):
         return {}
     result: dict[str, Any] = {}
@@ -248,12 +250,21 @@ def normalize_reward_mappings(raw_mappings: object) -> dict[str, Any]:
                 .replace("manage-permissions", "manage_permissions")
                 .replace("referred-count", "referred_count")
             )
-            if op == "$addToSet" and norm_k == "owned_tlds":
+            if op in {"$addToSet", "$push"} and norm_k == "owned_tlds":
                 tlds = v["$each"] if (isinstance(v, Mapping) and "$each" in v) else [v]
                 grant_tlds = result.setdefault("grant_tlds", [])
                 for tld in tlds:
-                    if isinstance(tld, str) and tld not in grant_tlds:
-                        grant_tlds.append(tld)
+                    if isinstance(tld, str):
+                        clean_tld = tld.strip().lower()
+                        if clean_tld and clean_tld not in grant_tlds:
+                            grant_tlds.append(clean_tld)
+                continue
+            if op == "$inc" and norm_k == "credits" and isinstance(v, int) and not isinstance(v, bool):
+                result["credits"] = int(result.get("credits", 0)) + v
+                continue
+            if op == "$set":
+                set_fields = result.setdefault("fields", {})
+                set_fields[norm_k] = deepcopy(v)
                 continue
             new_fields[norm_k] = deepcopy(v)
         if new_fields:
@@ -307,7 +318,10 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
 
     display_name = str(doc.get("display-name") or doc.get("display_name") or "")
     username = doc.get("username")
-    if not username and display_name:
+    if isinstance(username, str) and username in colliding_username_hashes:
+        summary.username_collisions += 1
+        username = None
+    elif not username and display_name:
         try:
             decrypted_name = encryption.decrypt(display_name).strip()
             if decrypted_name:
@@ -328,7 +342,7 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
 
     owned_tlds_raw = doc.get("owned-tlds") if "owned-tlds" in doc else doc.get("owned_tlds")
     owned_tlds = (
-        list(dict.fromkeys(str(t).strip() for t in owned_tlds_raw if str(t).strip()))
+        list(dict.fromkeys(str(t).strip().lower() for t in owned_tlds_raw if str(t).strip()))
         if isinstance(owned_tlds_raw, list)
         else ["eepy.page"]
     )
@@ -374,19 +388,19 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
         display_name=display_name,
         username=str(username) if username else None,
         lang=str(doc.get("lang") or "en"),
-        country=dict(doc.get("country") or {}) if isinstance(doc.get("country"), Mapping) else {},
+        country=CountryInfo.from_raw(doc.get("country")).model_dump(),
         created=created_ts,
         last_login=last_login_ts,
         feature_flags=feature_flags,
         verified=bool(doc.get("verified", False)),
-        credits=int(doc.get("credits", 200)),
+        credits=int(doc["credits"]) if doc.get("credits") is not None else 200,
         invite_code=str(doc.get("invite-code") or doc.get("invite_code") or ""),
         banned=bool(doc.get("banned", False)),
         ban_reasons=ban_reasons,
         unbanned=int(doc["unbanned"]) if doc.get("unbanned") is not None else None,
         deleted_in=deleted_in,
-        referral_code=str(doc.get("referral-code") or doc.get("referral_code") or ""),
-        referred_by=str(doc.get("referred-by") or doc.get("referred_by") or ""),
+        referral_code=str(doc.get("referral-code") or doc.get("referral_code") or "").lower(),
+        referred_by=str(doc.get("referred-by") or doc.get("referred_by") or "").lower(),
         referred_count=int(doc.get("referred-count") or doc.get("referred_count") or 0),
         migration_version=USER_MIGRATION_VERSION,
         extra_data=extra_data,
@@ -494,13 +508,13 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
     raw_domains = doc.get("domains")
     raw_domain_entries: list[tuple[str, Mapping[str, Any]]] = []
     if isinstance(raw_domains, list):
-        for item in raw_domains:
-            if isinstance(item, Mapping) and item.get("name"):
-                raw_domain_entries.append((str(item["name"]), item))
+        raw_domain_entries.extend(
+            (str(item["name"]), item) for item in raw_domains if isinstance(item, Mapping) and item.get("name")
+        )
     elif isinstance(raw_domains, Mapping):
-        for dom_name, item in raw_domains.items():
-            if isinstance(item, Mapping):
-                raw_domain_entries.append((str(dom_name), item))
+        raw_domain_entries.extend(
+            (str(dom_name), item) for dom_name, item in raw_domains.items() if isinstance(item, Mapping)
+        )
 
     seen_domain_keys: set[tuple[str, str]] = set()
     domain_models: list[Domain] = []
@@ -511,14 +525,15 @@ def transform_user(  # noqa: C901, PLR0912, PLR0915
         if key in seen_domain_keys:
             continue
         seen_domain_keys.add(key)
-        raw_ip = item.get("ip", [])
+        raw_ip = item.get("ip")
+        ip_list = list(raw_ip) if isinstance(raw_ip, list) else ([str(raw_ip)] if raw_ip is not None else [])
         domain_models.append(
             Domain(
                 user_id=user_id,
                 name=canonical_name,
                 type=record_type,
-                ip=list(raw_ip) if isinstance(raw_ip, list) else [str(raw_ip)],
-                registered=int(item.get("registered", 0)),
+                ip=ip_list,
+                registered=int(item.get("registered") or 0),
             ),
         )
 
@@ -623,7 +638,7 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
         raise RuntimeError(msg)
 
     summary = MigrationSummary()
-    encryption = Encryption(os.getenv("ENC_KEY") or "none")
+    encryption = Encryption(os.getenv("ENC_KEY"))
 
     # Connect to MongoDB strictly for reading
     with MongoClient(mongo_url) as mongo_client:
@@ -634,9 +649,66 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
         colliding_hashes = detect_username_collisions(raw_users, encryption)
         valid_user_ids = {str(doc.get("_id") or doc.get("id")) for doc in raw_users if doc.get("_id") or doc.get("id")}
 
+        seen_email_hashes: set[str] = set()
+        seen_norm_email_hashes: set[str] = set()
+        seen_global_domains: set[tuple[str, str]] = set()
+        seen_api_keys: set[str] = set()
+        seen_invites: set[str] = set()
+        seen_tunnels: set[str] = set()
+
         transformed_users: list[TransformedUserBundle] = []
         for raw_user in raw_users:
+            if not (raw_user.get("_id") or raw_user.get("id")):
+                continue
             bundle = transform_user(raw_user, encryption, colliding_hashes, valid_user_ids, summary)
+
+            # Enforce global UNIQUE constraints so legacy Mongo duplicates never abort Postgres commit
+            if bundle.user.email_hash:
+                if bundle.user.email_hash in seen_email_hashes:
+                    print(f"[warn] Duplicate email_hash on user {bundle.user.id}; clearing email_hash", file=sys.stderr)
+                    bundle.user.email_hash = None
+                else:
+                    seen_email_hashes.add(bundle.user.email_hash)
+
+            if bundle.user.normalized_email_hash:
+                if bundle.user.normalized_email_hash in seen_norm_email_hashes:
+                    print(
+                        f"[warn] Duplicate normalized_email_hash on user {bundle.user.id}; clearing",
+                        file=sys.stderr,
+                    )
+                    bundle.user.normalized_email_hash = None
+                else:
+                    seen_norm_email_hashes.add(bundle.user.normalized_email_hash)
+
+            deduped_domains: list[Domain] = []
+            for dom in bundle.domains:
+                dom_key = (dom.name, dom.type)
+                if dom_key in seen_global_domains:
+                    print(
+                        f"[warn] Skipping duplicate domain {dom.name} ({dom.type}) on user {bundle.user.id}",
+                        file=sys.stderr,
+                    )
+                    continue
+                seen_global_domains.add(dom_key)
+                deduped_domains.append(dom)
+            bundle.domains = deduped_domains
+
+            bundle.api_keys = [
+                k
+                for k in bundle.api_keys
+                if k.id not in seen_api_keys and not seen_api_keys.add(k.id)  # type: ignore[func-returns-value]
+            ]
+            bundle.invites = [
+                inv
+                for inv in bundle.invites
+                if inv.code not in seen_invites and not seen_invites.add(inv.code)  # type: ignore[func-returns-value]
+            ]
+            bundle.tunnels = [
+                t
+                for t in bundle.tunnels
+                if t.id not in seen_tunnels and not seen_tunnels.add(t.id)  # type: ignore[func-returns-value]
+            ]
+
             transformed_users.append(bundle)
             summary.users += 1
             summary.domains += len(bundle.domains)
@@ -674,11 +746,17 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
                     ml_dict["metadata"] = meta_dict
                 manual_login = ml_dict
 
+            raw_owner = str(s_doc.get("owner") or "")
+            owner_val = raw_owner if raw_owner in valid_user_ids else None
+            owner_hash_val = s_doc.get("owner-hash") or s_doc.get("owner_hash")
+            if owner_val is None and not owner_hash_val:
+                continue
+
             session_models.append(
                 SessionModel(
                     id=s_id,
-                    owner=str(s_doc.get("owner") or ""),
-                    owner_hash=s_doc.get("owner-hash") or s_doc.get("owner_hash"),
+                    owner=owner_val,
+                    owner_hash=owner_hash_val,
                     type=str(s_doc.get("type") or "access"),
                     created=int(s_doc.get("created") or 0),
                     expires=expires_val,
@@ -744,21 +822,30 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
 
         # 5. Referrals & Redemptions
         referral_models: list[tuple[Referral, list[ReferralRedemption]]] = []
+        seen_referral_owners: set[str] = set()
+        seen_referred_users: set[str] = set()
         for ref_doc in db["referrals"].find({}):
             ref_id = str(ref_doc.get("_id") or ref_doc.get("id") or "")
             owner_id = str(ref_doc.get("owner") or "")
             if not ref_id or owner_id not in valid_user_ids:
                 continue
+            if owner_id in seen_referral_owners:
+                print(f"[warn] Skipping duplicate referral for owner {owner_id}", file=sys.stderr)
+                continue
+            seen_referral_owners.add(owner_id)
             created_ts = int(ref_doc.get("created") or 0)
-            redemptions = [
-                ReferralRedemption(
-                    referral_id=ref_id,
-                    referred_user_id=str(u),
-                    created_at=created_ts,
+            redemptions: list[ReferralRedemption] = []
+            for u in ref_doc.get("users", []):
+                if not isinstance(u, str) or u not in valid_user_ids or u in seen_referred_users:
+                    continue
+                seen_referred_users.add(u)
+                redemptions.append(
+                    ReferralRedemption(
+                        referral_id=ref_id,
+                        referred_user_id=u,
+                        created_at=created_ts,
+                    ),
                 )
-                for u in ref_doc.get("users", [])
-                if isinstance(u, str) and u in valid_user_ids
-            ]
             referral_models.append(
                 (
                     Referral(
@@ -807,6 +894,9 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
 
             ip_val = str(ip_doc.get("ip") or "")
             uid_val = str(ip_doc.get("user_id") or "")
+            if uid_val not in valid_user_ids:
+                summary.skipped_legacy_ip_activity += 1
+                continue
             doc_id = str(ip_doc.get("_id") or ip_doc.get("id") or f"{ip_val}_{uid_val}")
             ip_activity_models.append(
                 IPActivityModel(
@@ -832,9 +922,13 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
             if int(time_val) < now_epoch - LOGOUT_VELOCITY_WINDOW_SECONDS:
                 summary.skipped_legacy_logouts += 1
                 continue
+            uid_val = str(l_doc.get("user_id") or "")
+            if uid_val not in valid_user_ids:
+                summary.skipped_legacy_logouts += 1
+                continue
             logout_models.append(
                 RecentLogoutModel(
-                    user_id=str(l_doc.get("user_id") or ""),
+                    user_id=uid_val,
                     ip=l_doc.get("ip"),
                     device_id=l_doc.get("device_id"),
                     time=int(time_val),
@@ -854,7 +948,20 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
         merged_users: list[tuple[User, TransformedUserBundle]] = []
         for bundle in transformed_users:
             merged_user = session.merge(bundle.user)
+            # Clear existing children first so re-running migration is idempotent (avoids INSERT-before-DELETE PK clash)
+            merged_user.permissions_rel = None
+            merged_user.mfa = None
+            merged_user.ips = []
+            merged_user.owned_tlds_rel = []
+            merged_user.risk_profile = None
+            merged_user.devices = []
+            merged_user.domains = []
+            merged_user.api_keys = []
+            merged_user.invites = []
+            merged_user.tunnels = []
+            merged_user.alt_links = []
             session.flush()
+
             merged_user.permissions_rel = bundle.permissions
             merged_user.mfa = bundle.mfa
             merged_user.ips = bundle.ips
@@ -886,6 +993,7 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
 
         for ref_model, redemptions in referral_models:
             merged_ref = session.merge(ref_model)
+            merged_ref.redemptions = []
             session.flush()
             merged_ref.redemptions = redemptions
             session.add(merged_ref)
@@ -896,8 +1004,11 @@ def run_migration(  # noqa: C901, PLR0912, PLR0915
         for ip_model in ip_activity_models:
             session.merge(ip_model)
 
-        for l_model in logout_models:
-            session.add(l_model)
+        if logout_models:
+            session.query(RecentLogoutModel).delete()
+            session.flush()
+            for l_model in logout_models:
+                session.add(l_model)
 
     return summary
 

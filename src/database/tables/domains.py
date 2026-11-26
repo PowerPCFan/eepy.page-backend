@@ -37,8 +37,9 @@ class Domains(Table[Domain]):
     @staticmethod
     def canonical_full_domain_name(domain: str) -> str:
         canonical_domain = Domains.canonical_domain_name(domain)
-        if canonical_domain.endswith(get_args(AVAILABLE_TLDS)):
-            return canonical_domain
+        for available_tld in get_args(AVAILABLE_TLDS):
+            if canonical_domain == available_tld or canonical_domain.endswith(f".{available_tld}"):
+                return canonical_domain
 
         return f"{canonical_domain}.eepy.page"
 
@@ -49,10 +50,10 @@ class Domains(Table[Domain]):
     @staticmethod
     def separate_domain_into_parts(domain: str) -> tuple[str, str]:
         tld: str = "eepy.page"
-        clean_domain = domain.removesuffix(".")
+        clean_domain = domain.removesuffix(".").lower()
 
         for available_tld in get_args(AVAILABLE_TLDS):
-            if clean_domain.endswith(available_tld):
+            if clean_domain == available_tld or clean_domain.endswith(f".{available_tld}"):
                 tld = available_tld
                 break
 
@@ -129,7 +130,12 @@ class Domains(Table[Domain]):
         domain: str,
         type: str | None = None,
     ) -> bool:
-        return Domains.get_domain(domains, domain, type) is not None
+        canonical_domain = Domains.canonical_full_domain_name(domain)
+        type_upper = type.upper() if type is not None else None
+        return any(
+            record.name == canonical_domain and (type_upper is None or record.type == type_upper)
+            for record in Domains.normalize_domains(domains)
+        )
 
     @staticmethod
     def get_child_subdomains(
@@ -229,20 +235,22 @@ class Domains(Table[Domain]):
                 raise UserNotExistError(msg)
             return list(user.domains or [])
 
-    def modify_domain(
+    def modify_domain(  # noqa: PLR0913
         self,
         target_user: str,
         domain: str,
         value: list[str] | str | None = None,
         type: TYPES | None = None,
         old_type: TYPES | None = None,
+        *,
+        allow_banned: bool = False,
     ) -> bool:
         canonical_domain: str = Domains.canonical_full_domain_name(domain)
         logger.info(f"Modifying domain {canonical_domain}...")
 
         with self.session() as session:
             user = session.get(User, target_user)
-            if user is None or user.banned:
+            if user is None or (user.banned and not allow_banned):
                 msg = "Failed to find user"
                 raise ValueError(msg)
 
@@ -281,13 +289,20 @@ class Domains(Table[Domain]):
             session.add(target_row)
             return True
 
-    def delete_domain(self, target_user: str, domain: str, type: str | None = None) -> bool:
+    def delete_domain(
+        self,
+        target_user: str,
+        domain: str,
+        type: str | None = None,
+        *,
+        allow_banned: bool = False,
+    ) -> bool:
         canonical_domain = Domains.canonical_full_domain_name(domain)
         logger.info(f"Deleting domain {canonical_domain}")
 
         with self.session() as session:
             user = session.get(User, target_user)
-            if user is None or user.banned:
+            if user is None or (user.banned and not allow_banned):
                 return False
 
             stmt = select(Domain).where(

@@ -3,7 +3,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.models import IPActivityModel, RecentLogoutModel
 from database.table import Table
@@ -39,40 +40,48 @@ class IPActivity(Table[IPActivityModel]):
         super().__init__(db_engine, IPActivityModel)
 
     def record_activity(self, ip: str, user_id: str, timestamp: int) -> None:
-        if not ip:
+        clean_ip = ip.strip() if ip else ""
+        if not clean_ip:
             return
         try:
-            doc_id = f"{ip}_{user_id}"
+            doc_id = f"{clean_ip}_{user_id}"
             expires_at = expiry_from_epoch(timestamp, IP_ACTIVITY_TTL_SECONDS)
             with self.session() as session:
-                existing = session.get(IPActivityModel, doc_id)
-                if existing is not None:
-                    existing.ip = ip
-                    existing.user_id = user_id
-                    existing.last_seen = timestamp
-                    existing.expires_after = expires_at
-                    session.add(existing)
-                else:
-                    session.add(
-                        IPActivityModel(
-                            id=doc_id,
-                            ip=ip,
-                            user_id=user_id,
-                            last_seen=timestamp,
-                            expires_after=expires_at,
-                        ),
-                    )
+                stmt = pg_insert(IPActivityModel).values(
+                    id=doc_id,
+                    ip=clean_ip,
+                    user_id=user_id,
+                    last_seen=timestamp,
+                    expires_after=expires_at,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[IPActivityModel.id],
+                    set_={
+                        "ip": clean_ip,
+                        "user_id": user_id,
+                        "last_seen": func.greatest(IPActivityModel.last_seen, stmt.excluded.last_seen),
+                        "expires_after": func.greatest(IPActivityModel.expires_after, stmt.excluded.expires_after),
+                    },
+                )
+                session.execute(stmt)
         except Exception:
             logger.exception("Failed to record activity in ip_activity table")
 
     def find_recent_shared_ip(self, ip: str, user_id: str, since_timestamp: int) -> IPActivityModel | None:
-        if not ip:
+        clean_ip = ip.strip() if ip else ""
+        if not clean_ip:
             return None
+        now = datetime.now(UTC)
         with self.session() as session:
-            stmt = select(IPActivityModel).where(
-                IPActivityModel.ip == ip,
-                IPActivityModel.user_id != user_id,
-                IPActivityModel.last_seen > since_timestamp,
+            stmt = (
+                select(IPActivityModel)
+                .where(
+                    IPActivityModel.ip == clean_ip,
+                    IPActivityModel.user_id != user_id,
+                    IPActivityModel.last_seen > since_timestamp,
+                    IPActivityModel.expires_after > now,
+                )
+                .order_by(IPActivityModel.last_seen.desc())
             )
             return session.scalars(stmt).first()
 
@@ -118,6 +127,7 @@ class RecentLogouts(Table[RecentLogoutModel]):
         if not conditions:
             return []
 
+        now = datetime.now(UTC)
         with self.session() as session:
             stmt = (
                 select(RecentLogoutModel)
@@ -125,6 +135,7 @@ class RecentLogouts(Table[RecentLogoutModel]):
                     or_(*conditions),
                     RecentLogoutModel.user_id != user_id,
                     RecentLogoutModel.time >= since_timestamp,
+                    RecentLogoutModel.expires_after > now,
                 )
                 .order_by(RecentLogoutModel.time.desc())
                 .limit(limit)

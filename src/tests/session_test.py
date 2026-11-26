@@ -1,6 +1,5 @@
-from collections.abc import Callable
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pyotp
@@ -10,16 +9,17 @@ from starlette.requests import Request
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from tests.conftest import TestUserFactory
+
 from database.exceptions import UserNotExistError
-from database.models import User
+from database.models import User, UserPermissions, UserRiskProfile
 from database.tables.domains import Domains
 from database.tables.invitation import Invites
 from database.tables.sessions import Sessions
-from database.tables.users import USER_MIGRATION_VERSION, Users
+from database.tables.users import Users
 from dns_.dns import DNS
 from mail.email import Email
 from security.encryption import Encryption
-from security.risk import create_default_risk
 from security.session import (
     InvalidToken,
     Session,
@@ -162,112 +162,123 @@ class TestCreation:
             )
 
 
-valid_session = MagicMock(spec=Session)
-valid_session.valid = True
+@pytest.fixture
+def valid_session(
+    users: Users,
+    sessions: Sessions,
+    encryption: Encryption,
+    insert_test_user: "TestUserFactory",
+) -> Session:
+    user_id = Encryption.sha256("session_decorator_test_user")
+    insert_test_user(
+        id=user_id,
+        email=encryption.encrypt("session_decorator@example.com"),
+        email_hash=encryption.hash_email("session_decorator@example.com"),
+        normalized_email_hash=encryption.hash_email("session_decorator@example.com"),
+        display_name=encryption.encrypt("session_decorator_test_user"),
+        username=user_id,
+        verified=True,
+        feature_flags={"store": True, "apex-domains": False},
+        permissions=UserPermissions(
+            user_id=user_id,
+            admin_enabled=True,
+            admin_userdetails=True,
+        ),
+    )
+    access_token, _ = Session.create_session_pair(user_id, "pytest-agent", "198.51.100.1", sessions)
+    assert access_token is not None
+    return Session(access_token, users, sessions)
 
-valid_session.permissions = ["userdetails"]
-valid_session.flags = ["store"]
 
-invalid_session = MagicMock(spec=Session)
-invalid_session.valid = False
+@pytest.fixture
+def invalid_session(users: Users, sessions: Sessions) -> Session:
+    return Session("invalid.jwt.token", users, sessions)
 
 
-def test_requires_auth_valid_session() -> None:
+def test_requires_auth_valid_session(valid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_auth_underscore_session() -> None:
+def test_requires_auth_underscore_session(valid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(_session) -> str:
+    def protected(_session: Session) -> str:
         return "Executed"
 
-    result = mock_function(_session=valid_session)
-    assert result == "Executed"
+    assert protected(_session=valid_session) == "Executed"
 
 
-def test_requires_auth_invalid_session() -> None:
+def test_requires_auth_invalid_session(invalid_session: Session) -> None:
     @Session.requires_auth
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionError):
-        mock_function(session=invalid_session)
+        protected(session=invalid_session)
 
 
-def test_requires_perms_valid() -> None:
+def test_requires_perms_valid(valid_session: Session) -> None:
     @Session.requires_permission("userdetails")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_perms_invalid() -> None:
+def test_requires_perms_invalid(valid_session: Session) -> None:
     @Session.requires_permission("blogs")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionPermissonError):
-        mock_function(session=valid_session)
+        protected(session=valid_session)
 
 
-def test_requires_flag_valid() -> None:
+def test_requires_flag_valid(valid_session: Session) -> None:
     @Session.requires_flag(flag="store")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
-    result = mock_function(session=valid_session)
-    assert result == "Executed"
+    assert protected(session=valid_session) == "Executed"
 
 
-def test_requires_flag_invalid() -> None:
+def test_requires_flag_invalid(valid_session: Session) -> None:
     @Session.requires_flag(flag="apex-domains")
-    def mock_function(session) -> str:
+    def protected(session: Session) -> str:
         return "Executed"
 
     with pytest.raises(SessionFlagError):
-        mock_function(session=valid_session)
+        protected(session=valid_session)
 
 
 def test_disabled_account_rejected_on_session_refresh(
     users: Users,
     sessions: Sessions,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     user_id = Encryption.sha256("disabled_session_user")
 
     insert_test_user(
-        {
-            "_id": user_id,
-            "email": encryption.encrypt("disabled_session@example.com"),
-            "email_hash": encryption.hash_email("disabled_session@example.com"),
-            "normalized_email_hash": encryption.hash_email("disabled_session@example.com"),
-            "password": None,
-            "display_name": encryption.encrypt("disabled_session_user"),
-            "username": user_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last_login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned_tlds": ["eepy.page"],
-            "risk": {
-                "score": 85,
-                "locked": False,
-                "disabled": True,
-                "disable_reasons": ["Auto-disabled"],
-                "flags": {},
-            },
-            "migration_version": USER_MIGRATION_VERSION,
-        },
+        id=user_id,
+        email=encryption.encrypt("disabled_session@example.com"),
+        email_hash=encryption.hash_email("disabled_session@example.com"),
+        normalized_email_hash=encryption.hash_email("disabled_session@example.com"),
+        display_name=encryption.encrypt("disabled_session_user"),
+        username=user_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
+        risk_profile=UserRiskProfile(
+            user_id=user_id,
+            score=85,
+            disabled=True,
+            disable_reasons=["Auto-disabled"],
+        ),
     )
 
     access_token, refresh_token = Session.create_session_pair(
@@ -295,29 +306,21 @@ def test_session_delete_and_logout_for_both_refresh_and_access_types(
     domains: Domains,
     email: Email,
     encryption: Encryption,
-    insert_test_user: Callable[[dict[str, Any]], dict[str, Any]],
+    insert_test_user: "TestUserFactory",
 ) -> None:
     user_id = Encryption.sha256("session_owner")
 
     insert_test_user(
-        {
-            "_id": user_id,
-            "email": encryption.encrypt("owner@example.com"),
-            "email_hash": encryption.hash_email("owner@example.com"),
-            "normalized_email_hash": encryption.hash_email("owner@example.com"),
-            "password": None,
-            "display_name": encryption.encrypt("session_owner"),
-            "username": user_id,
-            "lang": "en",
-            "country": {"country": "US"},
-            "created": 1700000000,
-            "last_login": 1700000000,
-            "verified": True,
-            "domains": [],
-            "owned_tlds": ["eepy.page"],
-            "risk": create_default_risk(),
-            "migration_version": USER_MIGRATION_VERSION,
-        },
+        id=user_id,
+        email=encryption.encrypt("owner@example.com"),
+        email_hash=encryption.hash_email("owner@example.com"),
+        normalized_email_hash=encryption.hash_email("owner@example.com"),
+        display_name=encryption.encrypt("session_owner"),
+        username=user_id,
+        country={"country": "US"},
+        created=1700000000,
+        last_login=1700000000,
+        verified=True,
     )
 
     access_1, _refresh_1 = Session.create_session_pair(user_id, "agent-1", "198.51.100.1", sessions)

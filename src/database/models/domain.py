@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class Domain(Base):
     __tablename__ = "domains"
     __table_args__ = (
-        UniqueConstraint("user_id", "name", "type", name="uq_domains_user_name_type"),
+        UniqueConstraint("name", "type", name="uq_domains_name_type"),
         Index("ix_domains_name_type", "name", "type"),
     )
 

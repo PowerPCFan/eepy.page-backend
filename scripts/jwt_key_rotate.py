@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
 
-from src.database.session import rowcount
-
 scripts_dir = pathlib.Path(__file__).resolve().parent
 backend_dir = scripts_dir.parent
 dotenv = backend_dir / ".env"

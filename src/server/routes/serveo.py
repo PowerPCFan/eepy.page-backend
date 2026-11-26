@@ -77,6 +77,8 @@ class ServeoRoutes:
         hostname = Domains.canonical_full_domain_name(body.subdomain)
         auth_record = f"_serveo-authkey.{hostname}"
         target = "serveo.net"
+        cname_created = False
+        txt_created = False
         try:
             register_domain_record(
                 self.domains,
@@ -85,6 +87,7 @@ class ServeoRoutes:
                 DomainType(domain=hostname, type="CNAME", values=[target]),
                 session,
             )
+            cname_created = True
             session.user.domains = self.domains.get_domains(session.user_id)
             register_domain_record(
                 self.domains,
@@ -93,12 +96,15 @@ class ServeoRoutes:
                 DomainType(domain=auth_record, type="TXT", values=[body.ssh_fingerprint]),
                 session,
             )
+            txt_created = True
         except (DNSException, HTTPException) as error:
             try:
-                self.dns.delete_domain(hostname, "CNAME")
-                self.dns.delete_domain(auth_record, "TXT")
-                self.domains.delete_domain(session.user_id, hostname, "CNAME")
-                self.domains.delete_domain(session.user_id, auth_record, "TXT")
+                if cname_created:
+                    self.dns.delete_domain(hostname, "CNAME")
+                    self.domains.delete_domain(session.user_id, hostname, "CNAME")
+                if txt_created:
+                    self.dns.delete_domain(auth_record, "TXT")
+                    self.domains.delete_domain(session.user_id, auth_record, "TXT")
             except DNSException:
                 logger.exception("Failed to roll back Serveo DNS")
             if isinstance(error, HTTPException):

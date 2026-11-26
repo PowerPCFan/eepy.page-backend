@@ -345,7 +345,9 @@ class Auth:
             raise HTTPException(422, detail="Invalid captcha")
 
         country = self.handler.getDetails(ip or None).all
-        from_url: str = request.headers.get("Origin", "https://www.eepy.page")
+        origin = request.headers.get("Origin", "").strip()
+        safe_domains: list[str] = getattr(request.app.state, "safe_domains", [])
+        from_url: str = origin if origin and origin in safe_domains else "https://www.eepy.page"
 
         refer = request.headers.get("x-refer-code")
         if refer:
